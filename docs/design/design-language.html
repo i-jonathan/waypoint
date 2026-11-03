@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Waypoint hybrid</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:28px;background:#c9ccd1;font-family:Geist,system-ui,sans-serif;color:#1d1f22}
+h1{font-size:22px;margin:0 0 4px;font-weight:600}.sub{margin:0 0 22px;max-width:75ch;color:#3a3d42;font-size:14px;line-height:1.5}
+.lbl{font-size:13px;font-weight:600;margin:0 0 8px 2px;color:#2a2d31}
+
+.wp{--r:10px;display:flex;height:440px;overflow:hidden;border-radius:14px;margin-bottom:28px;font-family:Geist,sans-serif;color:var(--text);
+  background-color:var(--bg);
+  background-image:
+    radial-gradient(var(--dot) 1px,transparent 1.2px),
+    repeating-radial-gradient(circle at 82% 125%, transparent 0 46px, var(--contour) 46px 47px);
+  background-size:18px 18px, auto;}
+.dark{--bg:#0f1714;--rail:rgba(18,28,24,.88);--card:#18241f;--line:#2b3b34;--text:#e9eee6;--muted:#97a79e;--dot:rgba(151,167,158,.10);--contour:rgba(151,167,158,.08);--head:#e9eee6;--headtext:#0f1714;--red:#ff6b5b;--edge:#aebdb3}
+.light{--bg:#e9eee8;--rail:rgba(243,246,241,.9);--card:#fbfcfa;--line:#cdd6cd;--text:#16201b;--muted:#56645c;--dot:rgba(22,32,27,.12);--contour:rgba(22,32,27,.07);--head:#16201b;--headtext:#e9eee8;--red:#c8321e;--edge:#16201b}
+.orange{--acc:#ff7a3d;--acc-ink:#1b0d05}
+.light.orange{--acc:#e8601c;--acc-ink:#fff}
+.cobalt{--acc:#7d9bff;--acc-ink:#0b1230}
+.light.cobalt{--acc:#2f5bff;--acc-ink:#fff}
+
+.rail{width:214px;flex:none;padding:16px 14px;display:flex;flex-direction:column;gap:2px;border-right:1px solid var(--line);background:var(--rail)}
+.brand{font-family:Archivo;font-stretch:72%;font-weight:800;font-size:24px;line-height:1;text-transform:uppercase;letter-spacing:.005em;display:flex;align-items:center;gap:8px}
+.brand i{color:var(--acc);font-size:20px}
+.proj{font-family:"Geist Mono";font-size:11px;color:var(--muted);margin:6px 0 14px 28px}
+.rl{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;font-size:13px;color:var(--muted)}
+.rl.on{background:var(--acc);color:var(--acc-ink);font-weight:600}
+.rl i{font-size:16px}.rl .n{margin-left:auto;font-family:"Geist Mono";font-size:11px}
+.sec{font-size:11px;font-weight:500;color:var(--muted);margin:14px 8px 4px}
+.route{width:16px;height:4px;border-radius:2px;flex:none}
+
+.main{flex:1;padding:16px 18px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.bar{display:flex;gap:10px;align-items:center}
+.q{flex:1;border:1px solid var(--line);border-radius:var(--r);padding:8px 12px;font-size:12.5px;color:var(--muted);display:flex;gap:8px;align-items:center;background:var(--card)}
+.q code{font-family:"Geist Mono";font-size:11.5px}
+.seg{display:flex;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--card)}
+.seg span{padding:7px 10px;color:var(--muted);display:flex;align-items:center;font-size:15px}.seg span.on{background:var(--head);color:var(--headtext)}
+.go{background:var(--acc);color:var(--acc-ink);border-radius:var(--r);padding:8px 14px;font-weight:600;font-size:13px;display:flex;gap:7px;align-items:center}
+
+.board{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;flex:1;min-width:0}
+.col h3{margin:0 0 10px;background:var(--head);color:var(--headtext);font-family:Archivo;font-stretch:68%;font-weight:800;font-size:22px;line-height:1;padding:7px 11px 6px;border-radius:7px;display:flex;align-items:center;text-transform:uppercase;letter-spacing:.01em}
+.col h3 span{margin-left:auto;font-family:"Geist Mono";font-stretch:100%;font-size:11.5px;font-weight:500;opacity:.75;letter-spacing:0}
+.col h3 .wip{color:var(--acc);opacity:1;font-weight:600}
+.card{position:relative;background:var(--card);border:1.5px solid var(--edge);border-radius:12px;box-shadow:3px 3px 0 var(--edge);margin-right:3px;padding:10px 12px 11px;margin-bottom:9px;overflow:visible}
+.card::before{display:none;content:"";position:absolute;left:0;top:8px;bottom:8px;width:4px;border-radius:0 3px 3px 0;background:var(--gc,transparent)}
+.card .id{font-family:"Geist Mono";font-size:11px;color:var(--muted);display:flex;gap:8px;align-items:center}
+.card .t{font-size:14px;font-weight:600;line-height:1.3;margin:5px 0 8px;letter-spacing:-.005em}
+.card .m{display:flex;gap:10px;align-items:center;font-size:12px;color:var(--muted)}
+.p0{background:var(--head);color:var(--acc);font-family:"Geist Mono";font-size:10.5px;font-weight:600;padding:1px 5px;border-radius:4px}
+.p1{border:1px solid var(--line);font-family:"Geist Mono";font-size:10.5px;padding:0 5px;border-radius:4px;color:var(--text)}
+.next{border-color:var(--acc);box-shadow:4px 4px 0 var(--acc);transform:rotate(-.6deg)}
+.next .tag{position:absolute;top:-9px;right:10px;background:var(--acc);color:var(--acc-ink);font-family:Archivo;font-stretch:75%;font-weight:800;font-size:11px;letter-spacing:.06em;padding:2px 7px 1px;border-radius:4px;display:flex;gap:4px;align-items:center}
+.blk{margin-top:8px;font-size:12px;color:var(--red);display:flex;gap:6px;align-items:center;font-weight:600}
+.done .t{color:var(--muted);text-decoration:line-through;text-decoration-thickness:1.5px;text-decoration-color:var(--muted)}
+.done{background:color-mix(in srgb,var(--card) 60%,transparent);box-shadow:none;border-color:color-mix(in srgb,var(--edge) 45%,transparent)}
+.done .id i{color:var(--acc)}
+
+.notes{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;font-size:13px;line-height:1.5}
+.notes div{background:#ffffffb0;border-radius:10px;padding:12px 14px}.notes b{display:block;margin-bottom:2px}
+</style></head><body>
+<h1>Hybrid v3: index-card edges from C</h1>
+<p class="sub">B is the base: the night-map palette, contour rings and soft cards. From A: condensed, heavy column signs, a bold NEXT tag, and the active nav item filled with the accent. From C: the dotted desk under the contours, and done cards struck through. Shown in dark with an orange project accent, and in light with a cobalt one.</p>
+
+<div class="lbl">Dark, project "Pharmacy POS", accent orange</div>
+<div id="d"></div>
+<div class="lbl">Light, project "Home renovation", accent cobalt</div>
+<div id="l"></div>
+
+<div class="notes">
+ <div><b>Type</b>Archivo condensed at 800 weight for signs only (logo, column headers, section labels, NEXT). Geist for everything you read, and Geist Mono for ids, counts and filter syntax.</div>
+ <div><b>Colour</b>Green-black (or pale survey green in light mode) plus one project accent. Group stripes are the only other colour, and they're always paired with the group's name somewhere.</div>
+ <div><b>Texture</b>A dot grid and faint contour rings on the canvas only, never behind text blocks. Both are low contrast and can be switched off in settings.</div>
+ <div><b>Shape</b>10px cards and controls, 7px column signs, 4px chips. Group stripe on the left edge of each card. Cards have an ink outline and a hard offset edge, as in C. The next-up card takes the accent edge and sits slightly askew, and done cards lose their edge.</div>
+</div>
+
+<script>
+const C=(o)=>`<div class="card ${o.c||''}" style="--gc:${o.g||'transparent'}">${o.c&&o.c.includes('next')?'<span class="tag"><i class="ph-bold ph-arrow-right"></i>NEXT</span>':''}<div class="id">${o.c&&o.c.includes('done')?'<i class="ph-bold ph-check"></i>':''}${o.id}${o.p=='P0'?'<span class="p0">P0</span>':o.p?`<span class="p1">${o.p}</span>`:''}</div><div class="t">${o.t}</div>${o.m?`<div class="m"><span class="route" style="background:${o.g}"></span>${o.m}</div>`:''}${o.b?`<div class="blk"><i class="ph-bold ph-prohibit"></i>Blocked by ${o.b}</div>`:''}</div>`;
+const app=(cls,name,cards,groups)=>`<div class="wp ${cls}">
+<div class="rail"><div class="brand"><i class="ph-fill ph-map-pin"></i>Waypoint</div><div class="proj">${name}</div>
+<div class="rl on"><i class="ph ph-kanban"></i>Board<span class="n">12</span></div>
+<div class="rl"><i class="ph ph-navigation-arrow"></i>Next up</div>
+<div class="rl"><i class="ph ph-prohibit"></i>Blocked<span class="n">2</span></div>
+<div class="rl"><i class="ph ph-archive"></i>Archive</div>
+<div class="sec">Routes</div>${groups.map(g=>`<div class="rl"><span class="route" style="background:${g[1]}"></span>${g[0]}<span class="n">${g[2]}</span></div>`).join('')}
+<div style="flex:1"></div><div class="rl"><i class="ph ph-gear-six"></i>Settings</div></div>
+<div class="main"><div class="bar"><div class="q"><i class="ph ph-magnifying-glass"></i>Filter <code>p0 blocked group:security</code></div>
+<div class="seg"><span class="on"><i class="ph ph-columns"></i></span><span><i class="ph ph-rows"></i></span></div>
+<div class="go"><i class="ph-bold ph-plus"></i>New card</div></div>
+<div class="board">
+<div class="col"><h3>Todo<span>${cards[0].length+4}</span></h3>${cards[0].map(C).join('')}</div>
+<div class="col"><h3>In progress<span class="wip">1/2</span></h3>${cards[1].map(C).join('')}</div>
+<div class="col"><h3>Done<span>${cards[2].length+1}</span></h3>${cards[2].map(C).join('')}</div>
+</div></div></div>`;
+const blue='#6fa8ff',amber='#e8c35a',green='#7fd1a0';
+document.getElementById('d').outerHTML=app('dark orange','Pharmacy POS',[
+ [{id:'T-019',p:'P0',t:'Authenticate the /ws WebSocket',g:blue,m:'Security',c:'next'},
+  {id:'T-020',p:'P0',t:'Validate sale prices server-side',g:blue,m:'Security'},
+  {id:'T-099',p:'P1',t:'Granular permissions with default roles',g:amber,m:'Purchasing',b:'T-017'}],
+ [{id:'T-017',p:'P0',t:'Release purchase orders to production',g:amber,m:'Purchasing <i class="ph ph-check-square"></i>1/4'}],
+ [{id:'T-050',t:'Manual stock management',g:green,c:'done'},{id:'T-018',t:'Lock down public user registration',g:blue,c:'done'}]],
+ [['Security',blue,'1/4'],['Purchasing',amber,'1/3'],['Point of sale',green,'0/5']]);
+const sage='#5c9e74',rose='#d0647a',sand='#c49a3a';
+document.getElementById('l').outerHTML=app('light cobalt','Home renovation',[
+ [{id:'H-004',p:'P0',t:'Get three quotes for the roof',g:sand,m:'Exterior',c:'next'},
+  {id:'H-007',p:'P1',t:'Pick tiles for the upstairs bathroom',g:rose,m:'Bathroom'},
+  {id:'H-009',p:'P1',t:'Paint the hallway',g:sage,m:'Interior',b:'H-008'}],
+ [{id:'H-008',p:'P0',t:'Replaster the hallway walls',g:sage,m:'Interior <i class="ph ph-check-square"></i>2/3'}],
+ [{id:'H-002',t:'Clear out the garage',g:sand,c:'done'},{id:'H-001',t:'Measure every room',g:sage,c:'done'}]],
+ [['Exterior',sand,'1/3'],['Bathroom',rose,'0/2'],['Interior',sage,'1/4']]);
+</script>
+</body></html>
