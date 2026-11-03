@@ -17,23 +17,31 @@ is usable by people and coding agents (`--json`).
 
 Every write goes through `app.Service.apply`: lock, re-read, mutate, save, unlock.
 
-**Tech Stack:** Go (go.mod `go 1.24`), `gopkg.in/yaml.v3`, `github.com/gofrs/flock`, and the
-standard library (`flag`, `encoding/json`, `crypto/sha256`). No CLI framework.
+**Tech Stack (this plan):** Go 1.27 (go.mod `go 1.27`), `gopkg.in/yaml.v3`, `github.com/gofrs/flock`,
+and the standard library (`flag`, `encoding/json`, `crypto/sha256`). No CLI framework.
+
+**Tech Stack (whole project, for orientation):**
+- Backend: Go 1.27 with a `net/http` server speaking HTTP/2 (TLS) plus HTTP/1.1 and h2c (Plan 2),
+  and `modernc.org/sqlite` (Plan 3).
+- Frontend (Plan 2): Svelte 5 + TypeScript + Vite 8, plain CSS custom properties (no Tailwind),
+  `phosphor-svelte` icons, fontsource Archivo/Geist/Geist Mono, `marked` + `dompurify`, Vitest +
+  Testing Library, and Playwright. It's built into `internal/http/dist` and embedded in the binary.
 
 **Spec:** `docs/superpowers/specs/2026-11-03-waypoint-design.md` (§3 Concepts, §5.1, §5.3, §6, §7,
 §8 CLI). Executors read both documents.
 
 **Roadmap:**
-- Plan 2 (`waypoint-web`): HTTP API, SSE, fsnotify watcher, Svelte UI in the "night map" design,
-  appearance resolution, and `waypoint` defaulting to `serve`.
+- Plan 2 (`docs/superpowers/plans/2026-11-03-waypoint-web.md`, written): HTTP/2 server, API, SSE,
+  fsnotify watcher, Svelte UI in the "night map" design, settings, and `waypoint` defaulting to
+  `serve`.
 - Plan 3 (`waypoint-formats`): SQLite adapter, `project convert`, CSV/JSON/MD import and export,
   `waypoint mcp`, and the one-off pharmacy migration.
 
-Both later plans are written after this one lands, against its real interfaces.
+Plan 3 is written after Plans 1 and 2 land.
 
 ## Global Constraints
 
-- Module path `waypoint`; `go 1.24` in go.mod; `domain` imports only the standard library.
+- Module path `waypoint`; `go 1.27` in go.mod; `domain` imports only the standard library.
 - Dependencies point inward: `cli`/`storage`/`config` → `app` → `domain`. `app` never imports an
   adapter.
 - Default columns: `Todo` (moves_to: In progress, Done), `In progress` (moves_to: Todo, Done),
@@ -131,7 +139,7 @@ type Card struct {
 type ArchiveMode string // "off" | "manual" | "auto"
 const ( ArchiveOff ArchiveMode = "off"; ArchiveManual = "manual"; ArchiveAuto = "auto" )
 type ArchiveSettings struct { Mode ArchiveMode; AfterDays int }
-type Appearance struct { Theme, Accent, Density, Swimlane string } // "" = inherit global
+type Appearance struct { Theme, Accent, Density, Swimlane, Textures string } // "" = inherit global
 type Settings struct {
     Name, Prefix string; NextID int
     Columns []Column; Groups []Group; Priorities []string
@@ -149,7 +157,7 @@ func Day(t time.Time) time.Time                      // truncate to UTC date
   `ErrUnknownPriority`, `ErrMoveNotAllowed`, `ErrWIPLimit`, `ErrInvalid`, `ErrConflict`. Callers
   wrap them with `fmt.Errorf("%w: ...")`.
 
-- [ ] **Step 1:** `go mod init waypoint`, set `go 1.24`. Create a `Makefile` with targets `test`
+- [ ] **Step 1:** `go mod init waypoint`, set `go 1.27`. Create a `Makefile` with targets `test`
   (`go test ./...`), `build` (`go build -o bin/waypoint ./cmd/waypoint`) and `vet`.
 - [ ] **Step 2: Write the failing tests**
 
@@ -385,7 +393,7 @@ var ErrNotABoard = errors.New("not a Waypoint board (missing front matter)")
 ```
 - Front matter is YAML between a first line `---` and the next `---`. It maps to Settings using
   the keys from spec §5.1 (`waypoint`, `name`, `prefix`, `next_id`, `columns[{name,wip,moves_to,done}]`,
-  `groups[{name,color}]`, `priorities`, `archive{mode,after_days}`, `appearance{theme,accent,density,swimlane}`).
+  `groups[{name,color}]`, `priorities`, `archive{mode,after_days}`, `appearance{theme,accent,density,swimlane,textures}`).
   Missing keys take `NewBoard` defaults. `waypoint` must be `1`; anything else gives a ParseError
   `unsupported format version N`.
 - A card heading without an id (`### Fix the gate`) is accepted. It gets the next id in memory
