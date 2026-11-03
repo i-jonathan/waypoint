@@ -338,6 +338,14 @@ web/                    Svelte 5 + TypeScript + Vite; built into internal/http/d
 - The frontend is Svelte with TypeScript and Vite **(builder's call)**. It's built once and embedded,
   so Waypoint ships as **one binary**. `waypoint` with no arguments runs `serve` and opens the
   browser. The server binds to `127.0.0.1` only.
+- **HTTP/2 (owner's requirement):** the server enables HTTP/1.1, HTTP/2 over TLS, and h2c. Browsers
+  only use HTTP/2 over HTTPS, so Waypoint generates a local certificate authority. Running
+  `waypoint trust` once installs it, after which `serve` uses HTTPS and HTTP/2. Until then it serves
+  plain HTTP, so there's still no required setup. The `tls: auto|on|off` key in the config controls
+  this.
+- **Local-only safety:** the server rejects requests with a `Host` other than localhost or 127.0.0.1,
+  and every write needs an `X-Waypoint: 1` header. Together these block DNS rebinding and
+  cross-site requests from other web pages.
 - **Testing:** the domain and app layers are unit-tested against an in-memory repository. Both
   storage adapters run one shared contract test suite. The markdown parser has golden-file round-trip
   tests, including fenced code, odd headings, unknown fields, and a parse-error case.
