@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -26,6 +27,14 @@ type CardPatch struct {
 // used as extra field keys.
 var knownFields = []string{"group", "priority", "depends", "created", "done"}
 
+var fieldKeyRE = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+
+// ValidFieldKey reports whether k can be used as an extra card field key: it
+// must be readable back from the markdown format and not be a built-in field.
+func ValidFieldKey(k string) bool {
+	return fieldKeyRE.MatchString(k) && !slices.Contains(knownFields, k)
+}
+
 // wipError reports a full column. Its message is the bare sentence the CLI
 // prints, and it unwraps to ErrWIPLimit.
 type wipError struct{ msg string }
@@ -36,9 +45,9 @@ func (e wipError) Unwrap() error { return ErrWIPLimit }
 // AddCard appends a new card at the bottom of its column and assigns it the
 // next id. On error the board is unchanged.
 func (b *Board) AddCard(n NewCard, today time.Time) (Card, error) {
-	title := strings.TrimSpace(n.Title)
-	if title == "" {
-		return Card{}, fmt.Errorf("%w: title is empty", ErrInvalid)
+	title, err := cleanTitle(n.Title)
+	if err != nil {
+		return Card{}, err
 	}
 	column := n.Column
 	if column == "" {
@@ -63,10 +72,18 @@ func (b *Board) AddCard(n NewCard, today time.Time) (Card, error) {
 	if slices.Contains(n.Depends, id) {
 		return Card{}, fmt.Errorf("%w: %s cannot depend on itself", ErrInvalid, id)
 	}
+	seen := make(map[string]bool, len(n.Extra))
 	for _, f := range n.Extra {
-		if err := validateExtraKey(f.Key); err != nil {
+		if err := validateExtra(f.Key, f.Value); err != nil {
 			return Card{}, err
 		}
+		if f.Value == "" {
+			return Card{}, fmt.Errorf("%w: field %q has an empty value", ErrInvalid, f.Key)
+		}
+		if seen[f.Key] {
+			return Card{}, fmt.Errorf("%w: duplicate field %q", ErrInvalid, f.Key)
+		}
+		seen[f.Key] = true
 	}
 
 	card := Card{
@@ -173,9 +190,9 @@ func (b *Board) UpdateCard(id CardID, p CardPatch) error {
 
 	next := *target // edited copy; its slices still alias the board until replaced
 	if p.Title != nil {
-		title := strings.TrimSpace(*p.Title)
-		if title == "" {
-			return fmt.Errorf("%w: title is empty", ErrInvalid)
+		title, err := cleanTitle(*p.Title)
+		if err != nil {
+			return err
 		}
 		next.Title = title
 	}
@@ -211,10 +228,10 @@ func (b *Board) UpdateCard(id CardID, p CardPatch) error {
 		}
 		slices.Sort(keys)
 		for _, k := range keys {
-			if err := validateExtraKey(k); err != nil {
+			v := p.Set[k]
+			if err := validateExtra(k, v); err != nil {
 				return err
 			}
-			v := p.Set[k]
 			at := slices.IndexFunc(extra, func(f Field) bool { return f.Key == k })
 			switch {
 			case v == "" && at >= 0:
@@ -283,13 +300,26 @@ func (b *Board) canonicalPriority(name string) (string, error) {
 	return "", fmt.Errorf("%w: %q", ErrUnknownPriority, name)
 }
 
-// validateExtraKey rejects keys the markdown format cannot round-trip.
-func validateExtraKey(key string) error {
-	if strings.TrimSpace(key) == "" || strings.ContainsAny(key, ":\r\n") {
-		return fmt.Errorf("%w: field name %q", ErrInvalid, key)
+// cleanTitle trims a title and rejects empty or multi-line ones.
+func cleanTitle(raw string) (string, error) {
+	if strings.ContainsAny(raw, "\r\n") {
+		return "", fmt.Errorf("%w: title must be a single line", ErrInvalid)
 	}
-	if slices.Contains(knownFields, strings.ToLower(key)) {
-		return fmt.Errorf("%w: %q is a built-in field", ErrInvalid, key)
+	title := strings.TrimSpace(raw)
+	if title == "" {
+		return "", fmt.Errorf("%w: title is empty", ErrInvalid)
+	}
+	return title, nil
+}
+
+// validateExtra rejects an extra field the markdown format cannot write as a
+// single "key: value" line and read back.
+func validateExtra(key, value string) error {
+	if !ValidFieldKey(key) {
+		return fmt.Errorf("%w: field name %q must match %s and not be a built-in field", ErrInvalid, key, fieldKeyRE)
+	}
+	if strings.ContainsAny(value, "\r\n") {
+		return fmt.Errorf("%w: value of field %q must be a single line", ErrInvalid, key)
 	}
 	return nil
 }

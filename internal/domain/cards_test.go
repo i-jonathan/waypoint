@@ -283,3 +283,76 @@ func TestUpdateCopiesPatchDepends(t *testing.T) {
 	deps[0] = "T-0"
 	assertEqual(t, b.Cards[0].Depends, []CardID{"T-5"})
 }
+
+func TestValidFieldKey(t *testing.T) {
+	for _, k := range []string{"owner", "a", "my-key", "my_key", "x1"} {
+		assertTrue(t, ValidFieldKey(k))
+	}
+	for _, k := range []string{"", "Owner", "my key", "a.b", "1x", "-x", " owner", "owner ", "a:b", "a\nb",
+		"group", "priority", "depends", "created", "done"} {
+		if ValidFieldKey(k) {
+			t.Fatalf("ValidFieldKey(%q) = true, want false", k)
+		}
+	}
+}
+
+func TestExtraKeysAndValuesValidated(t *testing.T) {
+	badKeys := []string{"Owner", "my key", "a.b", "1x", " owner", "group"}
+	for _, k := range badKeys {
+		b := NewBoard("x", "T")
+		_, err := b.AddCard(NewCard{Title: "A", Extra: []Field{{Key: k, Value: "v"}}}, today)
+		if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("AddCard key %q: got %v, want ErrInvalid", k, err)
+		}
+		assertEqual(t, len(b.Cards), 0)
+		assertEqual(t, b.Settings.NextID, 1)
+
+		id := mustAdd(t, b, NewCard{Title: "A"}).ID
+		err = b.UpdateCard(id, CardPatch{Set: map[string]string{k: "v"}})
+		if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("UpdateCard key %q: got %v, want ErrInvalid", k, err)
+		}
+		assertEqual(t, len(b.Cards[0].Extra), 0)
+	}
+
+	b := NewBoard("x", "T")
+	bad := map[string][]Field{
+		"newline value":  {{Key: "owner", Value: "a\nb"}},
+		"carriage value": {{Key: "owner", Value: "a\rb"}},
+		"empty value":    {{Key: "owner", Value: ""}},
+		"duplicate key":  {{Key: "owner", Value: "a"}, {Key: "owner", Value: "b"}},
+	}
+	for name, extra := range bad {
+		_, err := b.AddCard(NewCard{Title: "A", Extra: extra}, today)
+		if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("AddCard %s: got %v, want ErrInvalid", name, err)
+		}
+	}
+	assertEqual(t, len(b.Cards), 0)
+
+	id := mustAdd(t, b, NewCard{Title: "A"}).ID
+	assertTrue(t, errors.Is(b.UpdateCard(id, CardPatch{Set: map[string]string{"owner": "a\nb"}}), ErrInvalid))
+	assertTrue(t, errors.Is(b.UpdateCard(id, CardPatch{Set: map[string]string{"owner": "a\rb"}}), ErrInvalid))
+	assertEqual(t, len(b.Cards[0].Extra), 0)
+}
+
+func TestTitleMustBeSingleLine(t *testing.T) {
+	b := NewBoard("x", "T")
+	for _, title := range []string{"a\nb", "a\rb", "trailing\n"} {
+		_, err := b.AddCard(NewCard{Title: title}, today)
+		if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("AddCard title %q: got %v, want ErrInvalid", title, err)
+		}
+		id := mustAdd(t, b, NewCard{Title: "ok"}).ID
+		err = b.UpdateCard(id, CardPatch{Title: ptr(title)})
+		if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("UpdateCard title %q: got %v, want ErrInvalid", title, err)
+		}
+		assertNoErr(t, b.DeleteCard(id))
+	}
+	assertEqual(t, len(b.Cards), 0)
+
+	// Bodies are multi-line by design.
+	c := mustAdd(t, b, NewCard{Title: "A", Body: "line1\nline2\n"})
+	assertEqual(t, c.Body, "line1\nline2\n")
+}
