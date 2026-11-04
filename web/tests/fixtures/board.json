@@ -1,0 +1,150 @@
+{
+  "board": {
+    "settings": {
+      "name": "Home reno",
+      "prefix": "H",
+      "next_id": 4,
+      "columns": [
+        {
+          "name": "Todo",
+          "wip": 0,
+          "moves_to": [
+            "In progress",
+            "Done"
+          ],
+          "done": false
+        },
+        {
+          "name": "In progress",
+          "wip": 0,
+          "moves_to": [
+            "Todo",
+            "Done"
+          ],
+          "done": false
+        },
+        {
+          "name": "Done",
+          "wip": 0,
+          "moves_to": [
+            "In progress"
+          ],
+          "done": true
+        }
+      ],
+      "groups": [
+        {
+          "name": "Kitchen",
+          "color": "amber"
+        }
+      ],
+      "priorities": [
+        "P0",
+        "P1",
+        "P2"
+      ],
+      "archive": {
+        "mode": "manual",
+        "after_days": 14
+      },
+      "appearance": {
+        "theme": "",
+        "accent": "",
+        "density": "",
+        "swimlane": "",
+        "textures": ""
+      }
+    },
+    "cards": [
+      {
+        "id": "H-1",
+        "title": "Pick tiles",
+        "column": "Todo",
+        "group": "Kitchen",
+        "priority": "P1",
+        "depends": [],
+        "created": "2026-11-04T22:49:44Z",
+        "done": null,
+        "body": "Check samples.\n\n- [x] Visit showroom\n- [ ] Order samples",
+        "extra": [],
+        "archived": false,
+        "blockers": [],
+        "next": true,
+        "checklist": {
+          "done": 1,
+          "total": 2
+        },
+        "hash": "d3f960018354c5461f88e33ffaa2722f921d9aeab2c3bd1eacb7b493645c784c"
+      },
+      {
+        "id": "H-2",
+        "title": "Book plumber",
+        "column": "Todo",
+        "group": "",
+        "priority": "",
+        "depends": [
+          "H-1"
+        ],
+        "created": "2026-10-26",
+        "done": null,
+        "body": "",
+        "extra": [],
+        "archived": false,
+        "blockers": [
+          {
+            "id": "H-1",
+            "missing": false
+          }
+        ],
+        "next": false,
+        "checklist": {
+          "done": 0,
+          "total": 0
+        },
+        "hash": "b5d2faabbe0add84351780c3e15f615d857b35e0bb81b7845c8f3c82b6c19d88"
+      },
+      {
+        "id": "H-3",
+        "title": "Paint hall",
+        "column": "Done",
+        "group": "",
+        "priority": "",
+        "depends": [],
+        "created": "2026-11-04T22:49:44Z",
+        "done": "2026-11-04T22:49:44Z",
+        "body": "",
+        "extra": [
+          {
+            "key": "owner",
+            "value": "sam"
+          }
+        ],
+        "archived": false,
+        "blockers": [],
+        "next": false,
+        "checklist": {
+          "done": 0,
+          "total": 0
+        },
+        "hash": "be9b6c0095f74cb805c746f56e12d88bbefbadae34f49e4f0708d2bff960f598"
+      }
+    ],
+    "warnings": [],
+    "settings_hash": "6d652f0608769a9d416af53b8362bebb8d64ee4f1b8539436a4814624d6bb5a7"
+  },
+  "appearance": {
+    "theme": "system",
+    "accent": "orange",
+    "density": "comfortable",
+    "swimlane": "none",
+    "textures": "on",
+    "source": {
+      "accent": "default",
+      "density": "default",
+      "swimlane": "default",
+      "textures": "default",
+      "theme": "default"
+    }
+  },
+  "readonly": false
+}

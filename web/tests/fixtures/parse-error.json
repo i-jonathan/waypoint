@@ -1,0 +1,5 @@
+{
+  "error": "/tmp/waypoint-fixture/garden.md: line 24: invalid card id \"???\" in depends (separate ids with commas)",
+  "code": "parse",
+  "line": 24
+}
