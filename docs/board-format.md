@@ -120,9 +120,9 @@ but at least two headings start with an id of another prefix, Waypoint stops and
 writes nothing, because those cards would otherwise all get new ids. The match is
 case-sensitive, so `prefix: t` on `T-1` cards triggers it. To change a board's
 prefix, change `prefix` and every card heading and `depends` line together. On a
-board with no cards yet, two titles such as `### COVID-19 booster` and
-`### COVID-19 test` trigger it too: give either one an id, such as
-`### T-1 COVID-19 booster`, or add it with `waypoint add`.
+board with no cards yet, two titles such as `### Phase-1 demolition` and
+`### F-150 oil change` trigger it too: if the headings are titles, give one an
+id, such as `### T-1 Phase-1 demolition`, or add it with `waypoint add`.
 
 ### Fields
 

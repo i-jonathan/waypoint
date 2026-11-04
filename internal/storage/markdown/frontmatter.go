@@ -93,19 +93,43 @@ func yamlError(err error) *ParseError {
 	return &ParseError{Line: line, Msg: "invalid front matter: " + msg}
 }
 
+// hasWaypointKey reports whether front matter has a waypoint key with a value.
+func hasWaypointKey(yamlText string) (bool, error) {
+	var probe struct {
+		Waypoint any `yaml:"waypoint"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlText), &probe); err != nil {
+		return false, err
+	}
+	return probe.Waypoint != nil, nil
+}
+
+// IsBoard reports whether data has Waypoint front matter. A board that does not
+// otherwise parse is still a board, including one whose YAML is broken, as long
+// as a waypoint key can be seen at the top level.
+func IsBoard(data []byte) bool {
+	yamlText, _, err := splitFrontMatter(splitLines(data))
+	if err != nil {
+		return false
+	}
+	isBoard, err := hasWaypointKey(yamlText)
+	if err != nil {
+		return strings.Contains("\n"+yamlText, "\nwaypoint:")
+	}
+	return isBoard
+}
+
 // settingsFromYAML decodes front matter into board settings on top of the
 // NewBoard defaults and validates them. Unknown keys are an error, so a typo
 // such as "colums" is not silently dropped.
 func settingsFromYAML(yamlText string) (domain.Settings, error) {
 	// Other tools use front matter too. Only a file with a waypoint key is a
 	// board, and only a board is held to the strict key check below.
-	var probe struct {
-		Waypoint any `yaml:"waypoint"`
-	}
-	if err := yaml.Unmarshal([]byte(yamlText), &probe); err != nil {
+	isBoard, err := hasWaypointKey(yamlText)
+	if err != nil {
 		return domain.Settings{}, yamlError(err)
 	}
-	if probe.Waypoint == nil {
+	if !isBoard {
 		return domain.Settings{}, ErrNotABoard
 	}
 	var fm frontMatter

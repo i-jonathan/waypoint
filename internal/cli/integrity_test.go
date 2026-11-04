@@ -605,6 +605,7 @@ func TestTwoIDShapedTitlesOnAnEmptyBoardAreRefused(t *testing.T) {
 
 	assertEq(t, code, exitError)
 	assertContains(t, stderr, `no card uses the prefix "T"`)
+	assertContains(t, stderr, "if these are titles, give one an id")
 	assertEq(t, readFile(t, path), edited)
 }
 
@@ -790,7 +791,7 @@ func TestWrongPrefixIsAnErrorAndWritesNothing(t *testing.T) {
 				_, stderr, code := runCLI(t, dir, args...)
 				assertEq(t, code, exitError)
 				assertContains(t, stderr, `no card uses the prefix "`+prefix+`", but 3 look like ids with another prefix (first on line`)
-				assertContains(t, stderr, `check "prefix" in the front matter`)
+				assertContains(t, stderr, `check "prefix" in the front matter; or, if these are titles, give one an id`)
 				assertEq(t, readFile(t, path), edited)
 			}
 
@@ -939,4 +940,99 @@ func TestArchiveMonthIsTheMonthOfTheStoredUTCValue(t *testing.T) {
 	archive := readFile(t, filepath.Join(dir, "BOARD.archive.md"))
 	assertContains(t, archive, "## 2026-11\n")
 	assertContains(t, archive, "- done: 2026-11-01T03:00:00Z\n")
+}
+
+// oldFormatBoard is a file named BOARD.md that Waypoint did not write.
+const oldFormatBoard = "# Pharmacy board\n\n## To do\n- [ ] Check the fridge log\n\n## Done\n- Stock count\n"
+
+func TestFileThatIsNotAWaypointBoardDoesNotBlockProjectSearch(t *testing.T) {
+	contents := map[string]string{
+		"no front matter":         oldFormatBoard,
+		"another tool's":          "---\ntitle: Notes\n---\n\nText\n",
+		"opens with a rule":       "---\n\nJust a rule, never closed.\n",
+		"another tool's bad YAML": "---\ntitle: a: b\n---\n",
+		"empty":                   "",
+	}
+	for name, content := range contents {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "pharmacy")
+			here := filepath.Join(dir, "BOARD.md")
+			writeFile(t, here, content)
+			if _, stderr, code := runCLI(t, dir, "project", "add", "pharmacy", "--path", "waypoint.md"); code != exitOK {
+				t.Fatalf("project add: %d %s", code, stderr)
+			}
+
+			if _, stderr, code := runCLI(t, dir, "add", "From root"); code != exitOK {
+				t.Fatalf("add: %d %s", code, stderr)
+			}
+			stdout, stderr, code := runCLI(t, dir, "ls")
+			assertEq(t, code, exitOK)
+			assertEq(t, stderr, "")
+			assertContains(t, stdout, "From root")
+			stdout, _, code = runCLI(t, dir, "ls", "--json")
+			assertEq(t, code, exitOK)
+			assertContains(t, stdout, `"title":"From root"`)
+
+			stdout, _, _ = runCLI(t, dir, "project", "ls")
+			assertContains(t, stdout, "* pharmacy")
+			assertEq(t, readFile(t, here), content)
+			assertContains(t, readFile(t, filepath.Join(dir, "waypoint.md")), "From root")
+		})
+	}
+}
+
+func TestFolderNamedBoardDoesNotBlockProjectSearch(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "BOARD.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runCLI(t, dir, "project", "add", "P", "--path", "waypoint.md")
+
+	if _, stderr, code := runCLI(t, dir, "add", "Card"); code != exitOK {
+		t.Fatalf("add: %d %s", code, stderr)
+	}
+}
+
+func TestOtherCaseOfTheBoardNameDoesNotBlockProjectSearch(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "board.md"), boardFile)
+	runCLI(t, dir, "project", "add", "P", "--path", "waypoint.md")
+
+	if _, stderr, code := runCLI(t, dir, "add", "Card"); code != exitOK {
+		t.Fatalf("add: %d %s", code, stderr)
+	}
+}
+
+func TestBrokenWaypointBoardHereStillBlocks(t *testing.T) {
+	root := t.TempDir()
+	registered := filepath.Join(root, "BOARD.md")
+	runCLI(t, root, "project", "add", "Other", "--path", registered)
+	before := readFile(t, registered)
+	cwd := filepath.Join(root, "sub")
+	writeFile(t, filepath.Join(cwd, "BOARD.md"), "---\nwaypoint: 1\nname: a: b\n---\n")
+
+	_, stderr, code := runCLI(t, cwd, "add", "Lost card")
+
+	assertEq(t, code, exitError)
+	assertContains(t, stderr, `BOARD.md here isn't registered; run "waypoint init"`)
+	assertEq(t, readFile(t, registered), before)
+}
+
+func TestSymlinkToAWaypointBoardBlocks(t *testing.T) {
+	root := t.TempDir()
+	runCLI(t, root, "project", "add", "Other", "--path", filepath.Join(root, "BOARD.md"))
+	elsewhere := filepath.Join(t.TempDir(), "real.md")
+	writeFile(t, elsewhere, boardFile)
+	cwd := filepath.Join(root, "sub")
+	if err := os.Mkdir(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(cwd, "BOARD.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runCLI(t, cwd, "add", "Lost card")
+
+	assertEq(t, code, exitError)
+	assertContains(t, stderr, "isn't registered")
 }

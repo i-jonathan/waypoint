@@ -168,7 +168,7 @@ func checkPrefix(raw []rawCard, prefix string) error {
 	if foreign < 2 {
 		return nil
 	}
-	return &ParseError{Line: first, Msg: fmt.Sprintf(`no card uses the prefix %q, but %d look like ids with another prefix (first on line %d): check "prefix" in the front matter`, prefix, foreign, first)}
+	return &ParseError{Line: first, Msg: fmt.Sprintf(`no card uses the prefix %q, but %d look like ids with another prefix (first on line %d): check "prefix" in the front matter; or, if these are titles, give one an id`, prefix, foreign, first)}
 }
 
 // ParseArchive reads an archive file: one "## YYYY-MM" section per month with

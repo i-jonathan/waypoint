@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"waypoint/internal/app"
@@ -271,11 +272,22 @@ func (e noProjectError) Error() string { return e.msg }
 
 func (noProjectError) Unwrap() error { return domain.ErrNotFound }
 
-// unregisteredHere reports whether the working directory holds a ./BOARD.md
-// that is not a registered board.
+// unregisteredHere reports whether the working directory holds a Waypoint board
+// named exactly BOARD.md that is not registered. Any other file or folder of
+// that name is not Waypoint's, and says nothing about which project this is.
 func (r *runner) unregisteredHere(cfg *config.Config) bool {
+	// The directory listing has the real name; on a case-insensitive disk a
+	// Stat would also find board.md.
+	entries, err := os.ReadDir(r.env.Cwd)
+	if err != nil || !slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Name() == initBoardFile }) {
+		return false
+	}
 	here := filepath.Join(r.env.Cwd, initBoardFile)
-	if _, err := os.Stat(here); err != nil {
+	if info, err := os.Stat(here); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	data, err := os.ReadFile(here)
+	if err != nil || !markdown.IsBoard(data) {
 		return false
 	}
 	_, registered := registeredAt(cfg, here)
@@ -284,9 +296,9 @@ func (r *runner) unregisteredHere(cfg *config.Config) bool {
 
 // resolveProject picks the project a command acts on: name (the --project
 // value) if given, else $WAYPOINT_PROJECT, else the project found from the
-// working directory (see config.FindByDir). An unregistered ./BOARD.md stops
-// that search, because a board in the working directory is the one the user
-// means, whatever is registered above or below it. Anything else is an error,
+// working directory (see config.FindByDir). An unregistered Waypoint board at
+// ./BOARD.md stops that search, because a board in the working directory is the
+// one the user means, whatever is registered above it. Anything else is an error,
 // so a card never lands on a board the user did not mean. A named project that
 // does not exist is an error, not a fall-through.
 func (r *runner) resolveProject(cfg *config.Config, name string) (config.ProjectRef, error) {
