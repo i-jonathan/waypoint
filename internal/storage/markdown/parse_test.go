@@ -310,9 +310,10 @@ func TestParseIDAssignment(t *testing.T) {
 	src := "---\nwaypoint: 1\nprefix: T\nnext_id: 112\n---\n\n## Todo\n\n### First idless\n\n### T-200 Hand added\n\n### Second idless\n\n### X-900 Other prefix\n\n### T-5 Low\n"
 	b, assigned, err := ParseAssigned([]byte(src))
 	assertNoErr(t, err)
-	assertEqual(t, assigned, []domain.CardID{"T-201", "T-202"})
-	assertEqual(t, b.Settings.NextID, 203)
-	assertEqual(t, ids(b.Cards), []domain.CardID{"T-201", "T-200", "T-202", "X-900", "T-5"})
+	assertEqual(t, assigned, []domain.CardID{"T-201", "T-202", "T-203"})
+	assertEqual(t, b.Settings.NextID, 204)
+	assertEqual(t, ids(b.Cards), []domain.CardID{"T-201", "T-200", "T-202", "T-203", "T-5"})
+	assertEqual(t, b.Cards[3].Title, "X-900 Other prefix")
 }
 
 func TestParseCardHeadingErrors(t *testing.T) {
@@ -477,4 +478,50 @@ func TestSecondBlankLineEndsFieldBlock(t *testing.T) {
 	assertEqual(t, b.Cards[0].Group, "")
 	assertEqual(t, b.Cards[0].Extra, []domain.Field(nil))
 	assertEqual(t, b.Cards[0].Body, "- group: A\n- note: b")
+}
+
+func TestHeadingFirstWordIsAnIDOnlyWithTheBoardsPrefix(t *testing.T) {
+	const head = "---\nwaypoint: 1\nname: x\nprefix: T\nnext_id: 5\n---\n\n## Todo\n\n"
+	cases := []struct {
+		heading string
+		id      domain.CardID
+		title   string
+		given   bool // the id was assigned, not read
+	}{
+		{"### COVID-19 booster", "T-5", "COVID-19 booster", true},
+		{"### COVID-19", "T-5", "COVID-19", true},
+		{"### t-1 lower case", "T-5", "t-1 lower case", true},
+		{"### T-2 Mine", "T-2", "Mine", false},
+		{"### TT-2 Longer prefix", "T-5", "TT-2 Longer prefix", true},
+	}
+	for _, c := range cases {
+		t.Run(c.heading, func(t *testing.T) {
+			b, assigned, err := ParseAssigned([]byte(head + c.heading + "\n"))
+			assertNoErr(t, err)
+			assertEqual(t, b.Cards[0].ID, c.id)
+			assertEqual(t, b.Cards[0].Title, c.title)
+			assertEqual(t, len(assigned) == 1, c.given)
+		})
+	}
+}
+
+func TestBareIDOfThisBoardStillNeedsATitle(t *testing.T) {
+	_, err := Parse([]byte("---\nwaypoint: 1\nprefix: T\n---\n\n## Todo\n\n### T-3\n"))
+	var pe *ParseError
+	if !errors.As(err, &pe) || !strings.Contains(pe.Msg, "no title") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestArchiveKeepsAnIDOfAnyPrefix(t *testing.T) {
+	src := "# Archive\n\n## 2026-10\n\n### OLD-7 From another board\n\n- done: 2026-10-01\n"
+	cards, err := ParseArchive([]byte(src), domain.Settings{})
+	assertNoErr(t, err)
+	assertEqual(t, cards[0].ID, domain.CardID("OLD-7"))
+	assertEqual(t, cards[0].Title, "From another board")
+
+	_, err = ParseArchive([]byte("# Archive\n\n## 2026-10\n\n### No id here\n\n- done: 2026-10-01\n"), domain.Settings{})
+	if err == nil || !strings.Contains(err.Error(), "has no id") {
+		t.Fatalf("got %v", err)
+	}
 }

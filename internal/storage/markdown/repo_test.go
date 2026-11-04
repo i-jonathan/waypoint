@@ -796,3 +796,39 @@ func TestLoadRefusesACardInBothFilesWithDifferentContent(t *testing.T) {
 		})
 	}
 }
+
+func sameInode(t *testing.T, before os.FileInfo, path string) bool {
+	t.Helper()
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return os.SameFile(before, after)
+}
+
+func TestSaveSkipsAFileWhoseBytesAreIdentical(t *testing.T) {
+	r, b, board, archive := boardWithArchive(t)
+	boardBefore, err := os.Stat(board)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archiveBefore, err := os.Stat(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mustSave(t, r, b)
+	if !sameInode(t, boardBefore, board) || !sameInode(t, archiveBefore, archive) {
+		t.Fatal("Save replaced a file with identical bytes")
+	}
+
+	// Only the board changes, so the archive stays the same file.
+	addCard(t, b, "New", "")
+	mustSave(t, r, b)
+	if sameInode(t, boardBefore, board) {
+		t.Fatal("the board was not written")
+	}
+	if !sameInode(t, archiveBefore, archive) {
+		t.Fatal("Save replaced the unchanged archive")
+	}
+}

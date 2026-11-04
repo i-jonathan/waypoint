@@ -78,6 +78,11 @@ func ParseAssignedReserved(data []byte, reserved []domain.CardID) (*domain.Board
 	}
 	cardLike := regexp.MustCompile(`^### ` + regexp.QuoteMeta(settings.Prefix) + `-\d+[ \t]+\S`)
 	raw, notices, err := scanCards(lines[closing+1:], closing+1, scanOptions{
+		// Only this board's prefix makes an id, so that a title such as
+		// "COVID-19 booster" stays a title.
+		isID: func(word string) bool {
+			return domain.ValidCardID(word) && strings.HasPrefix(word, settings.Prefix+"-")
+		},
 		section: func(name string) error {
 			if _, ok := columnIndex[name]; !ok {
 				return fmt.Errorf("unknown column %q", name)
@@ -105,10 +110,7 @@ func ParseAssignedReserved(data []byte, reserved []domain.CardID) (*domain.Board
 		if !r.hasID {
 			continue
 		}
-		prefix, num, _ := strings.Cut(string(r.card.ID), "-")
-		if prefix != settings.Prefix {
-			continue
-		}
+		_, num, _ := strings.Cut(string(r.card.ID), "-")
 		n, err := strconv.Atoi(num)
 		if err != nil {
 			return nil, nil, &ParseError{Line: r.line, Msg: fmt.Sprintf("card id %s has a number that is too large", r.card.ID)}
@@ -151,6 +153,7 @@ func ParseArchive(data []byte, _ domain.Settings) ([]domain.Card, error) {
 	lines := splitLines(data)
 	raw, _, err := scanCards(lines, 0, scanOptions{
 		title: "# Archive",
+		isID:  domain.ValidCardID,
 		section: func(name string) error {
 			if _, err := time.Parse("2006-01", name); err != nil || len(name) != len("2006-01") {
 				return fmt.Errorf("archive section %q must be YYYY-MM", name)
@@ -191,6 +194,8 @@ type rawCard struct {
 
 // scanOptions tunes scanCards for the board and archive files.
 type scanOptions struct {
+	// isID reports whether the first word of a card heading is its id.
+	isID func(word string) bool
 	// section validates the name of each ## heading; its error is reported on
 	// that line.
 	section func(name string) error
@@ -277,7 +282,7 @@ func scanCards(lines []string, base int, opts scanOptions) ([]rawCard, []string,
 		if k := strings.IndexAny(text, " \t"); k >= 0 {
 			first, rest = text[:k], text[k+1:]
 		}
-		hasID := domain.ValidCardID(first)
+		hasID := opts.isID(first)
 		title := text
 		if hasID {
 			card.ID, title = domain.CardID(first), strings.TrimSpace(rest)

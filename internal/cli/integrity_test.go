@@ -588,3 +588,80 @@ func TestParallelAddsAndRemovesAllTakeEffect(t *testing.T) {
 		}
 	}
 }
+
+func TestNegativeAfterDaysDoesNotArchiveADoneCard(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "BOARD.md")
+	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "add", "Card")
+	edited := strings.Replace(readFile(t, path), "columns:", "archive: {mode: auto, after_days: -5}\ncolumns:", 1)
+	writeFile(t, path, edited)
+
+	_, stderr, code := runCLI(t, dir, "done", "T-1")
+
+	assertEq(t, code, exitError)
+	assertContains(t, stderr, "after_days")
+	assertEq(t, readFile(t, path), edited)
+}
+
+func TestHeadingWithAnotherPrefixIsATitle(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "BOARD.md")
+	runCLI(t, dir, "init", "P")
+	writeFile(t, path, strings.Replace(readFile(t, path), "## Todo\n", "## Todo\n\n### COVID-19 booster\n\n### COVID-19\n", 1))
+
+	stdout, stderr, code := runCLI(t, dir, "ls")
+
+	assertEq(t, code, exitOK)
+	assertEq(t, stderr, "")
+	assertContains(t, stdout, "T-1  Todo  COVID-19 booster")
+	assertContains(t, stdout, "T-2  Todo  COVID-19")
+	assertContains(t, readFile(t, path), "### T-1 COVID-19 booster\n")
+}
+
+func TestRepeatedDependencyIsShownOnce(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "BOARD.md")
+	runCLI(t, dir, "init", "P")
+	writeFile(t, path, strings.Replace(readFile(t, path), "## Todo\n", "## Todo\n\n### T-2 x\n\n- depends: T-1, T-1\n", 1))
+
+	stdout, _, _ := runCLI(t, dir, "ls")
+
+	assertContains(t, stdout, "[BLOCKED by T-1?]")
+}
+
+func TestUnchangedArchiveIsNotRewrittenByABoardWrite(t *testing.T) {
+	dir, _, archive := archivedBoard(t)
+	before, err := os.Stat(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, stderr, code := runCLI(t, dir, "add", "x"); code != exitOK {
+		t.Fatalf("add: %d %s", code, stderr)
+	}
+
+	after, err := os.Stat(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("the archive was replaced")
+	}
+}
+
+func TestRestoringACardWithAnotherPrefixLosesNothing(t *testing.T) {
+	dir := t.TempDir()
+	board := filepath.Join(dir, "BOARD.md")
+	archive := filepath.Join(dir, "BOARD.archive.md")
+	runCLI(t, dir, "init", "P")
+	writeFile(t, archive, "# Archive\n\n## 2026-10\n\n### OLD-7 From another board\n\n- done: 2026-10-01\n")
+	boardBefore, archiveBefore := readFile(t, board), readFile(t, archive)
+
+	_, stderr, code := runCLI(t, dir, "restore", "OLD-7")
+
+	assertEq(t, code, exitError)
+	assertContains(t, stderr, "refusing to write")
+	assertEq(t, readFile(t, board), boardBefore)
+	assertEq(t, readFile(t, archive), archiveBefore)
+}

@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -356,8 +357,12 @@ func sameCards(want, got []domain.Card) error {
 // writeFileAtomic replaces path, which must already be resolved (see
 // canonical), with data: it writes a temp file in the same directory, syncs it,
 // gives it the old file's permissions (0644 for a new file) and renames it into
-// place. The temp file is removed on any error.
+// place. The temp file is removed on any error. A file that already holds
+// exactly data is left alone.
 func writeFileAtomic(path string, data []byte) error {
+	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
+		return nil
+	}
 	mode := fs.FileMode(0o644)
 	if fi, err := os.Stat(path); err == nil {
 		mode = fi.Mode().Perm()
