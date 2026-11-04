@@ -163,3 +163,12 @@ func TestCardHashFieldBoundaries(t *testing.T) {
 	differ("extra split", Card{Extra: []Field{{"a", "b"}, {"c", "d"}}}, Card{Extra: []Field{{"a", "b"}}, Body: "cd"})
 	differ("id/title", Card{ID: "ab", Title: "c"}, Card{ID: "a", Title: "bc"})
 }
+
+func TestBlockersListsARepeatedDependencyOnce(t *testing.T) {
+	b := NewBoard("X", "T")
+	b.Cards = []Card{
+		{ID: "T-1", Title: "A", Column: "Todo", Depends: []CardID{"T-9", "T-2", "T-9", "T-2"}},
+		{ID: "T-2", Title: "B", Column: "Todo"},
+	}
+	assertEqual(t, b.Blockers("T-1"), []Blocker{{ID: "T-9", Missing: true}, {ID: "T-2"}})
+}

@@ -123,3 +123,31 @@ func TestDayLeavesAParsedDateAlone(t *testing.T) {
 	assertEqual(t, Day(parsed), parsed)
 	assertEqual(t, Day(Day(parsed)), parsed)
 }
+
+func TestValidateRejectsTheGapsThatReachedDisk(t *testing.T) {
+	cases := map[string]func(*Settings){
+		"negative after_days": func(s *Settings) { s.Archive.AfterDays = -5 },
+		"empty group":         func(s *Settings) { s.Groups = []Group{{Name: ""}} },
+		"blank group":         func(s *Settings) { s.Groups = []Group{{Name: "  "}} },
+		"empty priority":      func(s *Settings) { s.Priorities = []string{"P0", ""} },
+		"blank priority":      func(s *Settings) { s.Priorities = []string{" "} },
+		"duplicate priority":  func(s *Settings) { s.Priorities = []string{"P0", "P0"} },
+		"same but for case":   func(s *Settings) { s.Priorities = []string{"high", "High"} },
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := NewBoard("X", "T").Settings
+			change(&s)
+			if err := s.Validate(); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("Validate = %v, want ErrInvalid", err)
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsAfterDaysZeroAndNoPriorities(t *testing.T) {
+	s := NewBoard("X", "T").Settings
+	s.Archive.AfterDays = 0
+	s.Priorities = nil
+	assertNoErr(t, s.Validate())
+}

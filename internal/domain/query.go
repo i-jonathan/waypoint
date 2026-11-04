@@ -16,15 +16,21 @@ type Blocker struct {
 
 // Blockers lists the direct dependencies of a card that are not yet done: each
 // Depends entry that is neither in a done column nor archived. Unknown ids are
-// reported as Missing. Dependencies are not followed transitively, so cycles
-// are harmless. An unknown card has no blockers.
+// reported as Missing, and an id listed twice is reported once. Dependencies
+// are not followed transitively, so cycles are harmless. An unknown card has no
+// blockers.
 func (b *Board) Blockers(id CardID) []Blocker {
 	card, _, ok := b.Find(id)
 	if !ok {
 		return nil
 	}
 	var out []Blocker
+	seen := make(map[CardID]bool, len(card.Depends))
 	for _, dep := range card.Depends {
+		if seen[dep] {
+			continue
+		}
+		seen[dep] = true
 		c, archived, found := b.Find(dep)
 		switch {
 		case !found:

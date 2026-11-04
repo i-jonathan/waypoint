@@ -157,6 +157,9 @@ func (s Settings) Validate() error {
 	}
 	groups := make(map[string]bool, len(s.Groups))
 	for _, g := range s.Groups {
+		if strings.TrimSpace(g.Name) == "" {
+			return fmt.Errorf("%w: group name is empty", ErrInvalid)
+		}
 		if !singleLine(g.Name) {
 			return fmt.Errorf("%w: group name %q must be a single line", ErrInvalid, g.Name)
 		}
@@ -166,15 +169,27 @@ func (s Settings) Validate() error {
 		}
 		groups[key] = true
 	}
+	priorities := make(map[string]bool, len(s.Priorities))
 	for _, p := range s.Priorities {
+		if strings.TrimSpace(p) == "" {
+			return fmt.Errorf("%w: priority name is empty", ErrInvalid)
+		}
 		if !singleLine(p) {
 			return fmt.Errorf("%w: priority name %q must be a single line", ErrInvalid, p)
 		}
+		key := strings.ToLower(p)
+		if priorities[key] {
+			return fmt.Errorf("%w: duplicate priority %q", ErrInvalid, p)
+		}
+		priorities[key] = true
 	}
 	switch s.Archive.Mode {
 	case ArchiveOff, ArchiveManual, ArchiveAuto:
 	default:
 		return fmt.Errorf("%w: archive mode %q must be off, manual or auto", ErrInvalid, s.Archive.Mode)
+	}
+	if s.Archive.AfterDays < 0 {
+		return fmt.Errorf("%w: archive after_days must not be negative, got %d", ErrInvalid, s.Archive.AfterDays)
 	}
 	return nil
 }
