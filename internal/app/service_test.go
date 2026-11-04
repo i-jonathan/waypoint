@@ -317,6 +317,31 @@ func TestReadWithoutAssignedIdsDoesNotWrite(t *testing.T) {
 	equal(t, e.file(), before)
 }
 
+func TestReadsNeverArchiveOrRewrite(t *testing.T) {
+	e := newEnv(t, withArchive(domain.ArchiveAuto, 14))
+	e.create("Old", "Done")
+	e.now = epoch.AddDate(0, 0, 20) // the card is due for auto-archive
+	e.write(e.file() + "\n\n\n")    // not canonical: a Save would change it
+	before := e.file()
+	archive := strings.TrimSuffix(e.path, ".md") + ".archive.md"
+
+	ctx := context.Background()
+	bv, err := e.svc.Board(ctx)
+	noErr(t, err)
+	equal(t, len(bv.Cards), 1)
+	vs, err := e.svc.List(ctx, "", true)
+	noErr(t, err)
+	equal(t, len(vs), 1)
+	v, err := e.svc.Get(ctx, "T-1")
+	noErr(t, err)
+	equal(t, v.Archived, false)
+
+	equal(t, e.file(), before)
+	if _, err := os.Stat(archive); err == nil {
+		t.Fatal("a read created the archive file")
+	}
+}
+
 func TestDoneMovesToFirstDoneColumn(t *testing.T) {
 	e := newEnv(t)
 	a := e.create("A", "")
