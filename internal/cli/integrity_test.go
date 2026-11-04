@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // linkedBoard builds a board reached through two symlinks:
@@ -397,5 +399,32 @@ func TestNoOpOnAReadOnlyBoardSucceeds(t *testing.T) {
 
 	if _, stderr, code := runCLI(t, dir, "archive"); code != exitOK {
 		t.Fatalf("archive: %d %s", code, stderr)
+	}
+}
+
+func TestCardDatesUseTheLocalDate(t *testing.T) {
+	cases := []struct {
+		name string
+		now  time.Time
+		want string
+	}{
+		{"evening west of UTC", time.Date(2026, 11, 3, 22, 0, 0, 0, time.FixedZone("UTC-5", -5*3600)), "2026-11-03"},
+		{"morning east of UTC", time.Date(2026, 11, 4, 1, 0, 0, 0, time.FixedZone("UTC+9", 9*3600)), "2026-11-04"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			runCLI(t, dir, "init", "P")
+			env, _, errb := testEnv(t, dir, nil)
+			env.Now = func() time.Time { return c.now }
+
+			if code := Run(context.Background(), []string{"add", "Card", "--column", "Done"}, env); code != exitOK {
+				t.Fatalf("add: %d %s", code, errb)
+			}
+
+			board := readFile(t, filepath.Join(dir, "BOARD.md"))
+			assertContains(t, board, "- created: "+c.want+"\n")
+			assertContains(t, board, "- done: "+c.want+"\n")
+		})
 	}
 }
