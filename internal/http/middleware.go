@@ -16,6 +16,8 @@ import (
 //     browser cannot add that header to a cross-origin request without a
 //     preflight, and the server never answers preflights.
 //
+// Every response carries X-Content-Type-Options: nosniff.
+//
 // A panic below is logged and answered with a generic 500.
 func (a *api) guard(next http.Handler) http.Handler {
 	port := strconv.Itoa(a.d.Port)
@@ -35,6 +37,7 @@ func (a *api) guard(next http.Handler) http.Handler {
 			}
 		}()
 
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if !allowed[strings.ToLower(r.Host)] {
 			a.writeJSON(w, r, http.StatusMisdirectedRequest, errorBody{Error: "Waypoint only answers on localhost", Code: "misdirected"})
 			return

@@ -15,13 +15,16 @@ import (
 	"waypoint/internal/storage"
 )
 
-// DefaultPrefix is the card id prefix of a new project when none is given.
+// DefaultPrefix is the card id prefix a caller uses for a new project when the
+// user gives none.
 const DefaultPrefix = "T"
 
 // AddOptions says which project to add.
 type AddOptions struct {
-	Name   string
-	Path   string // "" means <data_dir>/<slug of Name>.md
+	Name string
+	Path string // "" means <data_dir>/<slug of Name>.md
+	// Prefix is the card id prefix and must be valid: Add applies no default,
+	// so an empty one is refused. Callers pass DefaultPrefix when they mean it.
 	Prefix string
 	// Cwd resolves a relative Path. With Cwd empty a relative Path is refused.
 	Cwd string
@@ -44,11 +47,7 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 	if name == "" {
 		return config.ProjectRef{}, fmt.Errorf("%w: project name is empty", domain.ErrInvalid)
 	}
-	prefix := o.Prefix
-	if prefix == "" {
-		prefix = DefaultPrefix
-	}
-	settings := domain.NewBoard(name, prefix).Settings
+	settings := domain.NewBoard(name, o.Prefix).Settings
 	if err := settings.Validate(); err != nil {
 		return config.ProjectRef{}, err
 	}
@@ -162,30 +161,51 @@ func RegisteredAt(cfg *config.Config, path string) (config.ProjectRef, bool) {
 	return config.ProjectRef{}, false
 }
 
-// Inspect loads the board of a registry entry, or reports why it cannot be
-// opened: a path that is not absolute, an unknown storage, a missing file, a
-// directory, sqlite storage or a board that does not parse. It writes nothing.
-// The registry is a hand-edited file, so every entry is inspected on its own
-// and one bad entry says nothing about the others.
-func Inspect(ctx context.Context, ref config.ProjectRef) (*domain.Board, error) {
+// EntryError says why a registry entry cannot be opened. Kind is
+// domain.ErrNotFound for a missing file and domain.ErrInvalid for an entry that
+// is wrong (relative path, unknown storage, a directory), so callers can
+// answer with the right status.
+type EntryError struct {
+	Msg  string
+	Kind error
+}
+
+func (e *EntryError) Error() string { return e.Msg }
+func (e *EntryError) Unwrap() error { return e.Kind }
+
+// Validate checks a registry entry without reading the board: a path that is
+// not absolute, an unknown storage, sqlite storage, a missing file or a
+// directory. It returns nil when the entry looks openable.
+func Validate(ref config.ProjectRef) error {
 	if !filepath.IsAbs(ref.Path) {
-		return nil, fmt.Errorf("Path %q is not absolute", ref.Path)
+		return &EntryError{fmt.Sprintf("Path %q is not absolute", ref.Path), domain.ErrInvalid}
 	}
 	switch ref.Storage {
 	case "markdown":
 	case "sqlite":
-		return nil, storage.ErrSQLite
+		return storage.ErrSQLite
 	default:
-		return nil, fmt.Errorf("Unknown storage %q", ref.Storage)
+		return &EntryError{fmt.Sprintf("Unknown storage %q", ref.Storage), domain.ErrInvalid}
 	}
 	info, err := os.Stat(ref.Path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		return nil, fmt.Errorf("File not found at %s", ref.Path)
+		return &EntryError{fmt.Sprintf("File not found at %s", ref.Path), domain.ErrNotFound}
 	case err != nil:
-		return nil, fmt.Errorf("Cannot read %s", ref.Path)
+		return fmt.Errorf("Cannot read %s", ref.Path)
 	case info.IsDir():
-		return nil, fmt.Errorf("%s is a directory, not a board file", ref.Path)
+		return &EntryError{fmt.Sprintf("%s is a directory, not a board file", ref.Path), domain.ErrInvalid}
+	}
+	return nil
+}
+
+// Inspect loads the board of a registry entry, or reports why it cannot be
+// opened (see Validate, or a board that does not parse). It writes nothing.
+// The registry is a hand-edited file, so every entry is inspected on its own
+// and one bad entry says nothing about the others.
+func Inspect(ctx context.Context, ref config.ProjectRef) (*domain.Board, error) {
+	if err := Validate(ref); err != nil {
+		return nil, err
 	}
 	repo, err := storage.Open(ref)
 	if err != nil {

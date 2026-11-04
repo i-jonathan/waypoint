@@ -6,13 +6,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sync"
 
 	"waypoint/internal/app"
 	"waypoint/internal/config"
 	"waypoint/internal/domain"
 	"waypoint/internal/errcode"
+	"waypoint/internal/projects"
 	"waypoint/internal/storage"
 )
 
@@ -99,8 +99,8 @@ type project struct {
 
 // openProject finds the project named in the URL. The name is only ever looked
 // up in the registry; it is never used as a path. An entry that cannot be
-// opened (a relative path, an unknown or read-only storage, a missing file) is
-// an error for this project and no other.
+// opened (a relative path, an unknown or read-only storage, a missing file, a
+// directory) is an error for this project and no other.
 func (a *api) openProject(r *http.Request) (project, error) {
 	cfg, err := a.loadConfig()
 	if err != nil {
@@ -111,15 +111,12 @@ func (a *api) openProject(r *http.Request) (project, error) {
 	if !ok {
 		return project{}, fmt.Errorf("%w: no project named %q", domain.ErrNotFound, name)
 	}
+	if err := projects.Validate(ref); err != nil {
+		return project{}, err
+	}
 	repo, err := storage.Open(ref)
 	if err != nil {
 		return project{}, err
-	}
-	if !filepath.IsAbs(ref.Path) {
-		return project{}, fmt.Errorf("%w: the path registered for project %q is not absolute", domain.ErrInvalid, ref.Name)
-	}
-	if _, err := os.Stat(ref.Path); os.IsNotExist(err) {
-		return project{}, fmt.Errorf("%w: File not found at %s", domain.ErrNotFound, ref.Path)
 	}
 	return project{ref: ref, cfg: cfg, svc: app.NewService(repo, a.d.Now)}, nil
 }

@@ -702,17 +702,26 @@ func TestProjectAddAndRemove(t *testing.T) {
 	f.do("POST", "/api/projects", map[string]any{"name": "alpha", "path": filepath.Join(f.dir, "z.md")}).wantCode(422, "invalid")
 	// Read-only sqlite storage and relative paths are refused.
 	f.do("POST", "/api/projects", map[string]any{"name": "Lite", "path": filepath.Join(f.dir, "x.db")}).wantCode(422, "invalid")
+	// Only markdown files can be created from the web.
+	for _, bad := range []string{"notes.txt", "board", "board.md.txt", ".hidden"} {
+		f.do("POST", "/api/projects", map[string]any{"name": "Ext", "path": filepath.Join(f.dir, bad)}).wantCode(422, "invalid")
+		if _, err := os.Stat(filepath.Join(f.dir, bad)); err == nil {
+			t.Fatalf("%s was created", bad)
+		}
+	}
+	f.do("POST", "/api/projects", map[string]any{"name": "Upper", "path": filepath.Join(f.dir, "UPPER.MD")}).want(201)
+	f.do("POST", "/api/projects", map[string]any{"name": "Long", "path": filepath.Join(f.dir, "long.markdown")}).want(201)
 	f.do("POST", "/api/projects", map[string]any{"name": "Rel", "path": "boards/rel.md"}).wantCode(422, "invalid")
 	f.do("POST", "/api/projects", map[string]any{"name": "Home", "path": "~/x.md"}).wantCode(422, "invalid")
 	f.do("POST", "/api/projects", map[string]any{"name": "  "}).wantCode(422, "invalid")
-	assertEq(t, len(f.config().Projects), 3)
+	assertEq(t, len(f.config().Projects), 5)
 	if _, err := os.Stat(filepath.Join(f.dir, "boards", "rel.md")); err == nil {
 		t.Fatal("a relative path reached the filesystem")
 	}
 
 	f.do("DELETE", "/api/projects/Gamma", nil).want(204)
 	assertEq(t, receive(t, events), Event{Type: "projects"})
-	assertEq(t, len(f.config().Projects), 2)
+	assertEq(t, len(f.config().Projects), 4)
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("removing a project deleted its file: %v", err)
 	}
@@ -948,4 +957,43 @@ func TestUnknownRoutesAreJSON(t *testing.T) {
 	f := newFixture(t, "Alpha")
 	f.do("GET", "/api/nope", nil).wantCode(404, "not_found")
 	f.do("GET", "/api/projects/Alpha/cards/T-1/move", nil).wantCode(404, "not_found")
+}
+
+func TestRegistryEntryThatIsADirectory(t *testing.T) {
+	f := newFixture(t, "Good")
+	f.register(config.ProjectRef{Name: "Dir", Storage: "markdown", Path: f.dir})
+
+	var list []projectJSON
+	f.do("GET", "/api/projects", nil).want(200).decode(&list)
+	listed := list[1].Error
+	assertContains(t, listed, "is a directory")
+
+	for _, r := range []reply{
+		f.do("GET", "/api/projects/Dir/board", nil),
+		f.do("GET", "/api/projects/Dir/archive", nil),
+		f.do("POST", "/api/projects/Dir/cards", map[string]any{"title": "x"}),
+	} {
+		e := r.wantCode(422, "invalid")
+		assertEq(t, e.Error, listed) // the same message the list gives
+	}
+	assertNotContains(t, f.logs.String(), "level=ERROR")
+}
+
+func TestNosniffOnEveryResponse(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	check := func(name string, r reply) {
+		t.Helper()
+		if got := r.header.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s (%d): X-Content-Type-Options = %q", name, r.code, got)
+		}
+	}
+	check("ok", f.do("GET", "/api/projects", nil))
+	check("created", f.do("POST", "/api/projects/Alpha/cards", map[string]any{"title": "x", "column": "Todo"}))
+	check("not found", f.do("GET", "/api/projects/Nope/board", nil))
+	check("no content", f.do("DELETE", "/api/projects/Alpha/cards/T-1", nil))
+	check("unknown route", f.do("GET", "/api/nope", nil))
+	req := f.request("GET", "/api/projects", nil)
+	req.Host = "evil.example"
+	check("421", f.send(req))
+	check("403", f.send(f.request("POST", "/api/projects", `{}`)))
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"waypoint/internal/config"
 	"waypoint/internal/domain"
@@ -49,6 +50,16 @@ func (a *api) listProjects(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// isMarkdownFile reports whether path names a markdown file, so a web client
+// cannot make Waypoint create a board at an arbitrary kind of file.
+func isMarkdownFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".markdown":
+		return true
+	}
+	return false
+}
+
 func (a *api) createProject(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
 		Name   string `json:"name"`
@@ -60,6 +71,12 @@ func (a *api) createProject(w http.ResponseWriter, r *http.Request) error {
 	}
 	if in.Path != "" && !filepath.IsAbs(in.Path) {
 		return invalidRequest("path must be an absolute path")
+	}
+	if in.Path != "" && !isMarkdownFile(in.Path) {
+		return invalidRequest("path must end in .md or .markdown")
+	}
+	if in.Prefix == "" {
+		in.Prefix = projects.DefaultPrefix
 	}
 	ref, err := projects.Add(r.Context(), a.d.ConfigPath, a.d.Getenv, projects.AddOptions{
 		Name: in.Name, Path: in.Path, Prefix: in.Prefix,

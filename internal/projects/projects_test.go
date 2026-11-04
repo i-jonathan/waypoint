@@ -50,7 +50,7 @@ func TestAddRefusals(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	_, err := Add(ctx, cfgPath, env, AddOptions{Name: "S", Path: filepath.Join(dir, "s.db")})
+	_, err := Add(ctx, cfgPath, env, AddOptions{Name: "S", Path: filepath.Join(dir, "s.db"), Prefix: "T"})
 	if !errors.Is(err, storage.ErrSQLite) {
 		t.Fatalf("sqlite path: %v", err)
 	}
@@ -58,20 +58,20 @@ func TestAddRefusals(t *testing.T) {
 		t.Fatal("a refused add wrote the config")
 	}
 
-	_, err = Add(ctx, cfgPath, env, AddOptions{Name: "R", Path: "rel/x.md"})
+	_, err = Add(ctx, cfgPath, env, AddOptions{Name: "R", Path: "rel/x.md", Prefix: "T"})
 	if !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("relative path without cwd: %v", err)
 	}
 
 	real := filepath.Join(dir, "real.md")
-	if _, err := Add(ctx, cfgPath, env, AddOptions{Name: "One", Path: real}); err != nil {
+	if _, err := Add(ctx, cfgPath, env, AddOptions{Name: "One", Path: real, Prefix: "T"}); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "link.md")
 	if err := os.Symlink(real, link); err != nil {
 		t.Skip("symlinks unavailable")
 	}
-	_, err = Add(ctx, cfgPath, env, AddOptions{Name: "Two", Path: link})
+	_, err = Add(ctx, cfgPath, env, AddOptions{Name: "Two", Path: link, Prefix: "T"})
 	if !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), `already registered as "One"`) {
 		t.Fatalf("same file through a symlink: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestInspect(t *testing.T) {
 	dir := t.TempDir()
 	good := filepath.Join(dir, "good.md")
 	cfgPath, env := sandbox(t)
-	if _, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "G", Path: good}); err != nil {
+	if _, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "G", Path: good, Prefix: "T"}); err != nil {
 		t.Fatal(err)
 	}
 	bad := filepath.Join(dir, "bad.md")
@@ -108,5 +108,29 @@ func TestInspect(t *testing.T) {
 		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
 			t.Errorf("%s: error %v, want it to contain %q", c.name, err, c.want)
 		}
+	}
+}
+
+func TestAddAppliesNoDefaultPrefix(t *testing.T) {
+	cfgPath, env := sandbox(t)
+	path := filepath.Join(t.TempDir(), "a.md")
+	_, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "A", Path: path})
+	if !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("empty prefix: %v", err)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Fatal("a refused add created the board")
+	}
+}
+
+func TestValidateKinds(t *testing.T) {
+	dir := t.TempDir()
+	err := Validate(config.ProjectRef{Name: "d", Storage: "markdown", Path: dir})
+	if !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("directory: %v", err)
+	}
+	err = Validate(config.ProjectRef{Name: "m", Storage: "markdown", Path: filepath.Join(dir, "gone.md")})
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("missing: %v", err)
 	}
 }
