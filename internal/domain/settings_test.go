@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -349,4 +350,104 @@ func TestApplySettingsLeavesNoCardInAMissingColumn(t *testing.T) {
 			assertConsistent(t, b)
 		})
 	}
+}
+
+// priorityBoard has cards with P0, P1 and P2, one archived with P1.
+func priorityBoard(t *testing.T) *Board {
+	t.Helper()
+	b := NewBoard("x", "T")
+	mustAdd(t, b, NewCard{Title: "a", Column: "Todo", Priority: "P0"})
+	mustAdd(t, b, NewCard{Title: "b", Column: "Todo", Priority: "P1"})
+	mustAdd(t, b, NewCard{Title: "c", Column: "Todo", Priority: "P2"})
+	mustAdd(t, b, NewCard{Title: "d", Column: "Done", Priority: "P1"})
+	assertNoErr(t, b.Archive([]CardID{idOf(t, b, "d")}, today))
+	return b
+}
+
+func TestRenamePriority(t *testing.T) {
+	b := priorityBoard(t)
+	ch := change(b)
+	ch.Settings.Priorities = []string{"Urgent", "P1", "P2"}
+	ch.PriorityRenames = map[string]string{"p0": "Urgent"} // matched without regard to case
+	assertNoErr(t, b.ApplySettings(ch))
+
+	assertEqual(t, b.Cards[0].Priority, "Urgent")
+	assertEqual(t, b.Cards[1].Priority, "P1")
+	assertEqual(t, b.Archived[0].Priority, "P1")
+	assertEqual(t, b.Warnings(), []string{})
+}
+
+func TestRenamePrioritiesSwap(t *testing.T) {
+	b := priorityBoard(t)
+	ch := change(b)
+	ch.Settings.Priorities = []string{"P1", "P0", "P2"}
+	ch.PriorityRenames = map[string]string{"P0": "P1", "P1": "P0"}
+	assertNoErr(t, b.ApplySettings(ch))
+
+	assertEqual(t, b.Cards[0].Priority, "P1")
+	assertEqual(t, b.Cards[1].Priority, "P0")
+	assertEqual(t, b.Archived[0].Priority, "P0")
+}
+
+func TestRemovePriorityClearsCards(t *testing.T) {
+	b := priorityBoard(t)
+	ch := change(b)
+	ch.Settings.Priorities = []string{"P0", "P2"} // drop P1
+	assertNoErr(t, b.ApplySettings(ch))
+
+	assertEqual(t, b.Cards[0].Priority, "P0")
+	assertEqual(t, b.Cards[1].Priority, "")
+	assertEqual(t, b.Cards[2].Priority, "P2")
+	assertEqual(t, b.Archived[0].Priority, "")
+}
+
+func TestRemovePriorityLeavesAlreadyUnknownPrioritiesAlone(t *testing.T) {
+	b := priorityBoard(t)
+	b.Cards[0].Priority = "Hand edited"
+	ch := change(b)
+	ch.Settings.Priorities = []string{"P1", "P2"}
+	assertNoErr(t, b.ApplySettings(ch))
+	assertEqual(t, b.Cards[0].Priority, "Hand edited")
+}
+
+func TestPriorityRenameValidation(t *testing.T) {
+	cases := map[string]func(ch *SettingsChange){
+		"old name does not exist":  func(ch *SettingsChange) { ch.PriorityRenames = map[string]string{"Nope": "P0"} },
+		"new name not in settings": func(ch *SettingsChange) { ch.PriorityRenames = map[string]string{"P0": "Elsewhere"} },
+		"two priorities to one name": func(ch *SettingsChange) {
+			ch.PriorityRenames = map[string]string{"P0": "P2", "P1": "p2"}
+		},
+		"renamed onto a kept priority": func(ch *SettingsChange) { ch.PriorityRenames = map[string]string{"P0": "P1"} },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			b := priorityBoard(t)
+			before := b.Clone()
+			ch := change(b)
+			mutate(&ch)
+			err := b.ApplySettings(ch)
+			assertTrue(t, errors.Is(err, ErrInvalid))
+			assertTrue(t, b.Equal(before))
+		})
+	}
+}
+
+func TestSettingsJSONShape(t *testing.T) {
+	b := NewBoard("Demo", "D")
+	b.Settings.Groups = []Group{{Name: "Bugs", Color: "red"}}
+	b.Settings.Appearance.Accent = "teal"
+	data, err := json.Marshal(b.Settings)
+	assertNoErr(t, err)
+	want := `{"name":"Demo","prefix":"D","next_id":1,` +
+		`"columns":[{"name":"Todo","wip":0,"moves_to":["In progress","Done"],"done":false},` +
+		`{"name":"In progress","wip":0,"moves_to":["Todo","Done"],"done":false},` +
+		`{"name":"Done","wip":0,"moves_to":["In progress"],"done":true}],` +
+		`"groups":[{"name":"Bugs","color":"red"}],"priorities":["P0","P1","P2"],` +
+		`"archive":{"mode":"manual","after_days":14},` +
+		`"appearance":{"theme":"","accent":"teal","density":"","swimlane":"","textures":""}}`
+	assertEqual(t, string(data), want)
+
+	var back Settings
+	assertNoErr(t, json.Unmarshal(data, &back))
+	assertEqual(t, back, b.Settings)
 }

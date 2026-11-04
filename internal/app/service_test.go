@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -676,7 +677,7 @@ func TestServiceUpdateSettingsPersists(t *testing.T) {
 	view, err := e.svc.UpdateSettings(context.Background(), domain.SettingsChange{
 		Settings:      cur,
 		ColumnRenames: map[string]string{"In progress": "Doing"},
-	})
+	}, "")
 	noErr(t, err)
 
 	equal(t, view.Settings.Name, "Renamed board")
@@ -709,16 +710,158 @@ func TestServiceUpdateSettingsRefusalAndNoOpSaveNothing(t *testing.T) {
 	before := e.file()
 
 	cur := e.board().Settings
-	_, err := svc.UpdateSettings(context.Background(), domain.SettingsChange{Settings: cur})
+	_, err := svc.UpdateSettings(context.Background(), domain.SettingsChange{Settings: cur}, "")
 	noErr(t, err)
 
 	cur.Columns = []domain.Column{cur.Columns[0], cur.Columns[2]}
 	cur.Columns[0].MovesTo = []string{"Done"}
 	cur.Columns[1].MovesTo = []string{"Todo"}
-	_, err = svc.UpdateSettings(context.Background(), domain.SettingsChange{Settings: cur})
+	_, err = svc.UpdateSettings(context.Background(), domain.SettingsChange{Settings: cur}, "")
 	if !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("got %v, want ErrInvalid", err)
 	}
 	equal(t, repo.saves, 0)
 	equal(t, e.file(), before)
+}
+
+func TestAutoArchiveOnOpen(t *testing.T) {
+	e := newEnv(t, withArchive(domain.ArchiveAuto, 14))
+	old := e.create("Old", "Done")
+	e.now = epoch.AddDate(0, 0, 20)
+
+	// A read does not archive; opening the board does, once.
+	b, err := e.svc.Board(context.Background())
+	noErr(t, err)
+	equal(t, len(b.Cards), 1)
+
+	ids, err := e.svc.AutoArchive(context.Background())
+	noErr(t, err)
+	equal(t, ids, []domain.CardID{old.ID})
+	b, err = e.svc.Board(context.Background())
+	noErr(t, err)
+	equal(t, len(b.Cards), 0)
+	v, err := e.svc.Get(context.Background(), old.ID)
+	noErr(t, err)
+	equal(t, v.Archived, true)
+
+	ids, err = e.svc.AutoArchive(context.Background())
+	noErr(t, err)
+	equal(t, len(ids), 0)
+}
+
+func TestAutoArchiveSavesNothingWhenNotDue(t *testing.T) {
+	for name, mutate := range map[string]func(*domain.Settings){
+		"manual":        withArchive(domain.ArchiveManual, 0),
+		"auto, not due": withArchive(domain.ArchiveAuto, 14),
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, mutate)
+			e.create("A", "Done")
+			repo := &countingRepo{Repository: e.repo}
+			svc := app.NewService(repo, func() time.Time { return e.now })
+			e.write(e.file() + "\n\n\n")
+			before := e.file()
+
+			ids, err := svc.AutoArchive(context.Background())
+			noErr(t, err)
+			equal(t, len(ids), 0)
+			equal(t, repo.saves, 0)
+			equal(t, e.file(), before)
+		})
+	}
+}
+
+func TestSettingsHashIgnoresNextIDOnly(t *testing.T) {
+	e := newEnv(t)
+	b0, err := e.svc.Board(context.Background())
+	noErr(t, err)
+	if len(b0.SettingsHash) != 64 {
+		t.Fatalf("settings hash %q is not a hex sha256", b0.SettingsHash)
+	}
+	equal(t, b0.SettingsHash, app.SettingsHash(b0.Settings))
+
+	e.create("A", "Todo") // moves next_id
+	b1, err := e.svc.Board(context.Background())
+	noErr(t, err)
+	if b1.Settings.NextID == b0.Settings.NextID {
+		t.Fatal("next_id did not move")
+	}
+	equal(t, b1.SettingsHash, b0.SettingsHash)
+
+	s := b1.Settings
+	s.Columns = append([]domain.Column{}, s.Columns...)
+	s.Columns[0].WIP = 3
+	if app.SettingsHash(s) == b0.SettingsHash {
+		t.Fatal("changing a column's wip did not change the hash")
+	}
+}
+
+func TestUpdateSettingsIfMatch(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	b, err := e.svc.Board(ctx)
+	noErr(t, err)
+	stale := b.SettingsHash
+
+	// Another writer edits the settings, so the first reader's hash is stale.
+	other := b.Settings
+	other.Name = "Edited elsewhere"
+	_, err = e.svc.UpdateSettings(ctx, domain.SettingsChange{Settings: other}, "")
+	noErr(t, err)
+	before := e.file()
+
+	mine := b.Settings
+	mine.Name = "Mine"
+	_, err = e.svc.UpdateSettings(ctx, domain.SettingsChange{Settings: mine}, stale)
+	var ce *app.SettingsConflictError
+	if !errors.As(err, &ce) || !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("got %v, want a *SettingsConflictError", err)
+	}
+	equal(t, ce.Current.Settings.Name, "Edited elsewhere")
+	equal(t, e.file(), before)
+
+	v, err := e.svc.UpdateSettings(ctx, domain.SettingsChange{Settings: mine}, ce.Current.SettingsHash)
+	noErr(t, err)
+	equal(t, v.Settings.Name, "Mine")
+}
+
+func TestBoardViewJSONShape(t *testing.T) {
+	e := newEnv(t)
+	b, err := e.svc.Board(context.Background())
+	noErr(t, err)
+	data, err := json.Marshal(b)
+	noErr(t, err)
+	var m map[string]json.RawMessage
+	noErr(t, json.Unmarshal(data, &m))
+	for _, k := range []string{"settings", "cards", "warnings", "settings_hash"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("no %q in %s", k, data)
+		}
+	}
+	equal(t, string(m["cards"]), "[]")
+	equal(t, string(m["warnings"]), "[]")
+	// Lists the UI iterates are arrays even when empty, never null.
+	if strings.Contains(string(m["settings"]), "null") {
+		t.Errorf("null in settings: %s", m["settings"])
+	}
+}
+
+func TestBoardMatchingFiltersCardsOnly(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, err := e.svc.CreateCard(ctx, domain.NewCard{Title: "urgent", Column: "Todo", Priority: "P0"})
+	noErr(t, err)
+	_, err = e.svc.CreateCard(ctx, domain.NewCard{Title: "later", Column: "Todo", Priority: "P2"})
+	noErr(t, err)
+
+	all, err := e.svc.Board(ctx)
+	noErr(t, err)
+	got, err := e.svc.BoardMatching(ctx, "p0")
+	noErr(t, err)
+	equal(t, len(all.Cards), 2)
+	equal(t, len(got.Cards), 1)
+	equal(t, got.Cards[0].Title, "urgent")
+	equal(t, got.Cards[0].Next, all.Cards[0].Next)
+	equal(t, got.Settings, all.Settings)
+	equal(t, got.SettingsHash, all.SettingsHash)
 }

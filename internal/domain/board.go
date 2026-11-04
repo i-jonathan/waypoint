@@ -15,15 +15,16 @@ type CardID string
 // Column is a board column. WIP 0 means no limit. MovesTo lists the columns a
 // card may move to from this one. Done marks a done column.
 type Column struct {
-	Name    string
-	WIP     int
-	MovesTo []string
-	Done    bool
+	Name    string   `json:"name"`
+	WIP     int      `json:"wip"`
+	MovesTo []string `json:"moves_to"`
+	Done    bool     `json:"done"`
 }
 
 // Group is a named, colored card grouping.
 type Group struct {
-	Name, Color string
+	Name  string `json:"name"`
+	Color string `json:"color"`
 }
 
 // Field is an unknown card field kept verbatim.
@@ -53,29 +54,33 @@ const (
 
 // ArchiveSettings configures archiving.
 type ArchiveSettings struct {
-	Mode      ArchiveMode
-	AfterDays int
+	Mode      ArchiveMode `json:"mode"`
+	AfterDays int         `json:"after_days"`
 }
 
 // Appearance holds per-board display overrides. An empty value inherits the
 // global setting.
 type Appearance struct {
-	Theme    string `yaml:"theme,omitempty"`
-	Accent   string `yaml:"accent,omitempty"`
-	Density  string `yaml:"density,omitempty"`
-	Swimlane string `yaml:"swimlane,omitempty"`
-	Textures string `yaml:"textures,omitempty"`
+	Theme    string `yaml:"theme,omitempty" json:"theme"`
+	Accent   string `yaml:"accent,omitempty" json:"accent"`
+	Density  string `yaml:"density,omitempty" json:"density"`
+	Swimlane string `yaml:"swimlane,omitempty" json:"swimlane"`
+	Textures string `yaml:"textures,omitempty" json:"textures"`
 }
 
 // Settings is the board configuration.
+//
+// The json tags are the web API's shape. The markdown front matter has its own
+// struct, so they do not affect the file.
 type Settings struct {
-	Name, Prefix string
-	NextID       int
-	Columns      []Column
-	Groups       []Group
-	Priorities   []string
-	Archive      ArchiveSettings
-	Appearance   Appearance
+	Name       string          `json:"name"`
+	Prefix     string          `json:"prefix"`
+	NextID     int             `json:"next_id"`
+	Columns    []Column        `json:"columns"`
+	Groups     []Group         `json:"groups"`
+	Priorities []string        `json:"priorities"`
+	Archive    ArchiveSettings `json:"archive"`
+	Appearance Appearance      `json:"appearance"`
 }
 
 // Board is a board's settings and cards. Cards order is rank order.

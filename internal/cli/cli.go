@@ -18,6 +18,8 @@ import (
 	"waypoint/internal/app"
 	"waypoint/internal/config"
 	"waypoint/internal/domain"
+	"waypoint/internal/errcode"
+	"waypoint/internal/projects"
 	"waypoint/internal/storage"
 	"waypoint/internal/storage/markdown"
 )
@@ -208,7 +210,7 @@ func (r *runner) fail(err error) int {
 		Error string `json:"error"`
 		Code  string `json:"code"`
 		Line  int    `json:"line,omitempty"`
-	}{err.Error(), errorCode(err), errorLine(err)})
+	}{err.Error(), errcode.Code(err), errcode.Line(err)})
 	return exitError
 }
 
@@ -217,41 +219,6 @@ func (r *runner) printJSON(v any) {
 	enc := json.NewEncoder(r.env.Stdout)
 	enc.SetEscapeHTML(false)
 	enc.Encode(v)
-}
-
-// errorCode names an error for machine readers: one of not_found,
-// unknown_column, move_not_allowed, wip_limit, conflict, invalid, parse, or
-// error for anything else. The CLI and the HTTP API share this mapping.
-func errorCode(err error) string {
-	var pe *markdown.ParseError
-	switch {
-	case errors.As(err, &pe), errors.Is(err, markdown.ErrNotABoard):
-		return "parse"
-	case errors.Is(err, domain.ErrNotFound):
-		return "not_found"
-	case errors.Is(err, domain.ErrUnknownColumn):
-		return "unknown_column"
-	case errors.Is(err, domain.ErrMoveNotAllowed):
-		return "move_not_allowed"
-	case errors.Is(err, domain.ErrWIPLimit):
-		return "wip_limit"
-	case errors.Is(err, domain.ErrConflict):
-		return "conflict"
-	case errors.Is(err, domain.ErrInvalid),
-		errors.Is(err, domain.ErrUnknownGroup),
-		errors.Is(err, domain.ErrUnknownPriority):
-		return "invalid"
-	}
-	return "error"
-}
-
-// errorLine is the 1-based line of a parse error, or 0 if err has none.
-func errorLine(err error) int {
-	var pe *markdown.ParseError
-	if errors.As(err, &pe) {
-		return pe.Line
-	}
-	return 0
 }
 
 // loadConfig reads the global config. A missing file gives the defaults and is
@@ -290,7 +257,7 @@ func (r *runner) unregisteredHere(cfg *config.Config) bool {
 	if err != nil || !markdown.IsBoard(data) {
 		return false
 	}
-	_, registered := registeredAt(cfg, here)
+	_, registered := projects.RegisteredAt(cfg, here)
 	return !registered
 }
 

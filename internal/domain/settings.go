@@ -7,15 +7,21 @@ import (
 	"strings"
 )
 
-// SettingsChange is a request to replace a board's settings. ColumnRenames and
-// GroupRenames map an old name to its new name, so that cards follow a rename
-// instead of being treated as belonging to a removed column or group. Both are
+// SettingsChange is a request to replace a board's settings. ColumnRenames,
+// GroupRenames and PriorityRenames map an old name to its new name, so that
+// cards follow a rename instead of being treated as belonging to a removed
+// column, group or priority. All are
 // read against the names the board has now, all at once, so a swap (A to B and
 // B to A) or a chain (A to B and B to C) works.
 type SettingsChange struct {
 	Settings      Settings
 	ColumnRenames map[string]string // old → new
 	GroupRenames  map[string]string // old → new
+
+	// PriorityRenames follows the rules of GroupRenames: names match without
+	// regard to case, and a priority that is gone and not renamed is cleared
+	// from the cards that had it, live and archived.
+	PriorityRenames map[string]string // old → new
 }
 
 var accentHexRE = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
@@ -51,8 +57,8 @@ func ValidateAppearance(a Appearance) error {
 // ApplySettings replaces the board's settings with ch.Settings and moves the
 // cards along with the renames. Prefix and NextID cannot change: the incoming
 // values are ignored. A column that is absent and not renamed must hold no
-// cards. A group that is absent and not renamed is cleared from the cards that
-// had it, live and archived. Cards keep their rank within a column, and when
+// cards. A group or priority that is absent and not renamed is cleared from the
+// cards that had it, live and archived. Cards keep their rank within a column, and when
 // the columns are reordered the cards are sorted stably into the new order.
 // Lowering a WIP limit below the number of cards is allowed; Warnings reports
 // it. moves_to entries must already use the new names: Validate rejects the
@@ -82,6 +88,10 @@ func (b *Board) ApplySettings(ch SettingsChange) error {
 	if err != nil {
 		return err
 	}
+	priorityMap, err := nameMapping("priority", b.Settings.Priorities, s.Priorities, ch.PriorityRenames)
+	if err != nil {
+		return err
+	}
 
 	for _, c := range b.Cards { // a column that is gone and not renamed must be empty
 		if _, ok := colMap[c.Column]; !ok {
@@ -92,11 +102,13 @@ func (b *Board) ApplySettings(ch SettingsChange) error {
 
 	for i := range next.Cards {
 		next.Cards[i].Column = colMap[next.Cards[i].Column]
-		next.Cards[i].Group = mapGroup(next.Cards[i].Group, groupMap)
+		next.Cards[i].Group = mapName(next.Cards[i].Group, groupMap)
+		next.Cards[i].Priority = mapName(next.Cards[i].Priority, priorityMap)
 	}
 	for i := range next.Archived {
 		next.Archived[i].Column = colMap[next.Archived[i].Column] // "" and unknown names map to ""
-		next.Archived[i].Group = mapGroup(next.Archived[i].Group, groupMap)
+		next.Archived[i].Group = mapName(next.Archived[i].Group, groupMap)
+		next.Archived[i].Priority = mapName(next.Archived[i].Priority, priorityMap)
 	}
 
 	order := make(map[string]int, len(s.Columns))
@@ -148,15 +160,27 @@ func columnMapping(cur, next Settings, renames map[string]string) (map[string]st
 	return out, nil
 }
 
-// groupMapping is columnMapping for groups. Names match without regard to case,
-// as they do everywhere else, so the map is keyed by lower-cased old name and
-// holds the new settings' spelling. A group that is gone and not renamed maps
-// to "".
+// groupMapping is columnMapping for groups; see nameMapping.
 func groupMapping(cur, next Settings, renames map[string]string) (map[string]string, error) {
-	spelling := func(s Settings, name string) (string, bool) {
-		for _, g := range s.Groups {
-			if strings.EqualFold(g.Name, name) {
-				return g.Name, true
+	names := func(s Settings) []string {
+		out := make([]string, len(s.Groups))
+		for i, g := range s.Groups {
+			out[i] = g.Name
+		}
+		return out
+	}
+	return nameMapping("group", names(cur), names(next), renames)
+}
+
+// nameMapping is columnMapping for a list of names that match without regard
+// to case, as groups and priorities do everywhere else. The map is keyed by
+// lower-cased old name and holds the new settings' spelling. A name that is
+// gone and not renamed maps to "". kind ("group", "priority") words the errors.
+func nameMapping(kind string, cur, next []string, renames map[string]string) (map[string]string, error) {
+	spelling := func(list []string, name string) (string, bool) {
+		for _, n := range list {
+			if strings.EqualFold(n, name) {
+				return n, true
 			}
 		}
 		return "", false
@@ -165,40 +189,40 @@ func groupMapping(cur, next Settings, renames map[string]string) (map[string]str
 	for from, to := range renames {
 		old, ok := spelling(cur, from)
 		if !ok {
-			return nil, fmt.Errorf("%w: cannot rename group %q: the board has no such group", ErrInvalid, from)
+			return nil, fmt.Errorf("%w: cannot rename %s %q: the board has no such %s", ErrInvalid, kind, from, kind)
 		}
 		canon, ok := spelling(next, to)
 		if !ok {
-			return nil, fmt.Errorf("%w: group %q is renamed to %q, which the new settings do not have", ErrInvalid, from, to)
+			return nil, fmt.Errorf("%w: %s %q is renamed to %q, which the new settings do not have", ErrInvalid, kind, from, to)
 		}
 		renamed[strings.ToLower(old)] = canon
 	}
-	out := make(map[string]string, len(cur.Groups))
-	from := make(map[string]string, len(cur.Groups)) // lower-cased new name → old name
-	for _, g := range cur.Groups {
-		key := strings.ToLower(g.Name)
+	out := make(map[string]string, len(cur))
+	from := make(map[string]string, len(cur)) // lower-cased new name → old name
+	for _, name := range cur {
+		key := strings.ToLower(name)
 		to, ok := renamed[key]
 		if !ok {
-			to, _ = spelling(next, g.Name) // "" when the group is gone
+			to, _ = spelling(next, name) // "" when the name is gone
 		}
 		if to != "" {
 			if prev, dup := from[strings.ToLower(to)]; dup {
-				return nil, fmt.Errorf("%w: groups %q and %q would both become %q", ErrInvalid, prev, g.Name, to)
+				return nil, fmt.Errorf("%w: %ss %q and %q would both become %q", ErrInvalid, kind, prev, name, to)
 			}
-			from[strings.ToLower(to)] = g.Name
+			from[strings.ToLower(to)] = name
 		}
 		out[key] = to
 	}
 	return out, nil
 }
 
-// mapGroup returns the group a card has afterwards. A group the board never had
-// (a hand-edited file can hold one) is left alone; Warnings reports it.
-func mapGroup(group string, m map[string]string) string {
-	if to, ok := m[strings.ToLower(group)]; ok {
+// mapName returns the group or priority a card has afterwards. A name the board
+// never had (a hand-edited file can hold one) is left alone; Warnings reports it.
+func mapName(name string, m map[string]string) string {
+	if to, ok := m[strings.ToLower(name)]; ok {
 		return to
 	}
-	return group
+	return name
 }
 
 func plural(n int, one, many string) string {

@@ -4,15 +4,12 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"waypoint/internal/app"
 	"waypoint/internal/domain"
-	"waypoint/internal/storage/markdown"
 )
 
 func newTestRunner(t *testing.T, cwd string, extra map[string]string) *runner {
@@ -149,29 +146,6 @@ func TestUndefinedFlagHintsAtDoubleDash(t *testing.T) {
 	// Other flag errors carry no hint.
 	_, stderr, _ = runCLI(t, t.TempDir(), "project", "add", "A", "--path")
 	assertNotContains(t, stderr, "put --")
-}
-
-func TestErrorCode(t *testing.T) {
-	cases := []struct {
-		err  error
-		want string
-	}{
-		{fmt.Errorf("%w: x", domain.ErrNotFound), "not_found"},
-		{fmt.Errorf("%w: x", domain.ErrUnknownColumn), "unknown_column"},
-		{fmt.Errorf("%w: x", domain.ErrMoveNotAllowed), "move_not_allowed"},
-		{fmt.Errorf("%w: x", domain.ErrWIPLimit), "wip_limit"},
-		{fmt.Errorf("%w: x", domain.ErrConflict), "conflict"},
-		{&app.ConflictError{}, "conflict"},
-		{fmt.Errorf("%w: x", domain.ErrInvalid), "invalid"},
-		{fmt.Errorf("%w: x", domain.ErrUnknownGroup), "invalid"},
-		{fmt.Errorf("%w: x", domain.ErrUnknownPriority), "invalid"},
-		{fmt.Errorf("file: %w", &markdown.ParseError{Line: 4, Msg: "bad"}), "parse"},
-		{fmt.Errorf("file: %w", markdown.ErrNotABoard), "parse"},
-		{errors.New("disk on fire"), "error"},
-	}
-	for _, c := range cases {
-		assertEq(t, errorCode(c.err), c.want)
-	}
 }
 
 func TestServiceResolutionOrder(t *testing.T) {

@@ -1,0 +1,112 @@
+package projects
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"waypoint/internal/config"
+	"waypoint/internal/domain"
+	"waypoint/internal/storage"
+)
+
+func sandbox(t *testing.T) (cfgPath string, env func(string) string) {
+	t.Helper()
+	home := t.TempDir()
+	cfgPath = filepath.Join(home, "cfg", "config.yaml")
+	return cfgPath, func(k string) string {
+		if k == "HOME" {
+			return home
+		}
+		return ""
+	}
+}
+
+func TestAddCreatesBoardAndRegisters(t *testing.T) {
+	cfgPath, env := sandbox(t)
+	path := filepath.Join(t.TempDir(), "a.md")
+	ref, err := Add(context.Background(), cfgPath, env, AddOptions{Name: " Alpha ", Path: path, Prefix: "AL"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Name != "Alpha" || ref.Path != path || ref.Storage != "markdown" {
+		t.Fatalf("ref = %+v", ref)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), "prefix: AL") {
+		t.Fatalf("board file: %v %q", err, data)
+	}
+	cfg, err := config.Load(cfgPath, env)
+	if err != nil || len(cfg.Projects) != 1 {
+		t.Fatalf("config: %v %+v", err, cfg)
+	}
+}
+
+func TestAddRefusals(t *testing.T) {
+	cfgPath, env := sandbox(t)
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	_, err := Add(ctx, cfgPath, env, AddOptions{Name: "S", Path: filepath.Join(dir, "s.db")})
+	if !errors.Is(err, storage.ErrSQLite) {
+		t.Fatalf("sqlite path: %v", err)
+	}
+	if _, statErr := os.Stat(cfgPath); statErr == nil {
+		t.Fatal("a refused add wrote the config")
+	}
+
+	_, err = Add(ctx, cfgPath, env, AddOptions{Name: "R", Path: "rel/x.md"})
+	if !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("relative path without cwd: %v", err)
+	}
+
+	real := filepath.Join(dir, "real.md")
+	if _, err := Add(ctx, cfgPath, env, AddOptions{Name: "One", Path: real}); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.md")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	_, err = Add(ctx, cfgPath, env, AddOptions{Name: "Two", Path: link})
+	if !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), `already registered as "One"`) {
+		t.Fatalf("same file through a symlink: %v", err)
+	}
+}
+
+func TestInspect(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.md")
+	cfgPath, env := sandbox(t)
+	if _, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "G", Path: good}); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(dir, "bad.md")
+	os.WriteFile(bad, []byte("hello\n"), 0o644)
+
+	cases := []struct {
+		name string
+		ref  config.ProjectRef
+		want string // "" means no error
+	}{
+		{"ok", config.ProjectRef{Name: "g", Storage: "markdown", Path: good}, ""},
+		{"missing", config.ProjectRef{Name: "m", Storage: "markdown", Path: filepath.Join(dir, "gone.md")}, "File not found at " + filepath.Join(dir, "gone.md")},
+		{"relative", config.ProjectRef{Name: "r", Storage: "markdown", Path: "rel.md"}, "not absolute"},
+		{"unknown storage", config.ProjectRef{Name: "u", Storage: "mongo", Path: good}, `Unknown storage "mongo"`},
+		{"sqlite", config.ProjectRef{Name: "s", Storage: "sqlite", Path: good}, "sqlite"},
+		{"directory", config.ProjectRef{Name: "d", Storage: "markdown", Path: dir}, "is a directory"},
+		{"not a board", config.ProjectRef{Name: "b", Storage: "markdown", Path: bad}, "not a Waypoint board"},
+	}
+	for _, c := range cases {
+		b, err := Inspect(context.Background(), c.ref)
+		switch {
+		case c.want == "" && (err != nil || b.Settings.Name != "G"):
+			t.Errorf("%s: unexpected error %v", c.name, err)
+		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+			t.Errorf("%s: error %v, want it to contain %q", c.name, err, c.want)
+		}
+	}
+}
