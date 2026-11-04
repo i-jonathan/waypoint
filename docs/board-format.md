@@ -113,9 +113,16 @@ an error.
 
 **Only this board's prefix makes an id.** On a board with prefix `T`, the
 headings `### COVID-19 booster` and `### COVID-19` are cards without an id, titled
-`COVID-19 booster` and `COVID-19`. This means that changing `prefix` by hand
-turns the existing `### T-1 Title` headings into new cards titled `T-1 Title`,
-each with a new id. The archive file is different: see below.
+`COVID-19 booster` and `COVID-19`. The archive file is different: see below.
+
+**A prefix that no card uses is an error.** If no card has this board's prefix
+but at least two headings start with an id of another prefix, Waypoint stops and
+writes nothing, because those cards would otherwise all get new ids. The match is
+case-sensitive, so `prefix: t` on `T-1` cards triggers it. To change a board's
+prefix, change `prefix` and every card heading and `depends` line together. On a
+board with no cards yet, two titles such as `### COVID-19 booster` and
+`### COVID-19 test` trigger it too: give either one an id, such as
+`### T-1 COVID-19 booster`, or add it with `waypoint add`.
 
 ### Fields
 

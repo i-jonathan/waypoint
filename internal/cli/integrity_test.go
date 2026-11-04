@@ -608,15 +608,31 @@ func TestHeadingWithAnotherPrefixIsATitle(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "BOARD.md")
 	runCLI(t, dir, "init", "P")
-	writeFile(t, path, strings.Replace(readFile(t, path), "## Todo\n", "## Todo\n\n### COVID-19 booster\n\n### COVID-19\n", 1))
+	writeFile(t, path, strings.Replace(readFile(t, path), "## Todo\n", "## Todo\n\n### T-1 Real\n\n### COVID-19 booster\n\n### COVID-19\n", 1))
 
 	stdout, stderr, code := runCLI(t, dir, "ls")
 
 	assertEq(t, code, exitOK)
 	assertEq(t, stderr, "")
-	assertContains(t, stdout, "T-1  Todo  COVID-19 booster")
-	assertContains(t, stdout, "T-2  Todo  COVID-19")
-	assertContains(t, readFile(t, path), "### T-1 COVID-19 booster\n")
+	assertContains(t, stdout, "T-2  Todo  COVID-19 booster")
+	assertContains(t, stdout, "T-3  Todo  COVID-19")
+	assertContains(t, readFile(t, path), "### T-2 COVID-19 booster\n")
+}
+
+// The cost of the wrong-prefix rule: with no card of this board's prefix yet,
+// two id-shaped titles cannot be told from a mistyped prefix.
+func TestTwoIDShapedTitlesOnAnEmptyBoardAreRefused(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "BOARD.md")
+	runCLI(t, dir, "init", "P")
+	edited := strings.Replace(readFile(t, path), "## Todo\n", "## Todo\n\n### COVID-19 booster\n\n### COVID-19 test\n", 1)
+	writeFile(t, path, edited)
+
+	_, stderr, code := runCLI(t, dir, "ls")
+
+	assertEq(t, code, exitError)
+	assertContains(t, stderr, `no card uses the prefix "T"`)
+	assertEq(t, readFile(t, path), edited)
 }
 
 func TestRepeatedDependencyIsShownOnce(t *testing.T) {
@@ -661,7 +677,8 @@ func TestRestoringACardWithAnotherPrefixLosesNothing(t *testing.T) {
 	_, stderr, code := runCLI(t, dir, "restore", "OLD-7")
 
 	assertEq(t, code, exitError)
-	assertContains(t, stderr, "refusing to write")
+	assertContains(t, stderr, `OLD-7 cannot be restored: its prefix does not match this board's prefix "T"`)
+	assertNotContains(t, stderr, "not in memory")
 	assertEq(t, readFile(t, board), boardBefore)
 	assertEq(t, readFile(t, archive), archiveBefore)
 }
@@ -781,4 +798,52 @@ func TestDifferentBodyWithTheSameIDIsStillRefused(t *testing.T) {
 	assertContains(t, stderr, "T-1 is on the board and in the archive with different content")
 	assertContains(t, stderr, "delete the copy you don't want")
 	assertContains(t, stderr, "if they are separate cards, give one a new id")
+}
+
+func TestWrongPrefixIsAnErrorAndWritesNothing(t *testing.T) {
+	cases := map[string]string{"another letter": "W", "wrong case": "t"}
+	for name, prefix := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "BOARD.md")
+			runCLI(t, dir, "init", "P")
+			runCLI(t, dir, "add", "One")
+			runCLI(t, dir, "add", "Two", "--depends", "T-1")
+			runCLI(t, dir, "add", "Three")
+			edited := strings.Replace(readFile(t, path), "prefix: T\n", "prefix: "+prefix+"\n", 1)
+			writeFile(t, path, edited)
+
+			for _, args := range [][]string{{"ls"}, {"add", "Four"}} {
+				_, stderr, code := runCLI(t, dir, args...)
+				assertEq(t, code, exitError)
+				assertContains(t, stderr, `no card uses the prefix "`+prefix+`", but 3 look like ids with another prefix (first on line`)
+				assertContains(t, stderr, `check "prefix" in the front matter`)
+				assertEq(t, readFile(t, path), edited)
+			}
+
+			stdout, _, _ := runCLI(t, dir, "ls", "--json")
+			assertContains(t, stdout, `"code":"parse"`)
+		})
+	}
+}
+
+func TestRealCardsOrALoneTitleAreNotAWrongPrefix(t *testing.T) {
+	cases := map[string]string{
+		"lone title":           "### COVID-19 booster\n",
+		"beside a real card":   "### T-1 Real\n\n### COVID-19 booster\n\n### H1N1-2 jab\n",
+		"one foreign, id-less": "### COVID-19 booster\n\n### Call the plumber\n",
+	}
+	for name, cards := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "BOARD.md")
+			runCLI(t, dir, "init", "P")
+			writeFile(t, path, strings.Replace(readFile(t, path), "## Todo\n", "## Todo\n\n"+cards, 1))
+
+			if _, stderr, code := runCLI(t, dir, "ls"); code != exitOK {
+				t.Fatalf("ls: %d %s", code, stderr)
+			}
+			assertContains(t, readFile(t, path), " COVID-19 booster\n")
+		})
+	}
 }

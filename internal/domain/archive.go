@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -75,6 +76,9 @@ func (b *Board) Restore(id CardID, to string, today time.Time) error {
 	at := slices.IndexFunc(b.Archived, func(c Card) bool { return c.ID == id })
 	if at < 0 {
 		return fmt.Errorf("%w: archived card %s", ErrNotFound, id)
+	}
+	if prefix, _, _ := strings.Cut(string(id), "-"); prefix != b.Settings.Prefix {
+		return fmt.Errorf("%w: %s cannot be restored: its prefix does not match this board's prefix %q", ErrInvalid, id, b.Settings.Prefix)
 	}
 	if to == "" {
 		if len(b.Settings.Columns) == 0 {

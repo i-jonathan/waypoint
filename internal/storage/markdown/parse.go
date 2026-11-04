@@ -102,6 +102,9 @@ func ParseAssignedReserved(data []byte, reserved []domain.CardID) (*domain.Board
 		return nil, nil, err
 	}
 	b.Notices = notices
+	if err := checkPrefix(raw, settings.Prefix); err != nil {
+		return nil, nil, err
+	}
 
 	// An explicit id at or above next_id moves next_id past it, so an id is
 	// never reused. This happens before id-less cards are numbered, and the
@@ -143,6 +146,29 @@ func ParseAssignedReserved(data []byte, reserved []domain.CardID) (*domain.Board
 		return columnIndex[x.Column] - columnIndex[y.Column]
 	})
 	return b, assigned, nil
+}
+
+// checkPrefix fails when the prefix looks wrong: no card uses it, but at least
+// two headings start with an id of another prefix. Those headings would
+// otherwise all become new cards with new ids, which is how a mistyped prefix
+// would renumber a board. One such heading is just a title like "COVID-19
+// booster".
+func checkPrefix(raw []rawCard, prefix string) error {
+	foreign, first := 0, 0
+	for _, r := range raw {
+		if r.hasID {
+			return nil
+		}
+		if domain.ValidCardID(r.firstWord) {
+			if foreign++; foreign == 1 {
+				first = r.line
+			}
+		}
+	}
+	if foreign < 2 {
+		return nil
+	}
+	return &ParseError{Line: first, Msg: fmt.Sprintf(`no card uses the prefix %q, but %d look like ids with another prefix (first on line %d): check "prefix" in the front matter`, prefix, foreign, first)}
 }
 
 // ParseArchive reads an archive file: one "## YYYY-MM" section per month with
@@ -187,9 +213,10 @@ func splitLines(data []byte) []string {
 
 // rawCard is a card as read from the file, before ids are assigned.
 type rawCard struct {
-	card  domain.Card // Column holds the enclosing ## section name
-	line  int         // file line of the card heading
-	hasID bool
+	card      domain.Card // Column holds the enclosing ## section name
+	line      int         // file line of the card heading
+	hasID     bool
+	firstWord string // first word of the heading text
 }
 
 // scanOptions tunes scanCards for the board and archive files.
@@ -330,7 +357,7 @@ func scanCards(lines []string, base int, opts scanOptions) ([]rawCard, []string,
 			end++
 		}
 		card.Body = trimBlankLines(lines[j:end])
-		cards = append(cards, rawCard{card: card, line: base + i + 1, hasID: hasID})
+		cards = append(cards, rawCard{card: card, line: base + i + 1, hasID: hasID, firstWord: first})
 		i = end
 	}
 	return cards, notices, nil
