@@ -1,0 +1,54 @@
+@import '@fontsource-variable/archivo/wdth.css';
+@import '@fontsource-variable/geist/wght.css';
+@import '@fontsource-variable/geist-mono/wght.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  min-height: 100%;
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--text);
+  background-color: var(--bg);
+  /* The canvas: a dot grid under faint contour rings. */
+  background-image:
+    radial-gradient(var(--dot) 1px, transparent 1.2px),
+    repeating-radial-gradient(circle at 82% 125%, transparent 0 46px, var(--contour) 46px 47px);
+  background-size: 18px 18px, auto;
+}
+
+:root[data-textures='off'] body {
+  background-image: none;
+}
+
+/* Signs: the logo, column headers and the NEXT tag. Nothing else uses Archivo. */
+.sign {
+  font-family: var(--font-sign);
+  font-stretch: 68%;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

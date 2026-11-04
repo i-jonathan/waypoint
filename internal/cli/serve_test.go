@@ -140,7 +140,7 @@ func TestServeAnswersAPIAndUIOnTheRealPort(t *testing.T) {
 	resp = s.get("/p/Demo/card/T-1")
 	body, _ := io.ReadAll(resp.Body)
 	assertEq(t, resp.StatusCode, 200)
-	assertContains(t, string(body), "Waypoint UI") // the placeholder or the built index
+	assertContains(t, string(body), "<title>Waypoint</title>") // the placeholder or the built index
 	assertEq(t, resp.Header.Get("X-Content-Type-Options"), "nosniff")
 
 	req, _ := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/", s.port), nil)
