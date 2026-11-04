@@ -49,6 +49,20 @@ live updates, §6 config and overrides, §7). The visual reference is `docs/desi
 here (`app.Service`, `app.CardView`, `app.BoardView`, `app.ConflictError`, `domain.*`,
 `config.Config`, `storage.Open`) are defined there.
 
+**Carried over from Plan 1's final review:**
+- Add JSON tags to `app.BoardView` and `domain.Settings`, and move `errorCode` out of `internal/cli`
+  so the HTTP layer shares it (Task 4).
+- Registry writes go through `config.Update`. Validate registry entries on load, and keep a symlinked
+  config file a symlink on save (Task 4).
+- "When a project opens" for auto-archive means the server loading a board; CLI reads never archive.
+- Dates arrive as UTC timestamps or date-only values. The UI shows the local date, and date-only
+  values verbatim.
+
+**Review process (owner's decision):** by risk. No re-review of small fixes unless they touch saving,
+locking or conflict handling. Tasks 4, 5, 8, 10 and 11 get their own review; the rest are reviewed
+in groups. A whole-branch review through the real binary runs after Task 5 and at the end, each
+with a re-review.
+
 ## Global Constraints
 
 - **HTTP/2:** the server sets `http.Protocols` with HTTP1, HTTP2 and UnencryptedHTTP2 all enabled.

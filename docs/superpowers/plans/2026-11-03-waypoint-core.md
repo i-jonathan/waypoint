@@ -49,8 +49,9 @@ Plan 3 is written after Plans 1 and 2 land.
 - Default priorities: `P0, P1, P2`. Default archive: `{mode: manual, after_days: 14}`. Default id
   prefix: `T`.
 - Card ids are `<prefix>-<n>`, assigned from `next_id`, never reused, even after deletion.
-- Dates are written `YYYY-MM-DD`. Entering a done column sets `done` to today, and leaving one
-  clears it.
+- Dates are stored as UTC timestamps (`2026-11-04T23:52:10Z`) and displayed as the local date;
+  hand-written date-only values stay valid. Entering a done column sets `done` to now, and leaving
+  one clears it.
 - Known card fields, written in this order: `group`, `priority`, `depends` (comma plus space
   separated), `created`, `done`. Unknown fields follow in their original order.
 - Markdown write is canonical outside bodies. **Bodies are preserved byte for byte**, except that
@@ -668,10 +669,10 @@ func Run(ctx context.Context, args []string, env Env) int  // exit codes: 0 ok, 
 - **Project resolution** (`resolveProject`):
   1. `--project`;
   2. `$WAYPOINT_PROJECT`;
-  3. `FindByDir(env.Cwd)`;
-  4. the only registered project, if exactly one exists;
+  3. an unregistered Waypoint `./BOARD.md` is an error;
+  4. `FindByDir(env.Cwd)` (the nearest registered board in the cwd or a parent);
   5. otherwise exit 1 with
-     `no project here; use --project NAME or run "waypoint project add"`.
+     `no project here; use --project NAME or run "waypoint init"`.
 - **Errors:** printed to stderr as `waypoint: <message>`. With `--json`, they go to stdout as
   `{"error":"...","code":"not_found|unknown_column|move_not_allowed|wip_limit|conflict|invalid|parse"}`,
   where `parse` carries `"line":N`.
@@ -738,8 +739,8 @@ func Run(ctx context.Context, args []string, env Env) int  // exit codes: 0 ok, 
   - A blocked card appends `[BLOCKED by T-17]`, with missing ids shown as `T-99?`.
   - `ls` prints board warnings to stderr.
 - **JSON output:** `ls` prints `[]CardView`, and single-card commands print one `CardView`
-  (`encoding/json`, with lower-case keys set via json tags on `CardView`). Dates are `"YYYY-MM-DD"`,
-  or `null` when unset. Add a `MarshalJSON` on `CardView` for this.
+  (`encoding/json`, with lower-case keys set via json tags on `CardView`). Dates are the stored UTC value
+  (`"2026-11-04T23:52:10Z"`, or `"2026-10-26"` for a hand-written date), or `null` when unset. Add a `MarshalJSON` on `CardView` for this.
 
 - [ ] **Step 1: Write the failing tests.** Run them end to end through `runCLI` on a project made
   by `init`.
