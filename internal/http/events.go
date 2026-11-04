@@ -81,6 +81,10 @@ func (b *Broker) ServeSSE(w http.ResponseWriter, r *http.Request) {
 	ch, cancel := b.Subscribe()
 	defer cancel()
 
+	// A stream outlives any server-wide WriteTimeout. Writers that cannot
+	// change their deadline (ErrNotSupported) are left alone.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-cache")

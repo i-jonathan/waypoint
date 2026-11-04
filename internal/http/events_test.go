@@ -218,3 +218,26 @@ func TestSSEWithoutFlusherIs500(t *testing.T) {
 		t.Fatalf("%d subscribers, want 0", n)
 	}
 }
+
+func TestSSESurvivesServerWriteTimeout(t *testing.T) {
+	b := NewBroker()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(b.ServeSSE))
+	srv.Config.WriteTimeout = 100 * time.Millisecond
+	srv.Start()
+	defer srv.Close()
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	r := bufio.NewReader(resp.Body)
+
+	time.Sleep(300 * time.Millisecond) // well past the timeout
+	b.Publish(Event{Type: "changed", Project: "Demo"})
+
+	got := readLines(t, r, 3)
+	want := "event: changed\ndata: {\"type\":\"changed\",\"project\":\"Demo\"}\n\n"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

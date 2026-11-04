@@ -32,14 +32,20 @@ type Target struct{ Project, Path string }
 // board, its .archive.md and its -wal file count; Waypoint's own temp files
 // (.waypoint-*) and .lock files are never in that set, so they are ignored.
 func Run(ctx context.Context, targets func() []Target, publish func(project string)) error {
-	return run(ctx, targets, publish, nil)
+	return run(ctx, targets, publish, hooks{})
 }
 
 // routes maps a watched directory to the base names in it that matter, and
 // each name to the projects it belongs to.
 type routes map[string]map[string][]string
 
-func run(ctx context.Context, targets func() []Target, publish func(project string), synced chan<- struct{}) error {
+// hooks are test seams; the zero value does nothing.
+type hooks struct {
+	synced chan<- struct{} // closed after the first scan of the targets
+	errs   <-chan error    // extra watcher errors, as if from fsnotify
+}
+
+func run(ctx context.Context, targets func() []Target, publish func(project string), h hooks) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -106,9 +112,21 @@ func run(ctx context.Context, targets func() []Target, publish func(project stri
 		first = false
 	}
 
+	// resync follows a watcher error (an overflow may have dropped events):
+	// there is no telling which boards changed, so every project is published.
+	resync := func() {
+		for _, names := range table {
+			for _, projects := range names {
+				for _, p := range projects {
+					schedule(p)
+				}
+			}
+		}
+	}
+
 	refresh()
-	if synced != nil {
-		close(synced)
+	if h.synced != nil {
+		close(h.synced)
 	}
 
 	for {
@@ -128,7 +146,9 @@ func run(ctx context.Context, targets func() []Target, publish func(project stri
 				schedule(p)
 			}
 		case <-w.Errors:
-			// Overflow and the like: nothing to act on, the next event or refresh recovers.
+			resync()
+		case <-h.errs:
+			resync()
 		case <-timer.C:
 			now := time.Now()
 			for project, d := range due {

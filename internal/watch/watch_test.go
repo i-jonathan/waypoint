@@ -2,8 +2,11 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -39,7 +42,7 @@ func start(t *testing.T, targets ...Target) (*recorder, func() error) {
 	synced := make(chan struct{})
 	result := make(chan error, 1)
 	go func() {
-		result <- run(ctx, func() []Target { return targets }, rec.publish, synced)
+		result <- run(ctx, func() []Target { return targets }, rec.publish, hooks{synced: synced})
 	}()
 	select {
 	case <-synced:
@@ -253,7 +256,7 @@ func TestWatchReloadsTargets(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			return append([]Target(nil), targets...)
-		}, rec.publish, synced)
+		}, rec.publish, hooks{synced: synced})
 	}()
 	<-synced
 
@@ -285,4 +288,34 @@ func TestRunReturnsWhenContextEnds(t *testing.T) {
 	if err := stop(); err != nil {
 		t.Fatalf("Run returned %v after cancel, want nil", err)
 	}
+}
+
+func TestWatchErrorRepublishesEveryProject(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.md")
+	b := filepath.Join(t.TempDir(), "b.md")
+	write(t, a, "a")
+	write(t, b, "b")
+	rec := &recorder{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	synced := make(chan struct{})
+	errs := make(chan error, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- run(ctx, func() []Target { return []Target{{"A", a}, {"B", b}} }, rec.publish, hooks{synced: synced, errs: errs})
+	}()
+	<-synced
+
+	errs <- errors.New("queue overflow")
+
+	waitCount(t, rec, 2, 2*time.Second)
+	quiet(t, rec, 2)
+	got := rec.all()
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, []string{"A", "B"}) {
+		t.Fatalf("got %v, want A and B once each", got)
+	}
+	cancel()
+	<-done
 }
