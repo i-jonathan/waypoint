@@ -491,3 +491,46 @@ func TestProjectListWorksAnywhere(t *testing.T) {
 	assertContains(t, stdout, "  Only")
 	assertNotContains(t, stdout, "* Only")
 }
+
+func TestSetRefusesKeysThatLookLikeColumnIDOrRank(t *testing.T) {
+	cases := map[string]string{
+		"column=Done": `use "waypoint move"`,
+		"column=":     `use "waypoint move"`,
+		"rank=1":      `use "waypoint move"`,
+		"id=T-9":      "id cannot be changed",
+	}
+	for arg, want := range cases {
+		t.Run(arg, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "BOARD.md")
+			runCLI(t, dir, "init", "P")
+			runCLI(t, dir, "add", "Card")
+			before := readFile(t, path)
+
+			stdout, stderr, code := runCLI(t, dir, "set", "T-1", arg)
+			assertEq(t, code, exitError)
+			assertContains(t, stderr, want)
+			assertEq(t, stdout, "")
+			assertEq(t, readFile(t, path), before)
+
+			stdout, _, _ = runCLI(t, dir, "set", "T-1", arg, "--json")
+			assertContains(t, stdout, `"code":"invalid"`)
+		})
+	}
+}
+
+func TestFilesHoldingColumnIDOrRankKeysStillRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "BOARD.md")
+	content := strings.Replace(boardFile, "- created: 2026-11-01\n", "- created: 2026-11-01\n- column: Done\n- id: 7\n- rank: 3\n", 1)
+	writeFile(t, path, content)
+	runCLI(t, dir, "init", "P")
+
+	if _, stderr, code := runCLI(t, dir, "set", "X-1", "note=kept"); code != exitOK {
+		t.Fatalf("set: %d %s", code, stderr)
+	}
+
+	assertContains(t, readFile(t, path), "- column: Done\n- id: 7\n- rank: 3\n- note: kept\n")
+	stdout, _, _ := runCLI(t, dir, "show", "X-1")
+	assertContains(t, stdout, "column: Todo\n")
+}

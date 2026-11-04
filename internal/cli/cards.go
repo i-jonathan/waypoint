@@ -354,6 +354,12 @@ func (r *runner) buildPatch(assignments []string) (domain.CardPatch, error) {
 			return p, fmt.Errorf("%w: done is set by moving the card", domain.ErrInvalid)
 		case "created":
 			return p, fmt.Errorf("%w: created is set when the card is added", domain.ErrInvalid)
+		case "column":
+			return p, fmt.Errorf(`%w: column is set by moving the card; use "waypoint move"`, domain.ErrInvalid)
+		case "rank":
+			return p, fmt.Errorf(`%w: rank is the card's position in its column; use "waypoint move"`, domain.ErrInvalid)
+		case "id":
+			return p, fmt.Errorf("%w: a card's id cannot be changed", domain.ErrInvalid)
 		default:
 			if p.Set == nil {
 				p.Set = map[string]string{}
