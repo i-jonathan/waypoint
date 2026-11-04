@@ -9,17 +9,27 @@ import (
 )
 
 // Add registers a project. Its Path is made absolute and cleaned. A blank
-// name, a name already taken (compared case-insensitively) or a path already
-// registered is domain.ErrInvalid.
+// name or path, a storage other than "markdown" or "sqlite", a name already
+// taken (compared case-insensitively) or a path already registered is
+// domain.ErrInvalid. An empty Storage is chosen by StorageFor(path).
 func (c *Config) Add(p ProjectRef) error {
 	if strings.TrimSpace(p.Name) == "" {
 		return fmt.Errorf("%w: project name is empty", domain.ErrInvalid)
+	}
+	if p.Path == "" {
+		return fmt.Errorf("%w: project path is empty", domain.ErrInvalid)
 	}
 	abs, err := filepath.Abs(p.Path)
 	if err != nil {
 		return fmt.Errorf("%w: project path %q: %v", domain.ErrInvalid, p.Path, err)
 	}
 	p.Path = filepath.Clean(abs)
+	if p.Storage == "" {
+		p.Storage = StorageFor(p.Path)
+	}
+	if p.Storage != "markdown" && p.Storage != "sqlite" {
+		return fmt.Errorf("%w: storage %q must be markdown or sqlite", domain.ErrInvalid, p.Storage)
+	}
 	for _, q := range c.Projects {
 		if strings.EqualFold(q.Name, p.Name) {
 			return fmt.Errorf("%w: project %q already exists", domain.ErrInvalid, q.Name)

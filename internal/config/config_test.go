@@ -307,3 +307,41 @@ func TestStorageFor(t *testing.T) {
 		}
 	}
 }
+
+func TestFindByDirTieIsAmbiguous(t *testing.T) {
+	c := &Config{}
+	assertNoErr(t, c.Add(ProjectRef{Name: "one", Storage: "markdown", Path: "/p/a/one.md"}))
+	assertNoErr(t, c.Add(ProjectRef{Name: "two", Storage: "markdown", Path: "/p/a/two.md"}))
+	for _, cwd := range []string{"/p/a", "/p/a/x"} {
+		if ref, ok := c.FindByDir(cwd); ok {
+			t.Errorf("cwd %s: tie matched %q, want none", cwd, ref.Name)
+		}
+	}
+
+	// A shallower project must not win when the deepest level is tied.
+	assertNoErr(t, c.Add(ProjectRef{Name: "top", Storage: "markdown", Path: "/p/top.md"}))
+	for _, cwd := range []string{"/p/a", "/p/a/x"} {
+		if ref, ok := c.FindByDir(cwd); ok {
+			t.Errorf("cwd %s with shallower project: tie fell through to %q, want none", cwd, ref.Name)
+		}
+	}
+	// Outside the tied directory the shallower project still matches.
+	if ref, ok := c.FindByDir("/p/b"); !ok || ref.Name != "top" {
+		t.Errorf("cwd /p/b: got %+v, %v, want top", ref, ok)
+	}
+}
+
+func TestAddValidatesPathAndStorage(t *testing.T) {
+	c := &Config{}
+	assertIs(t, c.Add(ProjectRef{Name: "a", Storage: "markdown", Path: ""}), domain.ErrInvalid)
+	assertIs(t, c.Add(ProjectRef{Name: "a", Storage: "postgres", Path: "/p/a.md"}), domain.ErrInvalid)
+	assertIs(t, c.Add(ProjectRef{Name: "a", Storage: "Markdown", Path: "/p/a.md"}), domain.ErrInvalid)
+	assertEqual(t, len(c.Projects), 0)
+
+	assertNoErr(t, c.Add(ProjectRef{Name: "md", Path: "/p/a/BOARD.md"}))
+	assertNoErr(t, c.Add(ProjectRef{Name: "db", Path: "/p/b/board.sqlite3"}))
+	assertNoErr(t, c.Add(ProjectRef{Name: "explicit", Storage: "sqlite", Path: "/p/c/data.bin"}))
+	assertEqual(t, c.Projects[0].Storage, "markdown")
+	assertEqual(t, c.Projects[1].Storage, "sqlite")
+	assertEqual(t, c.Projects[2].Storage, "sqlite")
+}
