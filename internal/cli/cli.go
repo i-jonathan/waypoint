@@ -1,0 +1,254 @@
+// Package cli is the waypoint command line. Run is the only entry point; it
+// reads nothing from the process (environment, working directory, clock)
+// except through Env, so tests run in a sandbox.
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+
+	"waypoint/internal/app"
+	"waypoint/internal/config"
+	"waypoint/internal/domain"
+	"waypoint/internal/storage"
+	"waypoint/internal/storage/markdown"
+)
+
+// Env is everything the CLI takes from the outside world.
+type Env struct {
+	Stdin          io.Reader
+	Stdout, Stderr io.Writer
+	Getenv         func(string) string
+	Cwd            string
+	Now            app.Clock
+}
+
+// Exit codes returned by Run.
+const (
+	exitOK    = 0
+	exitError = 1
+	exitUsage = 2
+)
+
+const usageText = `Waypoint, a local kanban tracker
+
+Usage: waypoint <command> [flags]
+
+Commands:
+  init [NAME]          Register ./BOARD.md in this directory as a project
+  project add NAME     Add a project (--path FILE, --prefix T)
+  project ls           List projects
+  project rm NAME      Remove a project from the registry (the file is kept)
+
+Every command accepts --json and --project NAME.
+`
+
+// runner carries one invocation: its context, its Env and the flags every
+// command shares.
+type runner struct {
+	ctx     context.Context
+	env     Env
+	json    bool   // --json
+	project string // --project
+}
+
+// Run executes one waypoint command and returns the exit code: 0 on success,
+// 1 on an error, 2 on a usage error.
+func Run(ctx context.Context, args []string, env Env) int {
+	r := &runner{ctx: ctx, env: env}
+	if len(args) == 0 {
+		fmt.Fprint(env.Stdout, usageText)
+		return exitOK
+	}
+	switch args[0] {
+	case "-h", "--help", "-help", "help":
+		fmt.Fprint(env.Stdout, usageText)
+		return exitOK
+	case "init":
+		return r.cmdInit(args[1:])
+	case "project":
+		return r.cmdProject(args[1:])
+	}
+	return r.usageError(fmt.Sprintf("unknown command %q", args[0]), "waypoint <command> [flags], see waypoint --help")
+}
+
+// parse registers --json and --project beside the command's own flags (set up
+// by setup), parses args with flags allowed anywhere, and returns the
+// positional arguments. When done is true the command is finished and code is
+// its exit code: a bad flag is a usage error, and --help prints the usage.
+func (r *runner) parse(usage string, args []string, setup func(*flag.FlagSet)) (pos []string, code int, done bool) {
+	fs := flag.NewFlagSet("waypoint", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.BoolVar(&r.json, "json", false, "")
+	fs.StringVar(&r.project, "project", "", "")
+	if setup != nil {
+		setup(fs)
+	}
+	pos, err := parseInterspersed(fs, args)
+	switch {
+	case errors.Is(err, flag.ErrHelp):
+		fmt.Fprintf(r.env.Stdout, "usage: %s\n", usage)
+		return nil, exitOK, true
+	case err != nil:
+		return nil, r.usageError(err.Error(), usage), true
+	}
+	return pos, 0, false
+}
+
+// parseInterspersed parses args with flags allowed before, between and after
+// positional arguments, and returns the positionals in order. Everything
+// after a bare "--" is positional.
+func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
+	var pos []string
+	for {
+		if len(args) > 0 && args[0] == "--" {
+			return append(pos, args[1:]...), nil
+		}
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if fs.NArg() == 0 {
+			return pos, nil
+		}
+		pos = append(pos, fs.Arg(0))
+		args = fs.Args()[1:]
+	}
+}
+
+// usageError prints a one-line usage message to stderr and returns the usage
+// exit code.
+func (r *runner) usageError(msg, usage string) int {
+	fmt.Fprintf(r.env.Stderr, "waypoint: %s; usage: %s\n", msg, usage)
+	return exitUsage
+}
+
+// fail reports err and returns the error exit code. Plain output goes to
+// stderr as "waypoint: <message>"; with --json it is an object on stdout.
+func (r *runner) fail(err error) int {
+	if !r.json {
+		fmt.Fprintf(r.env.Stderr, "waypoint: %s\n", err)
+		return exitError
+	}
+	r.printJSON(struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+		Line  int    `json:"line,omitempty"`
+	}{err.Error(), errorCode(err), errorLine(err)})
+	return exitError
+}
+
+// printJSON writes v and a newline to stdout.
+func (r *runner) printJSON(v any) {
+	enc := json.NewEncoder(r.env.Stdout)
+	enc.SetEscapeHTML(false)
+	enc.Encode(v)
+}
+
+// errorCode names an error for machine readers: one of not_found,
+// unknown_column, move_not_allowed, wip_limit, conflict, invalid, parse, or
+// error for anything else. The CLI and the HTTP API share this mapping.
+func errorCode(err error) string {
+	var pe *markdown.ParseError
+	switch {
+	case errors.As(err, &pe), errors.Is(err, markdown.ErrNotABoard):
+		return "parse"
+	case errors.Is(err, domain.ErrNotFound):
+		return "not_found"
+	case errors.Is(err, domain.ErrUnknownColumn):
+		return "unknown_column"
+	case errors.Is(err, domain.ErrMoveNotAllowed):
+		return "move_not_allowed"
+	case errors.Is(err, domain.ErrWIPLimit):
+		return "wip_limit"
+	case errors.Is(err, domain.ErrConflict):
+		return "conflict"
+	case errors.Is(err, domain.ErrInvalid),
+		errors.Is(err, domain.ErrUnknownGroup),
+		errors.Is(err, domain.ErrUnknownPriority):
+		return "invalid"
+	}
+	return "error"
+}
+
+// errorLine is the 1-based line of a parse error, or 0 if err has none.
+func errorLine(err error) int {
+	var pe *markdown.ParseError
+	if errors.As(err, &pe) {
+		return pe.Line
+	}
+	return 0
+}
+
+// loadConfig reads the global config and returns it with its path. A missing
+// file gives the defaults and is not created.
+func (r *runner) loadConfig() (*config.Config, string, error) {
+	path, err := config.DefaultPath(r.env.Getenv)
+	if err != nil {
+		return nil, "", err
+	}
+	cfg, err := config.Load(path, r.env.Getenv)
+	if err != nil {
+		return nil, "", err
+	}
+	return cfg, path, nil
+}
+
+// noProjectError is the "cannot tell which project" error. Machine readers
+// see it as not_found.
+type noProjectError struct{}
+
+func (noProjectError) Error() string {
+	return `no project here; use --project NAME or run "waypoint project add"`
+}
+
+func (noProjectError) Unwrap() error { return domain.ErrNotFound }
+
+// resolveProject picks the project a command acts on: name (the --project
+// value) if given, else $WAYPOINT_PROJECT, else the project whose directory
+// holds the working directory, else the only registered project. A named
+// project that does not exist is an error, not a fall-through.
+func (r *runner) resolveProject(cfg *config.Config, name string) (config.ProjectRef, error) {
+	if name == "" {
+		name = r.env.Getenv("WAYPOINT_PROJECT")
+	}
+	if name != "" {
+		ref, ok := cfg.Find(name)
+		if !ok {
+			return config.ProjectRef{}, fmt.Errorf("%w: no project named %q", domain.ErrNotFound, name)
+		}
+		return ref, nil
+	}
+	if r.env.Cwd != "" {
+		if ref, ok := cfg.FindByDir(r.env.Cwd); ok {
+			return ref, nil
+		}
+	}
+	if len(cfg.Projects) == 1 {
+		return cfg.Projects[0], nil
+	}
+	return config.ProjectRef{}, noProjectError{}
+}
+
+// service resolves the current project (see resolveProject) and returns a
+// Service over its board together with its registry entry. name is the
+// --project value, normally r.project after r.parse. It does not read the
+// board, so a missing or broken file shows up on the first service call.
+func (r *runner) service(name string) (*app.Service, config.ProjectRef, error) {
+	cfg, _, err := r.loadConfig()
+	if err != nil {
+		return nil, config.ProjectRef{}, err
+	}
+	ref, err := r.resolveProject(cfg, name)
+	if err != nil {
+		return nil, config.ProjectRef{}, err
+	}
+	repo, err := storage.Open(ref)
+	if err != nil {
+		return nil, ref, err
+	}
+	return app.NewService(repo, r.env.Now), ref, nil
+}
