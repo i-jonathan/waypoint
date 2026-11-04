@@ -356,3 +356,31 @@ func TestTitleMustBeSingleLine(t *testing.T) {
 	c := mustAdd(t, b, NewCard{Title: "A", Body: "line1\nline2\n"})
 	assertEqual(t, c.Body, "line1\nline2\n")
 }
+
+func TestDependsMustBeWellFormedIDs(t *testing.T) {
+	b := NewBoard("x", "T")
+	for _, bad := range []CardID{"nonsense", "T-", "-1", "T-x", "T 1", ""} {
+		if _, err := b.AddCard(NewCard{Title: "A", Depends: []CardID{"T-9", bad}}, today); !errors.Is(err, ErrInvalid) {
+			t.Errorf("AddCard %q: got %v, want ErrInvalid", bad, err)
+		}
+	}
+	assertEqual(t, len(b.Cards), 0)
+	id := mustAdd(t, b, NewCard{Title: "A"}).ID
+	for _, bad := range []CardID{"nonsense", "T-1,T-2", "t_1"} {
+		err := b.UpdateCard(id, CardPatch{Depends: &[]CardID{bad}})
+		if !errors.Is(err, ErrInvalid) {
+			t.Errorf("UpdateCard %q: got %v, want ErrInvalid", bad, err)
+		}
+	}
+	assertEqual(t, len(b.Cards[0].Depends), 0)
+	// Unknown but well-formed ids stay allowed.
+	assertNoErr(t, b.UpdateCard(id, CardPatch{Depends: &[]CardID{"X-99"}}))
+}
+
+func TestValidCardID(t *testing.T) {
+	for id, want := range map[string]bool{"T-1": true, "ab2-10": true, "T-019": true, "T": false, "1-1": false, "T-1x": false, "": false, "T-1\n": false} {
+		if got := ValidCardID(id); got != want {
+			t.Errorf("ValidCardID(%q) = %v, want %v", id, got, want)
+		}
+	}
+}

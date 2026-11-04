@@ -85,7 +85,17 @@ type Board struct {
 	Notices []string
 }
 
-var prefixRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
+var (
+	prefixRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
+	cardIDRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*-\d+$`)
+)
+
+// ValidCardID reports whether id has the shape of a card id: a prefix, a dash
+// and a number. It does not check that the card exists.
+func ValidCardID(id string) bool { return cardIDRE.MatchString(id) }
+
+// singleLine reports whether s has no line break.
+func singleLine(s string) bool { return !strings.ContainsAny(s, "\r\n") }
 
 // NewBoard returns a board with the default columns, priorities and archive
 // settings, and NextID 1.
@@ -106,6 +116,9 @@ func NewBoard(name, prefix string) *Board {
 
 // Validate reports the first problem with the settings, wrapping ErrInvalid.
 func (s Settings) Validate() error {
+	if !singleLine(s.Name) {
+		return fmt.Errorf("%w: project name must be a single line", ErrInvalid)
+	}
 	if !prefixRE.MatchString(s.Prefix) {
 		return fmt.Errorf("%w: prefix %q must match %s", ErrInvalid, s.Prefix, prefixRE)
 	}
@@ -119,6 +132,9 @@ func (s Settings) Validate() error {
 	for _, c := range s.Columns {
 		if c.Name == "" {
 			return fmt.Errorf("%w: column name is empty", ErrInvalid)
+		}
+		if c.Name != strings.TrimSpace(c.Name) || !singleLine(c.Name) {
+			return fmt.Errorf("%w: column name %q must be a single line without leading or trailing spaces", ErrInvalid, c.Name)
 		}
 		if cols[c.Name] {
 			return fmt.Errorf("%w: duplicate column %q", ErrInvalid, c.Name)
@@ -137,11 +153,19 @@ func (s Settings) Validate() error {
 	}
 	groups := make(map[string]bool, len(s.Groups))
 	for _, g := range s.Groups {
+		if !singleLine(g.Name) {
+			return fmt.Errorf("%w: group name %q must be a single line", ErrInvalid, g.Name)
+		}
 		key := strings.ToLower(g.Name)
 		if groups[key] {
 			return fmt.Errorf("%w: duplicate group %q", ErrInvalid, g.Name)
 		}
 		groups[key] = true
+	}
+	for _, p := range s.Priorities {
+		if !singleLine(p) {
+			return fmt.Errorf("%w: priority name %q must be a single line", ErrInvalid, p)
+		}
 	}
 	switch s.Archive.Mode {
 	case ArchiveOff, ArchiveManual, ArchiveAuto:

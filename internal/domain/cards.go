@@ -69,6 +69,9 @@ func (b *Board) AddCard(n NewCard, today time.Time) (Card, error) {
 		return Card{}, err
 	}
 	id := CardID(fmt.Sprintf("%s-%d", b.Settings.Prefix, b.Settings.NextID))
+	if err := validateDepends(n.Depends); err != nil {
+		return Card{}, err
+	}
 	if slices.Contains(n.Depends, id) {
 		return Card{}, fmt.Errorf("%w: %s cannot depend on itself", ErrInvalid, id)
 	}
@@ -214,6 +217,9 @@ func (b *Board) UpdateCard(id CardID, p CardPatch) error {
 		next.Body = *p.Body
 	}
 	if p.Depends != nil {
+		if err := validateDepends(*p.Depends); err != nil {
+			return err
+		}
 		if slices.Contains(*p.Depends, id) {
 			return fmt.Errorf("%w: %s cannot depend on itself", ErrInvalid, id)
 		}
@@ -310,6 +316,17 @@ func cleanTitle(raw string) (string, error) {
 		return "", fmt.Errorf("%w: title is empty", ErrInvalid)
 	}
 	return title, nil
+}
+
+// validateDepends rejects an id that is not shaped like a card id, because the
+// markdown format could not read it back. Unknown but well-formed ids are fine.
+func validateDepends(ids []CardID) error {
+	for _, d := range ids {
+		if !ValidCardID(string(d)) {
+			return fmt.Errorf("%w: invalid card id %q in depends", ErrInvalid, d)
+		}
+	}
+	return nil
 }
 
 // validateExtra rejects an extra field the markdown format cannot write as a

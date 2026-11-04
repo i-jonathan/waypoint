@@ -323,3 +323,21 @@ func TestDocExampleParses(t *testing.T) {
 	assertEqual(t, len(b.Cards), 4)
 	assertEqual(t, b.Cards[1].ID, domain.CardID("T-112"))
 }
+
+// A card added by hand under a done heading has no done date. Archiving it must
+// still give a file that reads back.
+func TestArchiveUndatedDoneCardRoundTrips(t *testing.T) {
+	src := "---\nwaypoint: 1\nname: x\nprefix: T\nnext_id: 3\n---\n\n## Todo\n\n## In progress\n\n## Done\n\n### T-1 Hand added\n\n### T-2 Dated\n\n- done: 2026-10-01\n"
+	b := mustParse(t, src)
+	today := time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)
+	if err := b.Archive(b.DoneCards(), today); err != nil {
+		t.Fatal(err)
+	}
+	back, err := ParseArchive(FormatArchive(b.Archived), b.Settings)
+	if err != nil {
+		t.Fatalf("archive does not read back: %v\n%s", err, FormatArchive(b.Archived))
+	}
+	assertEqual(t, len(back), 2)
+	assertEqual(t, back[0].ID, domain.CardID("T-1"))
+	assertEqual(t, back[0].Done, today)
+}

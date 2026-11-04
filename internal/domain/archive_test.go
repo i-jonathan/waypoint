@@ -55,7 +55,7 @@ func TestArchiveRejectsNotDone(t *testing.T) {
 	b := NewBoard("x", "T")
 	todo := mustAdd(t, b, NewCard{Title: "todo"})
 	done := addDone(t, b, "done", today)
-	err := b.Archive([]CardID{done, todo.ID})
+	err := b.Archive([]CardID{done, todo.ID}, today)
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("got %v, want ErrInvalid", err)
 	}
@@ -67,7 +67,7 @@ func TestArchiveRejectsNotDone(t *testing.T) {
 func TestArchiveUnknownIDIsNotFoundAndChangesNothing(t *testing.T) {
 	b := NewBoard("x", "T")
 	done := addDone(t, b, "done", today)
-	err := b.Archive([]CardID{done, "T-99"})
+	err := b.Archive([]CardID{done, "T-99"}, today)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v, want ErrNotFound", err)
 	}
@@ -80,8 +80,8 @@ func TestArchivePrependsNewestFirst(t *testing.T) {
 	a := addDone(t, b, "a", today)
 	c := addDone(t, b, "c", today)
 	d := addDone(t, b, "d", today)
-	assertNoErr(t, b.Archive([]CardID{a}))
-	assertNoErr(t, b.Archive([]CardID{d, c, c}))
+	assertNoErr(t, b.Archive([]CardID{a}, today))
+	assertNoErr(t, b.Archive([]CardID{d, c, c}, today))
 	var got []CardID
 	for _, card := range b.Archived {
 		got = append(got, card.ID)
@@ -96,7 +96,7 @@ func TestRestore(t *testing.T) {
 	b := NewBoard("x", "T")
 	mustAdd(t, b, NewCard{Title: "first"})
 	id := addDone(t, b, "back", today)
-	assertNoErr(t, b.Archive([]CardID{id}))
+	assertNoErr(t, b.Archive([]CardID{id}, today))
 	assertNoErr(t, b.Restore(id, "", today))
 	assertEqual(t, titles(b, "Todo"), []string{"first", "back"})
 	card, archived, ok := b.Find(id)
@@ -109,7 +109,7 @@ func TestRestore(t *testing.T) {
 func TestRestoreToDoneColumnSetsDoneAndKeepsOrder(t *testing.T) {
 	b := NewBoard("x", "T")
 	id := addDone(t, b, "back", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
-	assertNoErr(t, b.Archive([]CardID{id}))
+	assertNoErr(t, b.Archive([]CardID{id}, today))
 	mustAdd(t, b, NewCard{Title: "later", Column: "In progress"})
 	assertNoErr(t, b.Restore(id, "Done", today))
 	card, _, _ := b.Find(id)
@@ -125,9 +125,19 @@ func TestRestoreErrors(t *testing.T) {
 		t.Fatalf("live card: got %v, want ErrNotFound", err)
 	}
 	id := addDone(t, b, "done", today)
-	assertNoErr(t, b.Archive([]CardID{id}))
+	assertNoErr(t, b.Archive([]CardID{id}, today))
 	if err := b.Restore(id, "Nope", today); !errors.Is(err, ErrUnknownColumn) {
 		t.Fatalf("got %v, want ErrUnknownColumn", err)
 	}
 	assertEqual(t, len(b.Archived), 1)
+}
+
+func TestArchiveStampsUndatedCards(t *testing.T) {
+	b := NewBoard("x", "T")
+	dated := addDone(t, b, "dated", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	undated := addDone(t, b, "undated", today)
+	b.Cards[1].Done = time.Time{} // a hand-added card under Done has no date
+	assertNoErr(t, b.Archive([]CardID{dated, undated}, today))
+	assertEqual(t, b.Archived[0].Done, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	assertEqual(t, b.Archived[1].Done, Day(today))
 }

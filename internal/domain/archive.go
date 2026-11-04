@@ -39,8 +39,9 @@ func (b *Board) DoneCards() []CardID {
 
 // Archive moves cards from the board to the front of the archive, keeping the
 // given order at the front so the archive stays newest first. Every id must be
-// a card in a done column; otherwise nothing changes.
-func (b *Board) Archive(ids []CardID) error {
+// a card in a done column; otherwise nothing changes. A card with no done date
+// is given today's, because an archived card must be dated to be read back.
+func (b *Board) Archive(ids []CardID, today time.Time) error {
 	for _, id := range ids {
 		i := b.indexOf(id)
 		if i < 0 {
@@ -56,7 +57,11 @@ func (b *Board) Archive(ids []CardID) error {
 		if i < 0 { // listed twice
 			continue
 		}
-		moved = append(moved, b.Cards[i])
+		card := b.Cards[i]
+		if card.Done.IsZero() {
+			card.Done = Day(today)
+		}
+		moved = append(moved, card)
 		b.Cards = slices.Delete(b.Cards, i, i+1)
 	}
 	b.Archived = slices.Concat(moved, b.Archived)

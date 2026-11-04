@@ -27,8 +27,6 @@ func (e *ParseError) Error() string { return fmt.Sprintf("line %d: %s", e.Line, 
 var (
 	// headingRE matches a column (##) or card (###) heading, with optional text.
 	headingRE = regexp.MustCompile(`^(##|###)(?:[ \t]+(.*))?$`)
-	// idRE is the shape of a card id at the start of a card heading.
-	idRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*-\d+$`)
 	// fieldRE is the shape of a field line. Whether the key is acceptable is
 	// decided afterwards, so a body list item such as "- Note: x" or
 	// "- see: https://x" is not mistaken for a field.
@@ -258,7 +256,7 @@ func scanCards(lines []string, base int, opts scanOptions) ([]rawCard, []string,
 		if k := strings.IndexAny(text, " \t"); k >= 0 {
 			first, rest = text[:k], text[k+1:]
 		}
-		hasID := idRE.MatchString(first)
+		hasID := domain.ValidCardID(first)
 		title := text
 		if hasID {
 			card.ID, title = domain.CardID(first), strings.TrimSpace(rest)
@@ -336,7 +334,7 @@ func setField(c *domain.Card, key, value string) error {
 			if part == "" {
 				continue
 			}
-			if !idRE.MatchString(part) {
+			if !domain.ValidCardID(part) {
 				return fmt.Errorf("invalid card id %q in depends (separate ids with commas)", part)
 			}
 			c.Depends = append(c.Depends, domain.CardID(part))
