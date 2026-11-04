@@ -162,3 +162,71 @@ func TestCrashResidueStillResolvesWhenColumnAndDoneDiffer(t *testing.T) {
 	assertNotContains(t, readFile(t, archive), "### T-1")
 	assertContains(t, readFile(t, board), "### T-1 Keep me")
 }
+
+// handKeptBoard is a valid board that a save would rewrite: comments in the
+// front matter, loose spacing, and fields out of order.
+const handKeptBoard = `---
+# Notes to self: this comment goes on a real save.
+waypoint: 1
+name: Hand kept
+prefix: T
+next_id: 2
+columns:
+  - {name: Todo, moves_to: [Done]}   # first
+  - {name: Done, done: true, moves_to: [Todo]}
+---
+
+## Done
+
+
+## Todo
+
+
+### T-1    Spaced out
+
+- created: 2026-11-01
+- priority:   P1
+
+Body.
+`
+
+func TestNoOpsLeaveTheBoardFileAlone(t *testing.T) {
+	boards := map[string]string{
+		"comments": handKeptBoard,
+		"crlf":     strings.ReplaceAll(handKeptBoard, "\n", "\r\n"),
+	}
+	commands := [][]string{
+		{"archive"},
+		{"move", "T-1", "Todo"},
+		{"set", "T-1", "note="},
+	}
+	for name, content := range boards {
+		for _, args := range commands {
+			t.Run(name+"/"+args[0], func(t *testing.T) {
+				dir := t.TempDir()
+				path := filepath.Join(dir, "BOARD.md")
+				writeFile(t, path, content)
+				if _, stderr, code := runCLI(t, dir, "init", "P"); code != exitOK {
+					t.Fatalf("init: %d %s", code, stderr)
+				}
+				before, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if _, stderr, code := runCLI(t, dir, args...); code != exitOK {
+					t.Fatalf("%v: %d %s", args, code, stderr)
+				}
+
+				assertEq(t, readFile(t, path), content)
+				after, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !os.SameFile(before, after) {
+					t.Fatal("the file was replaced by a new inode")
+				}
+			})
+		}
+	}
+}

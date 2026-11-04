@@ -564,3 +564,83 @@ func TestConcurrentWritesThroughTwoPathsLoseNothing(t *testing.T) {
 		t.Fatalf("%d cards survived, want %d", got, 2*perPath)
 	}
 }
+
+// countingRepo counts Saves. afterLoad, if set, runs once after the first Load.
+type countingRepo struct {
+	app.Repository
+	saves     int
+	afterLoad func()
+}
+
+func (r *countingRepo) Save(ctx context.Context, b *domain.Board) error {
+	r.saves++
+	return r.Repository.Save(ctx, b)
+}
+
+func (r *countingRepo) Load(ctx context.Context) (*domain.Board, []domain.CardID, error) {
+	b, assigned, err := r.Repository.Load(ctx)
+	if f := r.afterLoad; f != nil {
+		r.afterLoad = nil
+		f()
+	}
+	return b, assigned, err
+}
+
+func TestUnchangedBoardIsNotSaved(t *testing.T) {
+	e := newEnv(t)
+	e.create("One", "")
+	repo := &countingRepo{Repository: e.repo}
+	svc := app.NewService(repo, func() time.Time { return e.now })
+
+	if _, err := svc.ArchiveDone(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.MoveCard(context.Background(), "T-1", "Todo", -1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateCard(context.Background(), "T-1", domain.CardPatch{Set: map[string]string{"note": ""}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if repo.saves != 0 {
+		t.Fatalf("%d saves for three no-ops", repo.saves)
+	}
+}
+
+func TestAssignedIDsAreSavedEvenThoughFnChangedNothing(t *testing.T) {
+	e := newEnv(t)
+	e.write(strings.Replace(e.file(), "## Todo\n", "## Todo\n\n### Call the plumber\n", 1))
+	repo := &countingRepo{Repository: e.repo}
+	svc := app.NewService(repo, func() time.Time { return e.now })
+
+	bv, err := svc.Board(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.saves != 1 || bv.Cards[0].ID != "T-1" {
+		t.Fatalf("saves = %d, cards = %v", repo.saves, bv.Cards)
+	}
+	if !strings.Contains(e.file(), "### T-1 Call the plumber") {
+		t.Fatalf("the id was not written:\n%s", e.file())
+	}
+}
+
+// Two readers can both see a card without an id. The second must not save
+// again once the first has written the id.
+func TestReadDoesNotResaveWhenAnotherReaderAssignedTheIDs(t *testing.T) {
+	e := newEnv(t)
+	e.write(strings.Replace(e.file(), "## Todo\n", "## Todo\n\n### Call the plumber\n", 1))
+	other := app.NewService(e.repo, func() time.Time { return e.now })
+	repo := &countingRepo{Repository: e.repo, afterLoad: func() {
+		if _, err := other.Board(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	svc := app.NewService(repo, func() time.Time { return e.now })
+
+	if _, err := svc.Board(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if repo.saves != 0 {
+		t.Fatalf("%d saves after the other reader already saved", repo.saves)
+	}
+}

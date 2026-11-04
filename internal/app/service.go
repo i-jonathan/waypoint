@@ -100,9 +100,10 @@ func (v viewer) find(id domain.CardID) (CardView, error) {
 }
 
 // apply runs one operation under the board's lock: load fresh state, run fn,
-// auto-archive when due, save. Nothing is saved if Load or fn fails. It
-// returns the board as saved. An unlock failure is reported only when
-// nothing else failed.
+// auto-archive when due, save. Nothing is saved if Load or fn fails, or if
+// nothing changed and Load assigned no ids, so a no-op leaves a hand-kept file
+// exactly as it is. It returns the resulting board. An unlock failure is
+// reported only when nothing else failed.
 func (s *Service) apply(ctx context.Context, fn func(*domain.Board) error) (b *domain.Board, err error) {
 	unlock, err := s.repo.Lock(ctx)
 	if err != nil {
@@ -114,10 +115,11 @@ func (s *Service) apply(ctx context.Context, fn func(*domain.Board) error) (b *d
 		}
 	}()
 
-	b, _, err = s.repo.Load(ctx)
+	b, assigned, err := s.repo.Load(ctx)
 	if err != nil {
 		return nil, err
 	}
+	before := b.Clone()
 	if err = fn(b); err != nil {
 		return nil, err
 	}
@@ -126,6 +128,9 @@ func (s *Service) apply(ctx context.Context, fn func(*domain.Board) error) (b *d
 		if err = b.Archive(due, today); err != nil {
 			return nil, err
 		}
+	}
+	if len(assigned) == 0 && b.Equal(before) {
+		return b, nil
 	}
 	if err = s.repo.Save(ctx, b); err != nil {
 		return nil, err
