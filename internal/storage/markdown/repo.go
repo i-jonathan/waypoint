@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -61,52 +62,77 @@ func (r *Repo) archivePath() string {
 	return strings.TrimSuffix(r.path, filepath.Ext(r.path)) + ".archive.md"
 }
 
-// Load reads the board and, if there is one, its archive. It never writes. A
-// card found in both files is kept on the board and dropped from the archive
-// in memory, so the next Save repairs the file; this is what a crash between
-// Save's two writes leaves behind.
+// Load reads the board and, if there is one, its archive. It never writes.
+// The archive is read first, so that its ids stay reserved: a new card never
+// takes the id of an archived one. A card found in both files is kept on the
+// board and dropped from the archive in memory, with a notice, so the next
+// Save repairs the file; this is what a crash between Save's writes leaves
+// behind.
 func (r *Repo) Load(ctx context.Context) (*domain.Board, []domain.CardID, error) {
 	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	archived, err := r.readArchive()
+	if err != nil {
 		return nil, nil, err
 	}
 	data, err := os.ReadFile(r.path)
 	if err != nil {
 		return nil, nil, err
 	}
-	b, assigned, err := ParseAssigned(data)
+	b, assigned, err := ParseAssignedReserved(data, cardIDs(archived))
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: %w", r.path, err)
-	}
-
-	archive, err := os.ReadFile(r.archivePath())
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return b, assigned, nil
-	case err != nil:
-		return nil, nil, err
-	}
-	cards, err := ParseArchive(archive, b.Settings)
-	if err != nil {
-		return nil, nil, fmt.Errorf("archive %s: %w", r.archivePath(), err)
 	}
 	live := make(map[domain.CardID]bool, len(b.Cards))
 	for _, c := range b.Cards {
 		live[c.ID] = true
 	}
-	for _, c := range cards {
-		if !live[c.ID] {
-			b.Archived = append(b.Archived, c)
+	for _, c := range archived {
+		if live[c.ID] {
+			b.Notices = append(b.Notices, fmt.Sprintf("%s is on the board and in the archive; keeping the board copy", c.ID))
+			continue
 		}
+		b.Archived = append(b.Archived, c)
 	}
 	return b, assigned, nil
 }
 
+// readArchive parses the archive file; a missing file is an empty archive.
+func (r *Repo) readArchive() ([]domain.Card, error) {
+	data, err := os.ReadFile(r.archivePath())
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	cards, err := ParseArchive(data, domain.Settings{})
+	if err != nil {
+		return nil, fmt.Errorf("archive %s: %w", r.archivePath(), err)
+	}
+	return cards, nil
+}
+
+func cardIDs(cards []domain.Card) []domain.CardID {
+	out := make([]domain.CardID, len(cards))
+	for i, c := range cards {
+		out[i] = c.ID
+	}
+	return out
+}
+
 // Save writes the board, and the archive when there are archived cards or an
-// archive file already exists. Before replacing anything it reads back the
-// bytes it is about to write; if they do not hold exactly the cards of b, it
-// returns an error starting "refusing to write" and changes no file. The
-// archive is written first, so a failure between the two writes leaves a card
-// in both files rather than in neither.
+// archive file already exists. Before replacing anything it reads back every
+// byte slice it is about to write; if one does not hold exactly the cards it
+// should, Save returns an error starting "refusing to write" and changes no
+// file.
+//
+// A card must be in at least one file at every point where a write can fail.
+// Archiving a card writes the archive first, then the board. Restoring one
+// reverses that, so the archive written first still holds the card: Save
+// writes an archive that keeps the restored cards, then the board, then the
+// final archive. A card in both files is resolved by Load.
 func (r *Repo) Save(ctx context.Context, b *domain.Board) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -115,21 +141,65 @@ func (r *Repo) Save(ctx context.Context, b *domain.Board) error {
 	if err := checkBoardOutput(boardData, b); err != nil {
 		return err
 	}
+	if !exists(r.archivePath()) && len(b.Archived) == 0 {
+		return r.writeBoard(boardData)
+	}
 
-	var archiveData []byte
-	if len(b.Archived) > 0 || exists(r.archivePath()) {
-		archiveData = FormatArchive(b.Archived)
-		if err := checkArchiveOutput(archiveData, b); err != nil {
+	onDisk, err := r.readArchive()
+	if err != nil {
+		return fmt.Errorf("refusing to write: the existing archive cannot be read: %w", err)
+	}
+	finalCards := b.Archived
+	finalData := FormatArchive(finalCards)
+	if err := checkArchiveOutput(finalData, finalCards, b.Settings); err != nil {
+		return err
+	}
+
+	// Cards that are archived on disk and live now: the archive keeps them
+	// until the board has them.
+	union := slices.Clone(finalCards)
+	have := make(map[domain.CardID]bool, len(union))
+	for _, c := range union {
+		have[c.ID] = true
+	}
+	live := make(map[domain.CardID]bool, len(b.Cards))
+	for _, c := range b.Cards {
+		live[c.ID] = true
+	}
+	for _, c := range onDisk {
+		if live[c.ID] && !have[c.ID] {
+			union = append(union, c)
+		}
+	}
+	if len(union) == len(finalCards) {
+		if err := r.writeArchive(finalData); err != nil {
 			return err
 		}
+		return r.writeBoard(boardData)
 	}
 
-	if archiveData != nil {
-		if err := writeFileAtomic(r.archivePath(), archiveData); err != nil {
-			return fmt.Errorf("write archive: %w", err)
-		}
+	unionData := FormatArchive(union)
+	if err := checkArchiveOutput(unionData, union, b.Settings); err != nil {
+		return err
 	}
-	if err := writeFileAtomic(r.path, boardData); err != nil {
+	if err := r.writeArchive(unionData); err != nil {
+		return err
+	}
+	if err := r.writeBoard(boardData); err != nil {
+		return err
+	}
+	return r.writeArchive(finalData)
+}
+
+func (r *Repo) writeArchive(data []byte) error {
+	if err := writeFileAtomic(r.archivePath(), data); err != nil {
+		return fmt.Errorf("write archive: %w", err)
+	}
+	return nil
+}
+
+func (r *Repo) writeBoard(data []byte) error {
+	if err := writeFileAtomic(r.path, data); err != nil {
 		return fmt.Errorf("write board: %w", err)
 	}
 	return nil
@@ -145,7 +215,10 @@ func (r *Repo) Lock(ctx context.Context) (func() error, error) {
 		return nil, fmt.Errorf("lock %s: %w", r.path, err)
 	}
 	if !locked {
-		return nil, fmt.Errorf("lock %s: %w", r.path, ctx.Err())
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("lock %s: %w", r.path, err)
+		}
+		return nil, fmt.Errorf("lock %s: not acquired", r.path)
 	}
 	return fl.Unlock, nil
 }
@@ -168,12 +241,12 @@ func checkBoardOutput(data []byte, b *domain.Board) error {
 }
 
 // checkArchiveOutput does the same for the archive bytes.
-func checkArchiveOutput(data []byte, b *domain.Board) error {
-	got, err := ParseArchive(data, b.Settings)
+func checkArchiveOutput(data []byte, want []domain.Card, settings domain.Settings) error {
+	got, err := ParseArchive(data, settings)
 	if err != nil {
 		return fmt.Errorf("refusing to write the archive: it would not read back: %w", err)
 	}
-	if err := sameCards(b.Archived, got); err != nil {
+	if err := sameCards(want, got); err != nil {
 		return fmt.Errorf("refusing to write the archive: %w", err)
 	}
 	return nil

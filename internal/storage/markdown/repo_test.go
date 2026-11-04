@@ -328,7 +328,12 @@ func TestLoadDropsArchivedCopyOfLiveCard(t *testing.T) {
 	}
 }
 
-func TestSaveWritesArchiveBeforeBoard(t *testing.T) {
+// boardBehindLockedDir returns a repository whose board file is reached
+// through a symlink into a directory, plus a function that makes that
+// directory refuse new files, so that the board write fails while the archive,
+// which sits beside the link, can still be written.
+func boardBehindLockedDir(t *testing.T) (r *markdown.Repo, board, realBoard string, lock func()) {
+	t.Helper()
 	if os.Geteuid() == 0 {
 		t.Skip("directory permissions do not stop root")
 	}
@@ -337,16 +342,24 @@ func TestSaveWritesArchiveBeforeBoard(t *testing.T) {
 	if err := os.Mkdir(locked, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	realBoard := filepath.Join(locked, "board.md")
-	board := filepath.Join(root, "board.md")
+	realBoard = filepath.Join(locked, "board.md")
+	board = filepath.Join(root, "board.md")
 	if err := os.Symlink(realBoard, board); err != nil {
 		t.Fatal(err)
 	}
-	s := domain.NewBoard("X", "T").Settings
-	if _, err := markdown.Create(realBoard, s); err != nil {
+	if _, err := markdown.Create(realBoard, domain.NewBoard("X", "T").Settings); err != nil {
 		t.Fatal(err)
 	}
-	r := markdown.New(board)
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	return markdown.New(board), board, realBoard, func() {
+		if err := os.Chmod(locked, 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSaveWritesArchiveBeforeBoard(t *testing.T) {
+	r, board, realBoard, lock := boardBehindLockedDir(t)
 	b := mustLoad(t, r)
 	done := addCard(t, b, "Finished", "Done")
 	mustSave(t, r, b)
@@ -354,12 +367,7 @@ func TestSaveWritesArchiveBeforeBoard(t *testing.T) {
 	if err := b.Archive([]domain.CardID{done.ID}, day); err != nil {
 		t.Fatal(err)
 	}
-	// The archive goes next to the link and can be written. The board is
-	// behind a directory that no longer takes new files.
-	if err := os.Chmod(locked, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chmod(locked, 0o755)
+	lock()
 	if err := r.Save(context.Background(), b); err == nil {
 		t.Fatal("Save succeeded although the board could not be written")
 	}
@@ -374,6 +382,155 @@ func TestSaveWritesArchiveBeforeBoard(t *testing.T) {
 	got := mustLoad(t, r)
 	if len(got.Cards) != 1 || len(got.Archived) != 0 {
 		t.Fatalf("after the failed save: %d cards, %d archived; want the board copy to win", len(got.Cards), len(got.Archived))
+	}
+	if len(got.Notices) != 1 || got.Notices[0] != "T-1 is on the board and in the archive; keeping the board copy" {
+		t.Fatalf("notices = %q", got.Notices)
+	}
+}
+
+// holdsCard reports whether the card is in the file as a card heading.
+func holdsCard(t *testing.T, path string, id domain.CardID) bool {
+	t.Helper()
+	return strings.Contains(readFile(t, path), "### "+string(id)+" ")
+}
+
+func TestFailedSaveOfRestoreKeepsCardInArchive(t *testing.T) {
+	r, board, _, lock := boardBehindLockedDir(t)
+	b := mustLoad(t, r)
+	done := addCard(t, b, "Finished", "Done")
+	if err := b.Archive([]domain.CardID{done.ID}, day); err != nil {
+		t.Fatal(err)
+	}
+	mustSave(t, r, b)
+
+	b = mustLoad(t, r)
+	if err := b.Restore(done.ID, "Todo", day); err != nil {
+		t.Fatal(err)
+	}
+	lock()
+	if err := r.Save(context.Background(), b); err == nil {
+		t.Fatal("Save succeeded although the board could not be written")
+	}
+	if !holdsCard(t, archivePathOf(board), done.ID) {
+		t.Fatalf("restored card is in neither file; archive:\n%s", readFile(t, archivePathOf(board)))
+	}
+	got := mustLoad(t, r)
+	if _, _, ok := got.Find(done.ID); !ok {
+		t.Fatal("a fresh Load cannot find the card")
+	}
+}
+
+func TestFailedSaveThatArchivesAndRestoresLosesNoCard(t *testing.T) {
+	r, board, _, lock := boardBehindLockedDir(t)
+	b := mustLoad(t, r)
+	old := addCard(t, b, "Old", "Done")
+	fresh := addCard(t, b, "Fresh", "Done")
+	if err := b.Archive([]domain.CardID{old.ID}, day); err != nil {
+		t.Fatal(err)
+	}
+	mustSave(t, r, b)
+
+	b = mustLoad(t, r)
+	if err := b.Restore(old.ID, "Todo", day); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Archive([]domain.CardID{fresh.ID}, day); err != nil {
+		t.Fatal(err)
+	}
+	lock()
+	if err := r.Save(context.Background(), b); err == nil {
+		t.Fatal("Save succeeded although the board could not be written")
+	}
+	for _, id := range []domain.CardID{old.ID, fresh.ID} {
+		if !holdsCard(t, board, id) && !holdsCard(t, archivePathOf(board), id) {
+			t.Fatalf("%s is in neither file", id)
+		}
+	}
+	got := mustLoad(t, r)
+	for _, id := range []domain.CardID{old.ID, fresh.ID} {
+		if _, _, ok := got.Find(id); !ok {
+			t.Fatalf("a fresh Load cannot find %s", id)
+		}
+	}
+}
+
+func TestSaveThatArchivesAndRestoresEndsWithFinalFiles(t *testing.T) {
+	r, _, _, archive := boardWithArchive(t) // T-1 live, T-2 archived
+	b := mustLoad(t, r)
+	if err := b.Restore("T-2", "Done", day); err != nil {
+		t.Fatal(err)
+	}
+	moved := addCard(t, b, "Third", "Done")
+	if err := b.Archive([]domain.CardID{moved.ID}, day); err != nil {
+		t.Fatal(err)
+	}
+	mustSave(t, r, b)
+
+	got := mustLoad(t, r)
+	if len(got.Cards) != 2 || len(got.Archived) != 1 || got.Archived[0].ID != moved.ID {
+		t.Fatalf("cards %v, archived %v", got.Cards, got.Archived)
+	}
+	if holdsCard(t, archive, "T-2") || !holdsCard(t, archive, moved.ID) {
+		t.Fatalf("archive file is not the final archive:\n%s", readFile(t, archive))
+	}
+}
+
+func TestSaveRefusesWhenOnDiskArchiveIsUnreadable(t *testing.T) {
+	r, b, board, archive := boardWithArchive(t)
+	bad := "# Archive\n\n## not a month\n"
+	if err := os.WriteFile(archive, []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := readFile(t, board)
+	if err := r.Save(context.Background(), b); err == nil || !strings.HasPrefix(err.Error(), "refusing to write") {
+		t.Fatalf("Save error = %v, want one starting %q", err, "refusing to write")
+	}
+	if readFile(t, archive) != bad || readFile(t, board) != before {
+		t.Fatal("Save changed a file")
+	}
+}
+
+func TestLoadReservesArchivedIDs(t *testing.T) {
+	r, _, board, archive := boardWithArchive(t) // T-1 live, T-2 archived
+	// next_id was reverted by hand to 5, and the archive holds T-9.
+	data := strings.Replace(readFile(t, board), "next_id: 3", "next_id: 5", 1)
+	data = strings.Replace(data, "## Todo\n\n", "## Todo\n\n### No id yet\n\n", 1)
+	if err := os.WriteFile(board, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	arch := strings.Replace(readFile(t, archive), "### T-2 ", "### T-9 ", 1)
+	if err := os.WriteFile(archive, []byte(arch), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, assigned, err := r.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(assigned, []domain.CardID{"T-10"}) {
+		t.Fatalf("assigned %v, want [T-10]", assigned)
+	}
+	if got.Settings.NextID != 11 {
+		t.Fatalf("next id = %d, want 11", got.Settings.NextID)
+	}
+	if c, err := got.AddCard(domain.NewCard{Title: "New"}, day); err != nil || c.ID != "T-11" {
+		t.Fatalf("AddCard = %v, %v; want T-11", c.ID, err)
+	}
+	mustSave(t, r, got)
+	again := mustLoad(t, r)
+	if _, archived, ok := again.Find("T-9"); !ok || !archived {
+		t.Fatalf("archived T-9 was lost: cards %v, archived %v", got.Cards, again.Archived)
+	}
+}
+
+func TestParseAssignedReservedKeepsOtherPrefixes(t *testing.T) {
+	data := markdown.Format(domain.NewBoard("X", "T"))
+	b, _, err := markdown.ParseAssignedReserved(data, []domain.CardID{"Z-40", "T-4", "junk"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Settings.NextID != 5 {
+		t.Fatalf("next id = %d, want 5", b.Settings.NextID)
 	}
 }
 

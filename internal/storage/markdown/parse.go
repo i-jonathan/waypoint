@@ -44,6 +44,14 @@ func Parse(data []byte) (*domain.Board, error) {
 // ParseAssigned is Parse that also returns the ids given to cards that had
 // none, in file order, so the caller can write them back.
 func ParseAssigned(data []byte) (*domain.Board, []domain.CardID, error) {
+	return ParseAssignedReserved(data, nil)
+}
+
+// ParseAssignedReserved is ParseAssigned for a board whose archive lives in
+// another file. The reserved ids, those of the archived cards, hold numbers
+// that new cards must not take: a reserved id with the board's prefix moves
+// next_id past it, just as an explicit id in the board file does.
+func ParseAssignedReserved(data []byte, reserved []domain.CardID) (*domain.Board, []domain.CardID, error) {
 	lines := splitLines(data)
 	if len(lines) == 1 && lines[0] == "" {
 		return nil, nil, ErrNotABoard
@@ -85,7 +93,8 @@ func ParseAssigned(data []byte) (*domain.Board, []domain.CardID, error) {
 	b.Notices = notices
 
 	// An explicit id at or above next_id moves next_id past it, so an id is
-	// never reused. This happens before id-less cards are numbered.
+	// never reused. This happens before id-less cards are numbered, and the
+	// reserved ids below count the same way.
 	for _, r := range raw {
 		if !r.hasID {
 			continue
@@ -99,6 +108,12 @@ func ParseAssigned(data []byte) (*domain.Board, []domain.CardID, error) {
 			return nil, nil, &ParseError{Line: r.line, Msg: fmt.Sprintf("card id %s has a number that is too large", r.card.ID)}
 		}
 		b.Settings.NextID = max(b.Settings.NextID, n+1)
+	}
+	for _, id := range reserved {
+		prefix, num, _ := strings.Cut(string(id), "-")
+		if n, err := strconv.Atoi(num); err == nil && prefix == settings.Prefix {
+			b.Settings.NextID = max(b.Settings.NextID, n+1)
+		}
 	}
 	var assigned []domain.CardID
 	for i := range raw {

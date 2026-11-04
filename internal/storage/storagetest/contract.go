@@ -24,6 +24,7 @@ func RunContract(t *testing.T, newRepo func(t *testing.T) app.Repository) {
 	t.Run("SaveLoadRoundTrip", func(t *testing.T) { saveLoadRoundTrip(t, newRepo(t)) })
 	t.Run("ArchiveSurvivesRoundTrip", func(t *testing.T) { archiveSurvivesRoundTrip(t, newRepo(t)) })
 	t.Run("IDsNeverReused", func(t *testing.T) { idsNeverReused(t, newRepo(t)) })
+	t.Run("NextIDStaysPastArchivedIDs", func(t *testing.T) { nextIDStaysPastArchivedIDs(t, newRepo(t)) })
 	t.Run("NoticesAreNotPersisted", func(t *testing.T) { noticesAreNotPersisted(t, newRepo(t)) })
 	t.Run("LockIsExclusive", func(t *testing.T) { lockIsExclusive(t, newRepo(t)) })
 }
@@ -59,12 +60,23 @@ func ids(cards []domain.Card) []domain.CardID {
 	return out
 }
 
-// sameCard reports the first difference between two cards. Columns are not
-// compared, because an archived card has none.
+// withoutColumns copies cards with their columns cleared, because an archived
+// card has none.
+func withoutColumns(cards []domain.Card) []domain.Card {
+	out := slices.Clone(cards)
+	for i := range out {
+		out[i].Column = ""
+	}
+	return out
+}
+
+// sameCard reports the first difference between two cards.
 func sameCard(want, got domain.Card) string {
 	switch {
 	case want.ID != got.ID:
 		return "id"
+	case want.Column != got.Column:
+		return "column"
 	case want.Title != got.Title:
 		return "title"
 	case want.Group != got.Group:
@@ -159,7 +171,7 @@ func saveLoadRoundTrip(t *testing.T, r app.Repository) {
 
 	requireSameSettings(t, b.Settings, got.Settings)
 	requireSameCards(t, "cards", b.Cards, got.Cards)
-	requireSameCards(t, "archived", b.Archived, got.Archived)
+	requireSameCards(t, "archived", withoutColumns(b.Archived), withoutColumns(got.Archived))
 	if want := []domain.CardID{"T-3", "T-1", "T-2"}; !slices.Equal(ids(got.Cards), want) {
 		t.Fatalf("rank order = %v, want %v", ids(got.Cards), want)
 	}
@@ -175,16 +187,16 @@ func archiveSurvivesRoundTrip(t *testing.T, r app.Repository) {
 	if err := b.Archive([]domain.CardID{a.ID}, nov); err != nil {
 		t.Fatal(err)
 	}
-	want := slices.Clone(b.Archived)
+	want := withoutColumns(b.Archived)
 	save(t, r, b)
 
 	b = load(t, r)
-	requireSameCards(t, "archived after first load", want, b.Archived)
+	requireSameCards(t, "archived after first load", want, withoutColumns(b.Archived))
 
 	// Saving the reloaded board again keeps the archive.
 	save(t, r, b)
 	b = load(t, r)
-	requireSameCards(t, "archived after resave", want, b.Archived)
+	requireSameCards(t, "archived after resave", want, withoutColumns(b.Archived))
 	if got := ids(b.Cards); !slices.Equal(got, []domain.CardID{"T-2"}) {
 		t.Fatalf("cards = %v, want [T-2]", got)
 	}
@@ -225,6 +237,32 @@ func idsNeverReused(t *testing.T, r app.Repository) {
 	b = load(t, r)
 	if c := must(b.AddCard(domain.NewCard{Title: "Later"}, nov)); c.ID != "T-4" {
 		t.Fatalf("new card is %s, want T-4", c.ID)
+	}
+}
+
+func nextIDStaysPastArchivedIDs(t *testing.T, r app.Repository) {
+	b := load(t, r)
+	must(b.AddCard(domain.NewCard{Title: "Live"}, oct))
+	old := must(b.AddCard(domain.NewCard{Title: "Archived", Column: "Done"}, oct))
+	if err := b.Archive([]domain.CardID{old.ID}, oct); err != nil {
+		t.Fatal(err)
+	}
+	// A counter that fell behind, as when a board file is reverted or edited
+	// by hand. The archived id must still not be handed out again.
+	b.Settings.NextID = 1
+	save(t, r, b)
+
+	b = load(t, r)
+	if b.Settings.NextID < 3 {
+		t.Fatalf("next id = %d, want at least 3 (T-2 is archived)", b.Settings.NextID)
+	}
+	if c := must(b.AddCard(domain.NewCard{Title: "New"}, nov)); c.ID != "T-3" {
+		t.Fatalf("new card is %s, want T-3", c.ID)
+	}
+	save(t, r, b)
+	b = load(t, r)
+	if _, archived, ok := b.Find("T-2"); !ok || !archived || len(b.Archived) != 1 {
+		t.Fatalf("archived T-2 was lost: cards %v, archived %v", ids(b.Cards), ids(b.Archived))
 	}
 }
 
