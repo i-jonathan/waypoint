@@ -330,8 +330,9 @@ func TestLoadDropsArchivedCopyOfLiveCard(t *testing.T) {
 
 // boardBehindLockedDir returns a repository whose board file is reached
 // through a symlink into a directory, plus a function that makes that
-// directory refuse new files, so that the board write fails while the archive,
-// which sits beside the link, can still be written.
+// directory refuse new files. The archive beside the real board is itself a
+// link to a file outside that directory, so the board write fails while the
+// archive can still be written.
 func boardBehindLockedDir(t *testing.T) (r *markdown.Repo, board, realBoard string, lock func()) {
 	t.Helper()
 	if os.Geteuid() == 0 {
@@ -348,6 +349,12 @@ func boardBehindLockedDir(t *testing.T) (r *markdown.Repo, board, realBoard stri
 		t.Fatal(err)
 	}
 	if _, err := markdown.Create(realBoard, domain.NewBoard("X", "T").Settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archivePathOf(board), []byte("# Archive\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(archivePathOf(board), archivePathOf(realBoard)); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(locked, 0o755) })
@@ -617,6 +624,128 @@ func TestLockStopsWhenContextIsCancelled(t *testing.T) {
 	go func() { time.Sleep(30 * time.Millisecond); cancel() }()
 	if _, err := r.Lock(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Lock error = %v, want context.Canceled", err)
+	}
+}
+
+// linkTo makes link a symlink to target, creating link's directory.
+func linkTo(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPathKeepsTheRegisteredPathOfALink(t *testing.T) {
+	_, board := newBoardRepo(t)
+	link := filepath.Join(t.TempDir(), "link.md")
+	linkTo(t, board, link)
+	if got := markdown.New(link).Path(); got != link {
+		t.Fatalf("Path = %q, want %q", got, link)
+	}
+}
+
+func TestTwoPathsToOneFileShareALock(t *testing.T) {
+	r, board := newBoardRepo(t)
+	link := filepath.Join(t.TempDir(), "link.md")
+	linkTo(t, board, link)
+
+	byLink := markdown.New(link)
+	unlock, err := byLink.Lock(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := r.Lock(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second path took the lock: %v", err)
+	}
+	if got := entries(t, filepath.Dir(link)); !slices.Equal(got, []string{"link.md"}) {
+		t.Fatalf("beside the link: %v", got)
+	}
+}
+
+func TestDanglingLinkIsAnErrorAndStaysALink(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "gone", "board.md")
+	link := filepath.Join(dir, "board.md")
+	linkTo(t, missing, link)
+
+	r := markdown.New(link)
+	if err := r.Save(context.Background(), domain.NewBoard("X", "T")); err == nil {
+		t.Fatal("Save wrote through a dangling link")
+	}
+	if _, err := r.Lock(context.Background()); err == nil {
+		t.Fatal("Lock succeeded on a dangling link")
+	}
+	if _, _, err := r.Load(context.Background()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Load: %v", err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link was replaced (%v)", err)
+	}
+	if got := entries(t, dir); !slices.Equal(got, []string{"board.md"}) {
+		t.Fatalf("directory holds %v", got)
+	}
+}
+
+func TestDanglingArchiveLinkIsAnError(t *testing.T) {
+	_, board := newBoardRepo(t)
+	linkTo(t, filepath.Join(t.TempDir(), "gone.md"), archivePathOf(board))
+
+	r := markdown.New(board)
+	if _, _, err := r.Load(context.Background()); err == nil {
+		t.Fatal("Load ignored a dangling archive link")
+	}
+	if err := r.Save(context.Background(), domain.NewBoard("X", "T")); err == nil {
+		t.Fatal("Save wrote through a dangling archive link")
+	}
+}
+
+func TestSymlinkedArchiveStaysALink(t *testing.T) {
+	_, board := newBoardRepo(t)
+	elsewhere := filepath.Join(t.TempDir(), "kept.archive.md")
+	if err := os.WriteFile(elsewhere, []byte("# Archive\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkTo(t, elsewhere, archivePathOf(board))
+
+	r := markdown.New(board)
+	b := mustLoad(t, r)
+	done := addCard(t, b, "Finished", "Done")
+	if err := b.Archive([]domain.CardID{done.ID}, day); err != nil {
+		t.Fatal(err)
+	}
+	mustSave(t, r, b)
+
+	if !strings.Contains(readFile(t, elsewhere), "Finished") {
+		t.Fatal("the archive's real file was not updated")
+	}
+	if fi, err := os.Lstat(archivePathOf(board)); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the archive link was replaced (%v)", err)
+	}
+}
+
+func TestCreateThroughADirectoryLink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkTo(t, filepath.Join(root, "real"), filepath.Join(root, "dir"))
+
+	r, err := markdown.Create(filepath.Join(root, "dir", "board.md"), domain.NewBoard("X", "T").Settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := r.Path(), filepath.Join(root, "dir", "board.md"); got != want {
+		t.Fatalf("Path = %q, want %q", got, want)
+	}
+	if got := entries(t, filepath.Join(root, "real")); !slices.Equal(got, []string{"board.md"}) {
+		t.Fatalf("real directory holds %v", got)
 	}
 }
 

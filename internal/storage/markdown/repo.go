@@ -22,15 +22,52 @@ const lockRetry = 50 * time.Millisecond
 
 // Repo stores a board in a Markdown file, and its archive in the file beside
 // it: X.md and X.archive.md.
+//
+// Everything on disk derives from the real path of the board file, so that two
+// paths to one file share one lock and one archive. Only Path keeps the path
+// the caller gave.
 type Repo struct {
-	path string
+	path    string // as given to New
+	real    string // the board file, with every symlink resolved
+	archive string // the archive file, resolved the same way
+	err     error  // why those paths could not be worked out
 }
 
 var _ app.Repository = (*Repo)(nil)
 
-// New returns a repository for the board file at path. It does not touch the
-// disk.
-func New(path string) *Repo { return &Repo{path: path} }
+// New returns a repository for the board file at path. It resolves symlinks in
+// path and writes nothing. A path that cannot be resolved, such as a dangling
+// symlink, makes every later Load, Save and Lock fail, rather than replace the
+// link with a new file.
+func New(path string) *Repo {
+	r := &Repo{path: path}
+	if r.real, r.err = canonical(path); r.err != nil {
+		return r
+	}
+	r.archive, r.err = canonical(strings.TrimSuffix(r.real, filepath.Ext(r.real)) + ".archive.md")
+	return r
+}
+
+// canonical returns path with every symlink resolved, the way the kernel
+// resolves them. A file that does not exist yet resolves through its parent
+// directory. A dangling symlink is an error.
+func canonical(path string) (string, error) {
+	real, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return real, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return "", fmt.Errorf("%s is a symlink to a file that does not exist: %w", path, fs.ErrNotExist)
+	}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, filepath.Base(path)), nil
+}
 
 // Create writes a new, empty board with the given settings and returns its
 // repository. It refuses to overwrite: an existing file gives os.ErrExist.
@@ -48,19 +85,18 @@ func Create(path string, s domain.Settings) (*Repo, error) {
 	if err := checkBoardOutput(data, b); err != nil {
 		return nil, err
 	}
-	if err := writeFileAtomic(path, data); err != nil {
+	r := New(path)
+	if r.err != nil {
+		return nil, r.err
+	}
+	if err := writeFileAtomic(r.real, data); err != nil {
 		return nil, err
 	}
-	return New(path), nil
+	return r, nil
 }
 
-// Path returns the board file's path.
+// Path returns the board file's path as it was given to New.
 func (r *Repo) Path() string { return r.path }
-
-// archivePath is X.archive.md for X.md.
-func (r *Repo) archivePath() string {
-	return strings.TrimSuffix(r.path, filepath.Ext(r.path)) + ".archive.md"
-}
 
 // Load reads the board and, if there is one, its archive. It never writes.
 // The archive is read first, so that its ids stay reserved: a new card never
@@ -72,11 +108,14 @@ func (r *Repo) Load(ctx context.Context) (*domain.Board, []domain.CardID, error)
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
+	if r.err != nil {
+		return nil, nil, r.err
+	}
 	archived, err := r.readArchive()
 	if err != nil {
 		return nil, nil, err
 	}
-	data, err := os.ReadFile(r.path)
+	data, err := os.ReadFile(r.real)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -100,7 +139,7 @@ func (r *Repo) Load(ctx context.Context) (*domain.Board, []domain.CardID, error)
 
 // readArchive parses the archive file; a missing file is an empty archive.
 func (r *Repo) readArchive() ([]domain.Card, error) {
-	data, err := os.ReadFile(r.archivePath())
+	data, err := os.ReadFile(r.archive)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -109,7 +148,7 @@ func (r *Repo) readArchive() ([]domain.Card, error) {
 	}
 	cards, err := ParseArchive(data, domain.Settings{})
 	if err != nil {
-		return nil, fmt.Errorf("archive %s: %w", r.archivePath(), err)
+		return nil, fmt.Errorf("archive %s: %w", r.archive, err)
 	}
 	return cards, nil
 }
@@ -137,11 +176,14 @@ func (r *Repo) Save(ctx context.Context, b *domain.Board) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if r.err != nil {
+		return r.err
+	}
 	boardData := Format(b)
 	if err := checkBoardOutput(boardData, b); err != nil {
 		return err
 	}
-	if !exists(r.archivePath()) && len(b.Archived) == 0 {
+	if !exists(r.archive) && len(b.Archived) == 0 {
 		return r.writeBoard(boardData)
 	}
 
@@ -192,24 +234,28 @@ func (r *Repo) Save(ctx context.Context, b *domain.Board) error {
 }
 
 func (r *Repo) writeArchive(data []byte) error {
-	if err := writeFileAtomic(r.archivePath(), data); err != nil {
+	if err := writeFileAtomic(r.archive, data); err != nil {
 		return fmt.Errorf("write archive: %w", err)
 	}
 	return nil
 }
 
 func (r *Repo) writeBoard(data []byte) error {
-	if err := writeFileAtomic(r.path, data); err != nil {
+	if err := writeFileAtomic(r.real, data); err != nil {
 		return fmt.Errorf("write board: %w", err)
 	}
 	return nil
 }
 
-// Lock takes an exclusive lock on <board path>.lock, waiting until ctx is
-// done. The lock belongs to the operating system, so a lock file left behind
-// by a crashed process holds nothing, and unlock does not delete the file.
+// Lock takes an exclusive lock on <board path>.lock beside the real board
+// file, waiting until ctx is done. The lock belongs to the operating system, so
+// a lock file left behind by a crashed process holds nothing, and unlock does
+// not delete the file.
 func (r *Repo) Lock(ctx context.Context) (func() error, error) {
-	fl := flock.New(r.path + ".lock")
+	if r.err != nil {
+		return nil, r.err
+	}
+	fl := flock.New(r.real + ".lock")
 	locked, err := fl.TryLockContext(ctx, lockRetry)
 	if err != nil {
 		return nil, fmt.Errorf("lock %s: %w", r.path, err)
@@ -275,49 +321,19 @@ func sameCards(want, got []domain.Card) error {
 	return nil
 }
 
-// resolveLink follows symlinks at path, so that writing replaces the file the
-// link points to and not the link. A path that does not exist is returned as
-// it is.
-func resolveLink(path string) (string, error) {
-	for range 40 {
-		fi, err := os.Lstat(path)
-		if errors.Is(err, fs.ErrNotExist) {
-			return path, nil
-		}
-		if err != nil {
-			return "", err
-		}
-		if fi.Mode()&fs.ModeSymlink == 0 {
-			return path, nil
-		}
-		target, err := os.Readlink(path)
-		if err != nil {
-			return "", err
-		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(path), target)
-		}
-		path = target
-	}
-	return "", fmt.Errorf("%s: too many levels of symbolic links", path)
-}
-
-// writeFileAtomic replaces path with data: it writes a temp file in the same
-// directory, syncs it, gives it the old file's permissions (0644 for a new
-// file) and renames it into place. The temp file is removed on any error.
+// writeFileAtomic replaces path, which must already be resolved (see
+// canonical), with data: it writes a temp file in the same directory, syncs it,
+// gives it the old file's permissions (0644 for a new file) and renames it into
+// place. The temp file is removed on any error.
 func writeFileAtomic(path string, data []byte) error {
-	target, err := resolveLink(path)
-	if err != nil {
-		return err
-	}
 	mode := fs.FileMode(0o644)
-	if fi, err := os.Stat(target); err == nil {
+	if fi, err := os.Stat(path); err == nil {
 		mode = fi.Mode().Perm()
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(target), ".waypoint-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".waypoint-*")
 	if err != nil {
 		return err
 	}
@@ -332,7 +348,7 @@ func writeFileAtomic(path string, data []byte) error {
 		err = os.Chmod(tmp.Name(), mode)
 	}
 	if err == nil {
-		err = os.Rename(tmp.Name(), target)
+		err = os.Rename(tmp.Name(), path)
 	}
 	if err != nil {
 		os.Remove(tmp.Name())

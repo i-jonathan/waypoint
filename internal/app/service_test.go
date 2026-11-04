@@ -534,3 +534,33 @@ func TestUnlockErrorOnlyWhenNothingElseFailed(t *testing.T) {
 		t.Fatalf("got %v, want ErrNotFound, not the unlock error", err)
 	}
 }
+
+// Two paths to one file must share one lock, or their writes overwrite each
+// other: every card added through either path has to survive.
+func TestConcurrentWritesThroughTwoPathsLoseNothing(t *testing.T) {
+	e := newEnv(t)
+	link := filepath.Join(t.TempDir(), "link.md")
+	if err := os.Symlink(e.path, link); err != nil {
+		t.Fatal(err)
+	}
+	services := []*app.Service{e.svc, app.NewService(markdown.New(link), func() time.Time { return epoch })}
+
+	const perPath = 25
+	var wg sync.WaitGroup
+	for i, svc := range services {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := range perPath {
+				if _, err := svc.CreateCard(context.Background(), domain.NewCard{Title: fmt.Sprintf("path %d card %d", i, n)}); err != nil {
+					t.Error(err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := len(e.board().Cards); got != 2*perPath {
+		t.Fatalf("%d cards survived, want %d", got, 2*perPath)
+	}
+}

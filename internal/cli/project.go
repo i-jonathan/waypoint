@@ -111,10 +111,11 @@ func (r *runner) addProject(name, pathFlag, prefix string, fromInit bool) int {
 	if err != nil {
 		return r.fail(err)
 	}
-	if fromInit {
-		if q, ok := registeredAt(cfg, path); ok {
+	if q, ok := registeredAt(cfg, path); ok {
+		if fromInit {
 			return r.fail(fmt.Errorf("%w: %s here is already registered as project %q", domain.ErrInvalid, initBoardFile, q.Name))
 		}
+		return r.fail(fmt.Errorf("%w: %s is already registered as %q", domain.ErrInvalid, path, q.Name))
 	}
 	if config.StorageFor(path) == "sqlite" {
 		return r.fail(storage.ErrSQLite)

@@ -17,8 +17,8 @@ import (
 // is not built yet.
 var ErrSQLite = errors.New("sqlite storage arrives in a later version")
 
-// Open returns the repository for an existing board. It does not touch the
-// disk.
+// Open returns the repository for an existing board. It does not read or
+// write the board.
 func Open(ref config.ProjectRef) (app.Repository, error) {
 	switch ref.Storage {
 	case "markdown":
