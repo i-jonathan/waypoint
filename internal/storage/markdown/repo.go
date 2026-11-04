@@ -103,12 +103,13 @@ func (r *Repo) Path() string { return r.path }
 // The archive is read first, so that its ids stay reserved: a new card never
 // takes the id of an archived one.
 //
-// A card found in both files with the same content is what a crash between
-// Save's writes leaves behind: it is kept on the board and dropped from the
-// archive in memory, with a notice, so the next Save repairs the file. Column
-// and Done are not compared, because those are what the interrupted Save was
-// changing. With any other difference these are two cards sharing an id, such
-// as a hand-added one, so Load fails rather than let a Save delete one of them.
+// A card found in both files with the same content, as a save would write it,
+// is what a crash between Save's writes leaves behind: it is kept on the board
+// and dropped from the archive in memory, with a notice, so the next Save
+// repairs the file. Column and Done are not compared, because those are what
+// the interrupted Save was changing. With any other difference these are two
+// cards sharing an id, such as a hand-added one, so Load fails rather than let
+// a Save delete one of them.
 func (r *Repo) Load(ctx context.Context) (*domain.Board, []domain.CardID, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -138,12 +139,20 @@ func (r *Repo) Load(ctx context.Context) (*domain.Board, []domain.CardID, error)
 			b.Archived = append(b.Archived, c)
 			continue
 		}
-		if !onBoard.SameContent(c) {
-			return nil, nil, &ParseError{Msg: fmt.Sprintf("%s is on the board and in the archive with different content; give one a new id (board: %s, archive: %s)", c.ID, r.path, r.archive)}
+		if !sameOnceSaved(onBoard, c) {
+			return nil, nil, &ParseError{Msg: fmt.Sprintf("%s is on the board and in the archive with different content: delete the copy you don't want, or if they are separate cards, give one a new id (board: %s, archive: %s)", c.ID, r.path, r.archive)}
 		}
 		b.Notices = append(b.Notices, fmt.Sprintf("%s is on the board and in the archive; keeping the board copy", c.ID))
 	}
 	return b, assigned, nil
+}
+
+// sameOnceSaved reports whether two cards have the same content as Format would
+// write it. A save normalises a body, so the copy written by an interrupted Save
+// can differ from one no save has touched yet, and still be the same card.
+func sameOnceSaved(a, b domain.Card) bool {
+	a.Body, b.Body = formatBody(a.Body), formatBody(b.Body)
+	return a.SameContent(b)
 }
 
 // readArchive parses the archive file; a missing file is an empty archive.

@@ -127,7 +127,7 @@ func TestHandAddedCardReusingAnArchivedIDIsAnError(t *testing.T) {
 	_, stderr, code := runCLI(t, dir, "add", "x")
 
 	assertEq(t, code, exitError)
-	assertContains(t, stderr, "T-1 is on the board and in the archive with different content; give one a new id")
+	assertContains(t, stderr, "T-1 is on the board and in the archive with different content")
 	assertContains(t, stderr, board)
 	assertContains(t, stderr, archive)
 	assertEq(t, readFile(t, archive), archived)
@@ -723,4 +723,62 @@ func TestSubfolderOfAProjectIsInIt(t *testing.T) {
 		t.Fatalf("add: %d %s", code, stderr)
 	}
 	assertContains(t, readFile(t, filepath.Join(root, "BOARD.md")), "Found it")
+}
+
+// Bodies a save would normalise: the demoted heading and the closed fence are
+// what Format writes to the archive while the board still holds the original.
+var unsavedBodies = map[string]struct{ original, saved string }{
+	"heading":        {"# Notes\n\ntext", "#### Notes\n\ntext"},
+	"unclosed fence": {"```go\ncode", "```go\ncode\n```"},
+}
+
+// residueFiles writes the state a crash leaves: T-1 on the board with boardBody
+// and in the archive with archiveBody.
+func residueFiles(t *testing.T, dir, boardBody, archiveBody string) (board, archive string) {
+	t.Helper()
+	board = filepath.Join(dir, "BOARD.md")
+	archive = filepath.Join(dir, "BOARD.archive.md")
+	runCLI(t, dir, "init", "P")
+	writeFile(t, board, strings.Replace(readFile(t, board), "## Done\n", "## Done\n\n### T-1 Card\n\n- created: 2026-11-01\n- done: 2026-11-02\n\n"+boardBody+"\n", 1))
+	writeFile(t, archive, "# Archive\n\n## 2026-11\n\n### T-1 Card\n\n- created: 2026-11-01\n- done: 2026-11-02\n\n"+archiveBody+"\n")
+	return board, archive
+}
+
+func TestCrashResidueWithUnsavedBodyResolves(t *testing.T) {
+	for name, body := range unsavedBodies {
+		// Archive writes the archive first, so the board holds the original
+		// body. Restore of a hand-written archive is the other way round.
+		cases := map[string][2]string{
+			"archive": {body.original, body.saved},
+			"restore": {body.saved, body.original},
+		}
+		for op, bodies := range cases {
+			t.Run(name+"/"+op, func(t *testing.T) {
+				dir := t.TempDir()
+				board, archive := residueFiles(t, dir, bodies[0], bodies[1])
+
+				_, stderr, code := runCLI(t, dir, "ls")
+				assertEq(t, code, exitOK)
+				assertContains(t, stderr, "keeping the board copy")
+
+				if _, stderr, code := runCLI(t, dir, "add", "x"); code != exitOK {
+					t.Fatalf("add: %d %s", code, stderr)
+				}
+				assertNotContains(t, readFile(t, archive), "### T-1")
+				assertContains(t, readFile(t, board), "### T-1 Card")
+			})
+		}
+	}
+}
+
+func TestDifferentBodyWithTheSameIDIsStillRefused(t *testing.T) {
+	dir := t.TempDir()
+	residueFiles(t, dir, "# Notes", "#### Other notes")
+
+	_, stderr, code := runCLI(t, dir, "add", "x")
+
+	assertEq(t, code, exitError)
+	assertContains(t, stderr, "T-1 is on the board and in the archive with different content")
+	assertContains(t, stderr, "delete the copy you don't want")
+	assertContains(t, stderr, "if they are separate cards, give one a new id")
 }

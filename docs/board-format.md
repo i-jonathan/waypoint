@@ -174,9 +174,11 @@ its line number and holds the board read-only until you fix the file.
   `depends`, a duplicate card id, and a code fence that is never closed while
   headings follow it are errors too.
 - **The same id on the board and in the archive is an error** if the two cards
-  differ in anything but their column and `done` date. Give one of them a new id.
-  If they match, this is what an interrupted save leaves behind: Waypoint keeps
-  the board copy, warns, and removes the archive copy on the next save.
+  differ in anything but their column and `done` date, once both are normalised
+  as a save would. Delete the copy you don't want, or if they are separate cards,
+  give one a new id. If they match, this is what an interrupted save leaves
+  behind: Waypoint keeps the board copy, warns, and removes the archive copy on
+  the next save.
 - **A code block containing a card-like heading raises a warning.** If a fenced
   block contains a line such as `### T-12 Title` or `## Done`, the board still
   loads, and Waypoint warns with the line numbers, because the usual cause is a
