@@ -172,8 +172,9 @@ func cardIDs(cards []domain.Card) []domain.CardID {
 // Save writes the board, and the archive when there are archived cards or an
 // archive file already exists. Before replacing anything it reads back every
 // byte slice it is about to write; if one does not hold exactly the cards it
-// should, Save returns an error starting "refusing to write" and changes no
-// file.
+// should, or if a file it would replace has no owner write bit, Save returns an
+// error starting "refusing to write" and changes no file. A rename would
+// replace a read-only file without complaint, so that bit is checked here.
 //
 // A card must be in at least one file at every point where a write can fail.
 // Archiving a card writes the archive first, then the board. Restoring one
@@ -191,8 +192,15 @@ func (r *Repo) Save(ctx context.Context, b *domain.Board) error {
 	if err := checkBoardOutput(boardData, b); err != nil {
 		return err
 	}
-	if !exists(r.archive) && len(b.Archived) == 0 {
+	writesArchive := exists(r.archive) || len(b.Archived) > 0
+	if err := checkWritable(r.real, r.path); err != nil {
+		return err
+	}
+	if !writesArchive {
 		return r.writeBoard(boardData)
+	}
+	if err := checkWritable(r.archive, r.archive); err != nil {
+		return err
 	}
 
 	onDisk, err := r.readArchive()
@@ -280,6 +288,22 @@ func (r *Repo) Lock(ctx context.Context) (func() error, error) {
 func exists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
+}
+
+// checkWritable refuses a file that exists with no owner write bit. name is how
+// the error refers to it.
+func checkWritable(path, name string) error {
+	fi, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if fi.Mode().Perm()&0o200 == 0 {
+		return fmt.Errorf("refusing to write: %s is read-only", name)
+	}
+	return nil
 }
 
 // checkBoardOutput reads back the board bytes and compares their cards with b.

@@ -332,3 +332,70 @@ func TestWriteOutputNamesTheArchiveForAnAutoArchivedCard(t *testing.T) {
 	stdout, _, _ = runCLI(t, dir, "restore", "T-3", "--column", "Todo")
 	assertEq(t, stdout, "Restored T-3 to Todo\n")
 }
+
+// readOnly makes path read-only for its owner, as "chmod 444" does.
+func readOnly(t *testing.T, path string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("file permissions do not stop root")
+	}
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadOnlyBoardIsNotOverwritten(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "BOARD.md")
+	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "add", "One")
+	content := readFile(t, path)
+	readOnly(t, path)
+
+	_, stderr, code := runCLI(t, dir, "add", "Two")
+
+	assertEq(t, code, exitError)
+	assertContains(t, stderr, "refusing to write: "+path+" is read-only")
+	assertEq(t, readFile(t, path), content)
+}
+
+func TestReadOnlyArchiveStopsTheWriteBeforeTheBoardChanges(t *testing.T) {
+	dir, board, archive := archivedBoard(t)
+	runCLI(t, dir, "add", "Second")
+	runCLI(t, dir, "done", "T-2")
+	boardBefore, archiveBefore := readFile(t, board), readFile(t, archive)
+	readOnly(t, archive)
+
+	_, stderr, code := runCLI(t, dir, "archive")
+
+	assertEq(t, code, exitError)
+	assertContains(t, stderr, "refusing to write: ")
+	assertContains(t, stderr, "BOARD.archive.md is read-only")
+	assertEq(t, readFile(t, board), boardBefore)
+	assertEq(t, readFile(t, archive), archiveBefore)
+}
+
+func TestReadOnlyBoardStopsTheWriteBeforeTheArchiveChanges(t *testing.T) {
+	dir, board, archive := archivedBoard(t)
+	runCLI(t, dir, "add", "Second")
+	runCLI(t, dir, "done", "T-2")
+	boardBefore, archiveBefore := readFile(t, board), readFile(t, archive)
+	readOnly(t, board)
+
+	_, _, code := runCLI(t, dir, "archive")
+
+	assertEq(t, code, exitError)
+	assertEq(t, readFile(t, board), boardBefore)
+	assertEq(t, readFile(t, archive), archiveBefore)
+}
+
+func TestNoOpOnAReadOnlyBoardSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "BOARD.md")
+	runCLI(t, dir, "init", "P")
+	readOnly(t, path)
+
+	if _, stderr, code := runCLI(t, dir, "archive"); code != exitOK {
+		t.Fatalf("archive: %d %s", code, stderr)
+	}
+}
