@@ -17,12 +17,18 @@ import (
 var ErrNotABoard = errors.New("not a Waypoint board (missing front matter)")
 
 // ParseError is a problem in a board or archive file, with its 1-based line.
+// Line 0 means no single line is at fault, as when the two files disagree.
 type ParseError struct {
 	Line int
 	Msg  string
 }
 
-func (e *ParseError) Error() string { return fmt.Sprintf("line %d: %s", e.Line, e.Msg) }
+func (e *ParseError) Error() string {
+	if e.Line == 0 {
+		return e.Msg
+	}
+	return fmt.Sprintf("line %d: %s", e.Line, e.Msg)
+}
 
 var (
 	// headingRE matches a column (##) or card (###) heading, with optional text.

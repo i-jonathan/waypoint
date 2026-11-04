@@ -97,3 +97,68 @@ func TestProjectAddRefusesASecondPathToARegisteredBoard(t *testing.T) {
 	assertContains(t, stderr, `already registered as "First"`)
 	assertEq(t, len(projectList(t, cwd)), 1)
 }
+
+// archivedBoard is a project in a new directory whose T-1, with a body, has
+// been archived.
+func archivedBoard(t *testing.T) (dir, board, archive string) {
+	t.Helper()
+	dir = t.TempDir()
+	board = filepath.Join(dir, "BOARD.md")
+	archive = filepath.Join(dir, "BOARD.archive.md")
+	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "add", "Keep me", "--body", "Months of notes.")
+	runCLI(t, dir, "done", "T-1")
+	if _, stderr, code := runCLI(t, dir, "archive"); code != exitOK {
+		t.Fatalf("archive: %d %s", code, stderr)
+	}
+	return dir, board, archive
+}
+
+func TestHandAddedCardReusingAnArchivedIDIsAnError(t *testing.T) {
+	dir, board, archive := archivedBoard(t)
+	edited := strings.Replace(readFile(t, board), "## Todo\n", "## Todo\n\n### T-1 Something else\n", 1)
+	writeFile(t, board, edited)
+	archived := readFile(t, archive)
+
+	_, stderr, code := runCLI(t, dir, "add", "x")
+
+	assertEq(t, code, exitError)
+	assertContains(t, stderr, "T-1 is on the board and in the archive with different content; give one a new id")
+	assertContains(t, stderr, board)
+	assertContains(t, stderr, archive)
+	assertEq(t, readFile(t, archive), archived)
+	assertEq(t, readFile(t, board), edited)
+
+	stdout, _, code := runCLI(t, dir, "ls", "--json")
+	assertEq(t, code, exitError)
+	var got struct {
+		Code string `json:"code"`
+		Line *int   `json:"line"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	assertEq(t, got.Code, "parse")
+	if got.Line != nil {
+		t.Fatalf("line = %d, want none: the clash spans two files", *got.Line)
+	}
+}
+
+func TestCrashResidueStillResolvesWhenColumnAndDoneDiffer(t *testing.T) {
+	dir, board, archive := archivedBoard(t)
+	// What a crash leaves behind: the same card in both files, but on the
+	// board it is in another column and has no done date.
+	residue := "## Todo\n\n### T-1 Keep me\n\n- created: 2026-11-03\n\nMonths of notes.\n"
+	writeFile(t, board, strings.Replace(readFile(t, board), "## Todo\n", residue, 1))
+
+	stdout, stderr, code := runCLI(t, dir, "ls")
+	assertEq(t, code, exitOK)
+	assertContains(t, stdout, "T-1")
+	assertContains(t, stderr, "keeping the board copy")
+
+	if _, stderr, code := runCLI(t, dir, "add", "x"); code != exitOK {
+		t.Fatalf("add: %d %s", code, stderr)
+	}
+	assertNotContains(t, readFile(t, archive), "### T-1")
+	assertContains(t, readFile(t, board), "### T-1 Keep me")
+}

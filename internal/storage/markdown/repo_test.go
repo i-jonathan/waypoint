@@ -754,3 +754,45 @@ func TestPath(t *testing.T) {
 		t.Fatalf("Path = %q", got)
 	}
 }
+
+func TestLoadRefusesACardInBothFilesWithDifferentContent(t *testing.T) {
+	archived := domain.Card{
+		ID: "T-1", Title: "Same", Group: "G", Priority: "P1",
+		Depends: []domain.CardID{"T-9"},
+		Created: day, Done: day, Body: "Body",
+		Extra: []domain.Field{{Key: "note", Value: "x"}},
+	}
+	cases := map[string]func(*domain.Card){
+		"title":    func(c *domain.Card) { c.Title = "Other" },
+		"body":     func(c *domain.Card) { c.Body = "Other" },
+		"group":    func(c *domain.Card) { c.Group = "Other" },
+		"priority": func(c *domain.Card) { c.Priority = "P2" },
+		"depends":  func(c *domain.Card) { c.Depends = nil },
+		"extra":    func(c *domain.Card) { c.Extra = []domain.Field{{Key: "note", Value: "y"}} },
+		"created":  func(c *domain.Card) { c.Created = day.AddDate(0, 0, -1) },
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			r, board := newBoardRepo(t)
+			b := mustLoad(t, r)
+			live := archived
+			live.Column = "Todo"
+			live.Done = time.Time{}
+			change(&live)
+			b.Cards = []domain.Card{live}
+			if err := os.WriteFile(board, markdown.Format(b), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(archivePathOf(board), markdown.FormatArchive([]domain.Card{archived}), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, _, err := r.Load(context.Background())
+
+			var pe *markdown.ParseError
+			if !errors.As(err, &pe) {
+				t.Fatalf("Load = %v, want a ParseError", err)
+			}
+		})
+	}
+}
