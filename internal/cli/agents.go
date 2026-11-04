@@ -8,7 +8,7 @@ import (
 
 const (
 	usageAgents = "waypoint agents"
-	usageHelp   = "waypoint help [format]"
+	usageHelp   = "waypoint help [format] [--json] [--project NAME]"
 )
 
 // agentsSnippet is the text `waypoint agents` prints, for pasting into a
@@ -22,8 +22,13 @@ This project's board is managed by Waypoint. Prefer the CLI over editing the boa
 - Move a card: ` + "`waypoint move <ID> \"<Column>\"`" + `
 - Change a field: ` + "`waypoint set <ID> key=value`" + `
 - Finish a card: ` + "`waypoint done <ID>`" + `
+- ` + "`waypoint ls --json`" + ` and ` + "`waypoint show <ID> --json`" + ` for reading all cards and one card.
 
 If you edit the board file directly, follow the format printed by "waypoint help format"; a card heading without an id gets one automatically.
+
+Run waypoint from inside this project's folder, or pass --project NAME. "waypoint project ls" shows the board file's path.
+
+Groups, priorities and columns must already exist on the board: read them with "waypoint ls --json" or the board file's front matter before using them.
 `
 
 // cmdAgents prints the AGENTS.md snippet. It needs no project and no config.
@@ -42,16 +47,20 @@ func (r *runner) cmdAgents(args []string) int {
 // cmdHelp prints the usage listing, or with the topic "format" the board file
 // format guide. It needs no project and no config.
 func (r *runner) cmdHelp(args []string) int {
-	switch len(args) {
+	pos, code, done := r.parse(usageHelp, args, nil)
+	if done {
+		return code
+	}
+	switch len(pos) {
 	case 0:
 		fmt.Fprint(r.env.Stdout, usageText)
 		return exitOK
 	case 1:
-		if args[0] == "format" {
+		if pos[0] == "format" {
 			fmt.Fprint(r.env.Stdout, docs.BoardFormat)
 			return exitOK
 		}
-		return r.usageError(fmt.Sprintf("unknown help topic %q", args[0]), usageHelp)
+		return r.usageError(fmt.Sprintf("unknown help topic %q", pos[0]), usageHelp)
 	}
 	return r.usageError("help takes at most one topic", usageHelp)
 }

@@ -20,6 +20,9 @@ func TestAgentsSnippet(t *testing.T) {
 		`waypoint set <ID> key=value`,
 		`waypoint done <ID>`,
 		`If you edit the board file directly, follow the format printed by "waypoint help format"; a card heading without an id gets one automatically.`,
+		"`waypoint ls --json` and `waypoint show <ID> --json` for reading all cards and one card.",
+		`Run waypoint from inside this project's folder, or pass --project NAME. "waypoint project ls" shows the board file's path.`,
+		`Groups, priorities and columns must already exist on the board: read them with "waypoint ls --json" or the board file's front matter before using them.`,
 	} {
 		assertContains(t, stdout, want)
 	}
@@ -71,4 +74,28 @@ func TestUsageListsAgentsAndHelpFormat(t *testing.T) {
 	stdout, _, _ := runCLI(t, t.TempDir())
 	assertContains(t, stdout, "agents")
 	assertContains(t, stdout, "help format")
+}
+
+func TestHelpAcceptsGlobalFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"help", "format", "--json"},
+		{"help", "format", "--project", "x"},
+		{"help", "--json", "format"},
+	} {
+		stdout, stderr, code := runCLI(t, t.TempDir(), args...)
+		assertEq(t, code, 0)
+		assertEq(t, stderr, "")
+		assertEq(t, stdout, docs.BoardFormat)
+	}
+	stdout, stderr, code := runCLI(t, t.TempDir(), "help", "--json")
+	assertEq(t, code, 0)
+	assertEq(t, stderr, "")
+	assertContains(t, stdout, "Usage: waypoint")
+
+	for _, args := range [][]string{{"agents", "--json"}, {"agents", "--project", "x"}} {
+		stdout, stderr, code := runCLI(t, t.TempDir(), args...)
+		assertEq(t, code, 0)
+		assertEq(t, stderr, "")
+		assertContains(t, stdout, "waypoint done <ID>")
+	}
 }
