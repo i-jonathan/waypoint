@@ -164,12 +164,26 @@ func (s *Service) Board(ctx context.Context) (BoardView, error) {
 	if err != nil {
 		return BoardView{}, err
 	}
+	return boardView(b), nil
+}
+
+func boardView(b *domain.Board) BoardView {
 	v := newViewer(b)
 	out := BoardView{Settings: b.Settings, Cards: make([]CardView, 0, len(b.Cards)), Warnings: b.Warnings()}
 	for _, c := range b.Cards {
 		out.Cards = append(out.Cards, v.view(c, false))
 	}
-	return out, nil
+	return out
+}
+
+// UpdateSettings replaces the board's settings (see Board.ApplySettings) and
+// returns the board as the file now holds it.
+func (s *Service) UpdateSettings(ctx context.Context, ch domain.SettingsChange) (BoardView, error) {
+	b, err := s.apply(ctx, func(b *domain.Board) error { return b.ApplySettings(ch) })
+	if err != nil {
+		return BoardView{}, err
+	}
+	return boardView(b), nil
 }
 
 // List returns the cards matching query (see domain.ParseFilter), board cards

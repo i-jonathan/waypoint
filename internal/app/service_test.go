@@ -658,3 +658,67 @@ func TestWriteReturnsTheCardAsTheFileHoldsIt(t *testing.T) {
 	noErr(t, err)
 	equal(t, v.Hash, got.Hash)
 }
+
+func TestServiceUpdateSettingsPersists(t *testing.T) {
+	e := newEnv(t)
+	a := e.create("A", "In progress")
+	e.create("B", "Todo")
+
+	cur := e.board().Settings
+	cur.Name = "Renamed board"
+	cur.Prefix = "ZZ" // ignored
+	cur.Columns[1].Name = "Doing"
+	cur.Columns[0].MovesTo = []string{"Doing", "Done"}
+	cur.Columns[2].MovesTo = []string{"Doing"}
+	cur.Columns[1].WIP = 1
+	cur.Appearance.Accent = "teal"
+
+	view, err := e.svc.UpdateSettings(context.Background(), domain.SettingsChange{
+		Settings:      cur,
+		ColumnRenames: map[string]string{"In progress": "Doing"},
+	})
+	noErr(t, err)
+
+	equal(t, view.Settings.Name, "Renamed board")
+	equal(t, view.Settings.Prefix, "T")
+	equal(t, view.Settings.Appearance.Accent, "teal")
+	equal(t, len(view.Cards), 2)
+	for _, c := range view.Cards {
+		if c.ID == a.ID {
+			equal(t, c.Column, "Doing")
+		}
+	}
+
+	got := e.board()
+	equal(t, got.Settings.Name, "Renamed board")
+	equal(t, got.Settings.Columns[1].Name, "Doing")
+	equal(t, got.Settings.Columns[1].WIP, 1)
+	equal(t, got.Settings.Appearance.Accent, "teal")
+	card, _, ok := got.Find(a.ID)
+	equal(t, ok, true)
+	equal(t, card.Column, "Doing")
+}
+
+func TestServiceUpdateSettingsRefusalAndNoOpSaveNothing(t *testing.T) {
+	e := newEnv(t)
+	e.create("A", "In progress")
+	repo := &countingRepo{Repository: e.repo}
+	svc := app.NewService(repo, func() time.Time { return e.now })
+	// Reformat by hand: any save would rewrite the file canonically.
+	e.write(e.file() + "\n\n\n")
+	before := e.file()
+
+	cur := e.board().Settings
+	_, err := svc.UpdateSettings(context.Background(), domain.SettingsChange{Settings: cur})
+	noErr(t, err)
+
+	cur.Columns = []domain.Column{cur.Columns[0], cur.Columns[2]}
+	cur.Columns[0].MovesTo = []string{"Done"}
+	cur.Columns[1].MovesTo = []string{"Todo"}
+	_, err = svc.UpdateSettings(context.Background(), domain.SettingsChange{Settings: cur})
+	if !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("got %v, want ErrInvalid", err)
+	}
+	equal(t, repo.saves, 0)
+	equal(t, e.file(), before)
+}
