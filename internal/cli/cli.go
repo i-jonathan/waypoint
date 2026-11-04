@@ -44,6 +44,16 @@ Commands:
   project add NAME     Add a project (--path FILE, --prefix T)
   project ls           List projects
   project rm NAME      Remove a project from the registry (the file is kept)
+  ls [QUERY...]        List cards (--column X, --group G, --blocked, --next, --archived)
+  show ID              Show one card with its body
+  add TITLE            Add a card (--column, --group, --priority, --depends, --body TEXT|-)
+  move ID COLUMN       Move a card (--top or --index N; bottom by default)
+  set ID key=value...  Change fields (title, group, priority, depends, body, or any extra field)
+  check ID N           Toggle checklist item N
+  done ID              Move a card to the done column
+  archive              Archive every card in a done column
+  restore ID           Bring an archived card back (--column X)
+  rm ID                Delete a card
 
 Every command accepts --json and --project NAME.
 `
@@ -55,6 +65,8 @@ type runner struct {
 	env     Env
 	json    bool   // --json
 	project string // --project
+
+	stdinRead bool // standard input has been consumed (see readStdin)
 }
 
 // Run executes one waypoint command and returns the exit code: 0 on success,
@@ -73,6 +85,26 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return r.cmdInit(args[1:])
 	case "project":
 		return r.cmdProject(args[1:])
+	case "ls":
+		return r.cmdLs(args[1:])
+	case "show":
+		return r.cmdShow(args[1:])
+	case "add":
+		return r.cmdAdd(args[1:])
+	case "move":
+		return r.cmdMove(args[1:])
+	case "set":
+		return r.cmdSet(args[1:])
+	case "check":
+		return r.cmdCheck(args[1:])
+	case "done":
+		return r.cmdDone(args[1:])
+	case "archive":
+		return r.cmdArchive(args[1:])
+	case "restore":
+		return r.cmdRestore(args[1:])
+	case "rm":
+		return r.cmdRm(args[1:])
 	}
 	return r.usageError(fmt.Sprintf("unknown command %q", args[0]), "waypoint <command> [flags], see waypoint --help")
 }

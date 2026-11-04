@@ -27,14 +27,19 @@ func NewService(r Repository, now Clock) *Service {
 	return &Service{repo: r, now: now}
 }
 
-// CardView is a card with the facts derived from its board.
+// CardView is a card with the facts derived from its board. It marshals to
+// JSON through MarshalJSON (see view_json.go), which the CLI and the HTTP API
+// share.
 type CardView struct {
-	domain.Card
-	Archived  bool
-	Blockers  []domain.Blocker // empty for an archived card
-	Next      bool             // true only for the card NextUp returns
-	Checklist struct{ Done, Total int }
-	Hash      string // CardHash, to pass back as ifMatch
+	domain.Card `json:"-"`
+	Archived    bool             `json:"archived"`
+	Blockers    []domain.Blocker `json:"blockers"` // empty for an archived card
+	Next        bool             `json:"next"`     // true only for the card NextUp returns
+	Checklist   struct {
+		Done  int `json:"done"`
+		Total int `json:"total"`
+	} `json:"checklist"`
+	Hash string `json:"hash"` // CardHash, to pass back as ifMatch
 }
 
 // BoardView is a board's settings, live cards and warnings.
