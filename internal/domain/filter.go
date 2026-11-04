@@ -47,6 +47,7 @@ func (f Filter) Empty() bool { return len(f.terms) == 0 }
 //   - "next": the card is the board's next up card
 //   - group:x or column:x: that name contains x
 //   - key:value for a valid extra field key: that field contains value
+//     (unless value starts with "//", so URLs stay free text)
 //   - anything else: the id, title or body contains it
 //
 // Every comparison ignores case.
@@ -110,7 +111,7 @@ func parseTerm(tok string) term {
 	case "next":
 		return term{kind: termNext, text: tok}
 	}
-	if key, value, ok := strings.Cut(tok, ":"); ok && key != "" && value != "" {
+	if key, value, ok := strings.Cut(tok, ":"); ok && key != "" && value != "" && !strings.HasPrefix(value, "//") {
 		switch key {
 		case "group":
 			return term{kind: termGroup, text: tok, key: key, value: value}
