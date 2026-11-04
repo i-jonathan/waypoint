@@ -54,6 +54,8 @@ Commands:
   archive              Archive every card in a done column
   restore ID           Bring an archived card back (--column X)
   rm ID                Delete a card
+  agents               Print a snippet to paste into AGENTS.md or CLAUDE.md
+  help format          Print the board file format guide
 
 Every command accepts --json and --project NAME.
 `
@@ -78,9 +80,13 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return exitOK
 	}
 	switch args[0] {
-	case "-h", "--help", "-help", "help":
+	case "-h", "--help", "-help":
 		fmt.Fprint(env.Stdout, usageText)
 		return exitOK
+	case "help":
+		return r.cmdHelp(args[1:])
+	case "agents":
+		return r.cmdAgents(args[1:])
 	case "init":
 		return r.cmdInit(args[1:])
 	case "project":
