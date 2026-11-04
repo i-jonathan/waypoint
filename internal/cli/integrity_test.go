@@ -428,3 +428,66 @@ func TestCardDatesUseTheLocalDate(t *testing.T) {
 		})
 	}
 }
+
+func TestNoProjectHereIsAnErrorEvenWithOneRegistered(t *testing.T) {
+	root := t.TempDir()
+	board := filepath.Join(root, "registered", "BOARD.md")
+	runCLI(t, root, "project", "add", "Only", "--path", board)
+	before := readFile(t, board)
+	elsewhere := t.TempDir()
+
+	_, stderr, code := runCLI(t, elsewhere, "add", "Lost card")
+
+	assertEq(t, code, exitError)
+	assertContains(t, stderr, `no project here; use --project NAME or run "waypoint init"`)
+	assertEq(t, readFile(t, board), before)
+}
+
+func TestUnregisteredBoardHereIsNamedInTheError(t *testing.T) {
+	cases := map[string]bool{"another project registered": true, "nothing registered": false}
+	for name, register := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			here := filepath.Join(dir, "BOARD.md")
+			writeFile(t, here, boardFile)
+			if register {
+				other := t.TempDir()
+				runCLI(t, other, "project", "add", "Other", "--path", filepath.Join(other, "BOARD.md"))
+			}
+
+			_, stderr, code := runCLI(t, dir, "add", "Lost card")
+
+			assertEq(t, code, exitError)
+			assertContains(t, stderr, `BOARD.md here isn't registered; run "waypoint init"`)
+			assertEq(t, readFile(t, here), boardFile)
+
+			stdout, _, _ := runCLI(t, dir, "ls", "--json")
+			assertContains(t, stdout, `"code":"not_found"`)
+		})
+	}
+}
+
+func TestRegisteredBoardHereIsNotCalledUnregisteredWhenAmbiguous(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "BOARD.md"), boardFile)
+	runCLI(t, dir, "project", "add", "One", "--path", filepath.Join(dir, "BOARD.md"))
+	runCLI(t, dir, "project", "add", "Two", "--path", filepath.Join(dir, "other.md"))
+
+	_, stderr, code := runCLI(t, dir, "ls")
+
+	assertEq(t, code, exitError)
+	assertContains(t, stderr, "no project here")
+}
+
+func TestProjectListWorksAnywhere(t *testing.T) {
+	root := t.TempDir()
+	runCLI(t, root, "project", "add", "Only", "--path", filepath.Join(root, "p", "BOARD.md"))
+	elsewhere := t.TempDir()
+
+	stdout, stderr, code := runCLI(t, elsewhere, "project", "ls")
+
+	assertEq(t, code, exitOK)
+	assertEq(t, stderr, "")
+	assertContains(t, stdout, "  Only")
+	assertNotContains(t, stdout, "* Only")
+}

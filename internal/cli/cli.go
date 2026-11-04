@@ -10,6 +10,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"waypoint/internal/app"
@@ -267,18 +269,30 @@ func (r *runner) loadConfig() (*config.Config, string, error) {
 
 // noProjectError is the "cannot tell which project" error. Machine readers
 // see it as not_found.
-type noProjectError struct{}
+type noProjectError struct{ msg string }
 
-func (noProjectError) Error() string {
-	return `no project here; use --project NAME or run "waypoint project add"`
-}
+func (e noProjectError) Error() string { return e.msg }
 
 func (noProjectError) Unwrap() error { return domain.ErrNotFound }
 
+// noProject explains why no project matched the working directory.
+func (r *runner) noProject(cfg *config.Config) error {
+	if r.env.Cwd != "" {
+		here := filepath.Join(r.env.Cwd, initBoardFile)
+		if _, err := os.Stat(here); err == nil {
+			if _, registered := registeredAt(cfg, here); !registered {
+				return noProjectError{initBoardFile + ` here isn't registered; run "waypoint init"`}
+			}
+		}
+	}
+	return noProjectError{`no project here; use --project NAME or run "waypoint init"`}
+}
+
 // resolveProject picks the project a command acts on: name (the --project
-// value) if given, else $WAYPOINT_PROJECT, else the project whose directory
-// holds the working directory, else the only registered project. A named
-// project that does not exist is an error, not a fall-through.
+// value) if given, else $WAYPOINT_PROJECT, else the project found from the
+// working directory (see config.FindByDir). Anything else is an error, so a
+// card never lands on a board the user did not mean. A named project that does
+// not exist is an error, not a fall-through.
 func (r *runner) resolveProject(cfg *config.Config, name string) (config.ProjectRef, error) {
 	if name == "" {
 		name = r.env.Getenv("WAYPOINT_PROJECT")
@@ -295,10 +309,7 @@ func (r *runner) resolveProject(cfg *config.Config, name string) (config.Project
 			return ref, nil
 		}
 	}
-	if len(cfg.Projects) == 1 {
-		return cfg.Projects[0], nil
-	}
-	return config.ProjectRef{}, noProjectError{}
+	return config.ProjectRef{}, r.noProject(cfg)
 }
 
 // service resolves the current project (see resolveProject) and returns a

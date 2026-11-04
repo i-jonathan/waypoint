@@ -179,7 +179,7 @@ func TestServiceResolutionOrder(t *testing.T) {
 	b := filepath.Join(root, "b")
 	runCLI(t, root, "project", "add", "Alpha", "--path", filepath.Join(a, "BOARD.md"))
 
-	// Exactly one project: it is the answer anywhere.
+	// One project under the working directory: it is the answer.
 	r := newTestRunner(t, root, nil)
 	_, ref, err := r.service("")
 	if err != nil || ref.Name != "Alpha" {
@@ -188,10 +188,10 @@ func TestServiceResolutionOrder(t *testing.T) {
 
 	runCLI(t, root, "project", "add", "Beta", "--path", filepath.Join(b, "BOARD.md"))
 
-	// Two projects and a cwd that matches neither: no guess.
+	// Two projects under the working directory: no guess.
 	r = newTestRunner(t, root, nil)
 	_, _, err = r.service("")
-	if err == nil || !strings.Contains(err.Error(), `no project here; use --project NAME or run "waypoint project add"`) {
+	if err == nil || !strings.Contains(err.Error(), `no project here; use --project NAME or run "waypoint init"`) {
 		t.Fatalf("ambiguous: %v", err)
 	}
 
