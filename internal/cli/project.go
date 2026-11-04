@@ -276,7 +276,10 @@ func (r *runner) cmdProjectRm(args []string) int {
 		return r.fail(err)
 	}
 	ref, ok := cfg.Find(pos[0])
-	if err := cfg.Remove(pos[0]); err != nil || !ok {
+	if !ok {
+		return r.fail(fmt.Errorf("%w: no project named %q", domain.ErrNotFound, pos[0]))
+	}
+	if err := cfg.Remove(pos[0]); err != nil {
 		return r.fail(err)
 	}
 	if err := cfg.Save(cfgPath); err != nil {

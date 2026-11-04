@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"waypoint/internal/app"
 	"waypoint/internal/config"
@@ -94,29 +95,58 @@ func (r *runner) parse(usage string, args []string, setup func(*flag.FlagSet)) (
 		fmt.Fprintf(r.env.Stdout, "usage: %s\n", usage)
 		return nil, exitOK, true
 	case err != nil:
-		return nil, r.usageError(err.Error(), usage), true
+		msg := err.Error()
+		if strings.HasPrefix(msg, "flag provided but not defined") {
+			usage += " (put -- before values that start with -)"
+		}
+		return nil, r.usageError(msg, usage), true
 	}
 	return pos, 0, false
 }
 
 // parseInterspersed parses args with flags allowed before, between and after
 // positional arguments, and returns the positionals in order. Everything
-// after a bare "--" is positional.
+// after the first bare "--" is positional, verbatim, wherever that "--" sits.
 func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 	var pos []string
 	for {
-		if len(args) > 0 && args[0] == "--" {
-			return append(pos, args[1:]...), nil
-		}
 		if err := fs.Parse(args); err != nil {
 			return nil, err
 		}
-		if fs.NArg() == 0 {
+		rest := fs.Args()
+		if endedWithTerminator(fs, args[:len(args)-len(rest)]) {
+			return append(pos, rest...), nil
+		}
+		if len(rest) == 0 {
 			return pos, nil
 		}
-		pos = append(pos, fs.Arg(0))
-		args = fs.Args()[1:]
+		pos = append(pos, rest[0])
+		args = rest[1:]
 	}
+}
+
+// endedWithTerminator reports whether consumed, the arguments one fs.Parse
+// call used up, contains a "--" that ended flag parsing. A "--" that is the
+// value of a flag such as "--path --" is not a terminator, so the tokens are
+// walked in order, skipping the value of each flag that takes one.
+func endedWithTerminator(fs *flag.FlagSet, consumed []string) bool {
+	for i := 0; i < len(consumed); i++ {
+		t := consumed[i]
+		if t == "--" {
+			return true
+		}
+		if len(t) < 2 || t[0] != '-' || strings.Contains(t, "=") {
+			continue
+		}
+		f := fs.Lookup(strings.TrimLeft(t, "-"))
+		if f == nil {
+			continue
+		}
+		if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !bf.IsBoolFlag() {
+			i++ // the next token is this flag's value
+		}
+	}
+	return false
 }
 
 // usageError prints a one-line usage message to stderr and returns the usage

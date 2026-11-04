@@ -92,32 +92,62 @@ func TestFlagsMayFollowPositionals(t *testing.T) {
 }
 
 func TestParseInterspersed(t *testing.T) {
-	newFS := func() (*flag.FlagSet, *string, *bool) {
+	cases := []struct {
+		name string
+		args []string
+		pos  string // positionals joined with ","
+		s    string // value of -s
+		b    bool   // value of -b
+	}{
+		{"flags anywhere", []string{"a", "-s", "v", "b", "-b", "c"}, "a,b,c", "v", true},
+		{"-- after positional", []string{"a", "--", "-b", "-x"}, "a,-b,-x", "", false},
+		{"-- first", []string{"--", "-b", "x"}, "-b,x", "", false},
+		{"positional, flag, --", []string{"T-1", "-b", "--", "-5", "-6"}, "T-1,-5,-6", "", true},
+		{"flag, --", []string{"-b", "--", "-5", "-6"}, "-5,-6", "", true},
+		{"flag, --, same flag literal", []string{"-b", "--", "a", "-b"}, "a,-b", "", true},
+		{"literal -- kept after the first", []string{"x", "-b", "--", "a", "--"}, "x,a,--", "", true},
+		{"positional, --", []string{"T-1", "--", "-5", "-6"}, "T-1,-5,-6", "", false},
+		{"-- is a flag value, not a terminator", []string{"-s", "--", "a", "-b"}, "a", "--", true},
+		{"-- after a flag value", []string{"-s", "v", "--", "-b"}, "-b", "v", false},
+		{"empty", nil, "", "", false},
+	}
+	for _, c := range cases {
 		fs := flag.NewFlagSet("t", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
-		return fs, fs.String("s", "", ""), fs.Bool("b", false, "")
+		s := fs.String("s", "", "")
+		b := fs.Bool("b", false, "")
+		pos, err := parseInterspersed(fs, c.args)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got := strings.Join(pos, ","); got != c.pos || *s != c.s || *b != c.b {
+			t.Errorf("%s: pos=%q s=%q b=%v, want pos=%q s=%q b=%v", c.name, got, *s, *b, c.pos, c.s, c.b)
+		}
 	}
-	fs, s, b := newFS()
-	pos, err := parseInterspersed(fs, []string{"a", "-s", "v", "b", "-b", "c"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEq(t, strings.Join(pos, ","), "a,b,c")
-	assertEq(t, *s, "v")
-	assertEq(t, *b, true)
 
-	// After "--" everything is positional, even what looks like a flag.
-	fs, _, _ = newFS()
-	pos, err = parseInterspersed(fs, []string{"a", "--", "-b", "-x"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEq(t, strings.Join(pos, ","), "a,-b,-x")
-
-	fs, _, _ = newFS()
-	if _, err = parseInterspersed(fs, []string{"a", "-zzz"}); err == nil {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	if _, err := parseInterspersed(fs, []string{"a", "-zzz"}); err == nil {
 		t.Fatal("want an error for an unknown flag")
 	}
+}
+
+func TestUndefinedFlagHintsAtDoubleDash(t *testing.T) {
+	stdout, stderr, code := runCLI(t, t.TempDir(), "project", "rm", "-5")
+	assertEq(t, code, 2)
+	assertEq(t, stdout, "")
+	assertEq(t, strings.Count(stderr, "\n"), 1)
+	if !strings.HasSuffix(stderr, " (put -- before values that start with -)\n") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	// With the terminator the value is a positional, so it is a plain not_found.
+	_, stderr, code = runCLI(t, t.TempDir(), "project", "rm", "--", "-5")
+	assertEq(t, code, 1)
+	assertContains(t, stderr, `no project named "-5"`)
+
+	// Other flag errors carry no hint.
+	_, stderr, _ = runCLI(t, t.TempDir(), "project", "add", "A", "--path")
+	assertNotContains(t, stderr, "put --")
 }
 
 func TestErrorCode(t *testing.T) {
