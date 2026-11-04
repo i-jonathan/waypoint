@@ -271,24 +271,24 @@ func (e noProjectError) Error() string { return e.msg }
 
 func (noProjectError) Unwrap() error { return domain.ErrNotFound }
 
-// noProject explains why no project matched the working directory.
-func (r *runner) noProject(cfg *config.Config) error {
-	if r.env.Cwd != "" {
-		here := filepath.Join(r.env.Cwd, initBoardFile)
-		if _, err := os.Stat(here); err == nil {
-			if _, registered := registeredAt(cfg, here); !registered {
-				return noProjectError{initBoardFile + ` here isn't registered; run "waypoint init"`}
-			}
-		}
+// unregisteredHere reports whether the working directory holds a ./BOARD.md
+// that is not a registered board.
+func (r *runner) unregisteredHere(cfg *config.Config) bool {
+	here := filepath.Join(r.env.Cwd, initBoardFile)
+	if _, err := os.Stat(here); err != nil {
+		return false
 	}
-	return noProjectError{`no project here; use --project NAME or run "waypoint init"`}
+	_, registered := registeredAt(cfg, here)
+	return !registered
 }
 
 // resolveProject picks the project a command acts on: name (the --project
 // value) if given, else $WAYPOINT_PROJECT, else the project found from the
-// working directory (see config.FindByDir). Anything else is an error, so a
-// card never lands on a board the user did not mean. A named project that does
-// not exist is an error, not a fall-through.
+// working directory (see config.FindByDir). An unregistered ./BOARD.md stops
+// that search, because a board in the working directory is the one the user
+// means, whatever is registered above or below it. Anything else is an error,
+// so a card never lands on a board the user did not mean. A named project that
+// does not exist is an error, not a fall-through.
 func (r *runner) resolveProject(cfg *config.Config, name string) (config.ProjectRef, error) {
 	if name == "" {
 		name = r.env.Getenv("WAYPOINT_PROJECT")
@@ -301,11 +301,14 @@ func (r *runner) resolveProject(cfg *config.Config, name string) (config.Project
 		return ref, nil
 	}
 	if r.env.Cwd != "" {
+		if r.unregisteredHere(cfg) {
+			return config.ProjectRef{}, noProjectError{initBoardFile + ` here isn't registered; run "waypoint init"`}
+		}
 		if ref, ok := cfg.FindByDir(r.env.Cwd); ok {
 			return ref, nil
 		}
 	}
-	return config.ProjectRef{}, r.noProject(cfg)
+	return config.ProjectRef{}, noProjectError{`no project here; use --project NAME or run "waypoint init"`}
 }
 
 // service resolves the current project (see resolveProject) and returns a

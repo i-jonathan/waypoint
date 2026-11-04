@@ -672,3 +672,55 @@ func TestFormatGuideCoversCommentsLockFileAndPrefix(t *testing.T) {
 		assertContains(t, stdout, want)
 	}
 }
+
+func TestUnregisteredBoardHereBeatsARegisteredAncestorOrChild(t *testing.T) {
+	cases := map[string]struct{ registered, cwd string }{
+		"under a registered ancestor": {"BOARD.md", "sub"},
+		"above a registered child":    {filepath.Join("sub", "BOARD.md"), "."},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			registered := filepath.Join(root, c.registered)
+			runCLI(t, root, "project", "add", "Other", "--path", registered)
+			cwd := filepath.Join(root, c.cwd)
+			here := filepath.Join(cwd, "BOARD.md")
+			writeFile(t, here, boardFile)
+			before := readFile(t, registered)
+
+			_, stderr, code := runCLI(t, cwd, "add", "Lost card")
+
+			assertEq(t, code, exitError)
+			assertContains(t, stderr, `BOARD.md here isn't registered; run "waypoint init"`)
+			assertEq(t, readFile(t, here), boardFile)
+			assertEq(t, readFile(t, registered), before)
+		})
+	}
+}
+
+func TestParentFolderOfAProjectIsNotInIt(t *testing.T) {
+	root := t.TempDir()
+	board := filepath.Join(root, "p", "BOARD.md")
+	runCLI(t, root, "project", "add", "Only", "--path", board)
+	before := readFile(t, board)
+
+	_, stderr, code := runCLI(t, root, "add", "Lost card")
+
+	assertEq(t, code, exitError)
+	assertContains(t, stderr, `no project here; use --project NAME or run "waypoint init"`)
+	assertEq(t, readFile(t, board), before)
+}
+
+func TestSubfolderOfAProjectIsInIt(t *testing.T) {
+	root := t.TempDir()
+	runCLI(t, root, "init", "P")
+	sub := filepath.Join(root, "docs", "notes")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, stderr, code := runCLI(t, sub, "add", "Found it"); code != exitOK {
+		t.Fatalf("add: %d %s", code, stderr)
+	}
+	assertContains(t, readFile(t, filepath.Join(root, "BOARD.md")), "Found it")
+}

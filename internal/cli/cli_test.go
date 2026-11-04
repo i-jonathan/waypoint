@@ -180,16 +180,16 @@ func TestServiceResolutionOrder(t *testing.T) {
 	b := filepath.Join(root, "b")
 	runCLI(t, root, "project", "add", "Alpha", "--path", filepath.Join(a, "BOARD.md"))
 
-	// One project under the working directory: it is the answer.
+	// A project below the working directory is not the answer.
 	r := newTestRunner(t, root, nil)
 	_, ref, err := r.service("")
-	if err != nil || ref.Name != "Alpha" {
-		t.Fatalf("single project: %v %v", ref, err)
+	if err == nil {
+		t.Fatalf("parent folder reached %v", ref)
 	}
 
 	runCLI(t, root, "project", "add", "Beta", "--path", filepath.Join(b, "BOARD.md"))
 
-	// Two projects under the working directory: no guess.
+	// Nor is either of two.
 	r = newTestRunner(t, root, nil)
 	_, _, err = r.service("")
 	if err == nil || !strings.Contains(err.Error(), `no project here; use --project NAME or run "waypoint init"`) {

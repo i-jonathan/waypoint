@@ -64,11 +64,11 @@ func (c *Config) Find(name string) (ProjectRef, bool) {
 	return ProjectRef{}, false
 }
 
-// FindByDir picks the project for a working directory. It returns the deepest
-// project whose board file sits in cwd or one of its ancestors; failing that,
-// the single project whose board file is under cwd. Ties and several
-// candidates are ambiguous and give false. Directories are compared by path
-// segment, after resolving symlinks where possible.
+// FindByDir picks the project for a working directory: the deepest project
+// whose board file sits in cwd or one of its ancestors. A project below cwd
+// never matches, so running from a parent folder such as $HOME reaches nothing.
+// A tie is ambiguous and gives false. Directories are compared by path segment,
+// after resolving symlinks where possible.
 func (c *Config) FindByDir(cwd string) (ProjectRef, bool) {
 	cwd = resolve(cwd)
 
@@ -87,21 +87,8 @@ func (c *Config) FindByDir(cwd string) (ProjectRef, bool) {
 			best = append(best, q)
 		}
 	}
-	if len(best) > 0 {
-		if len(best) == 1 {
-			return best[0], true
-		}
-		return ProjectRef{}, false
-	}
-
-	var below []ProjectRef
-	for _, q := range c.Projects {
-		if isAncestor(cwd, resolve(filepath.Dir(q.Path))) {
-			below = append(below, q)
-		}
-	}
-	if len(below) == 1 {
-		return below[0], true
+	if len(best) == 1 {
+		return best[0], true
 	}
 	return ProjectRef{}, false
 }

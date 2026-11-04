@@ -246,12 +246,11 @@ func TestFindByDir(t *testing.T) {
 	}
 }
 
-func TestFindByDirSingleProjectBelowCwd(t *testing.T) {
+func TestFindByDirIgnoresAProjectBelowCwd(t *testing.T) {
 	c := &Config{}
 	assertNoErr(t, c.Add(ProjectRef{Name: "only", Storage: "markdown", Path: "/p/only/BOARD.md"}))
-	ref, ok := c.FindByDir("/p")
-	if !ok || ref.Name != "only" {
-		t.Fatalf("got %+v, %v", ref, ok)
+	if ref, ok := c.FindByDir("/p"); ok {
+		t.Fatalf("/p matched %q", ref.Name)
 	}
 }
 
@@ -263,10 +262,6 @@ func TestFindByDirComparesSegmentsNotPrefixes(t *testing.T) {
 	}
 	if ref, ok := c.FindByDir("/p/pharmacy2/src"); ok {
 		t.Fatalf("/p/pharmacy2/src matched %q", ref.Name)
-	}
-	// Below-cwd direction: cwd /p/pharm must not claim /p/pharmacy.
-	if ref, ok := c.FindByDir("/p/pharm"); ok {
-		t.Fatalf("/p/pharm matched %q", ref.Name)
 	}
 }
 

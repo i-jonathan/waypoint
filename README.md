@@ -47,7 +47,7 @@ Now the hallway is no longer blocked. Run `waypoint --help` for every command. A
 - `waypoint ls --next` shows the top card of the first active column.
 - `waypoint archive` moves finished cards out of the way.
 
-Every command accepts `--json` for scripts and `--project NAME` to act on a project other than the one in the current folder. Without either, Waypoint uses `$WAYPOINT_PROJECT` if it is set, then the project found from the current folder, and otherwise stops with an error rather than guess.
+Every command accepts `--json` for scripts and `--project NAME` to act on a project other than the one in the current folder. Without either, Waypoint uses `$WAYPOINT_PROJECT` if it is set, then the project whose board is in the current folder or a folder above it, and otherwise stops with an error rather than guess. A `BOARD.md` in the current folder that is not registered is always an error, so run `waypoint init` there first.
 
 ## The board file
 
