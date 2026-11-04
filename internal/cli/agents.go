@@ -28,7 +28,7 @@ If you edit the board file directly, follow the format printed by "waypoint help
 
 Run waypoint from inside this project's folder, or pass --project NAME. "waypoint project ls" shows the board file's path.
 
-Groups, priorities and columns must already exist on the board: read them with "waypoint ls --json" or the board file's front matter before using them.
+Groups, priorities and columns must already exist on the board: read them from the board file's front matter before using them.
 `
 
 // cmdAgents prints the AGENTS.md snippet. It needs no project and no config.

@@ -8,7 +8,13 @@ reads it again whenever it changes.
 When Waypoint saves the board it rewrites the file in a standard layout. Your
 card bodies are kept as they are, but spacing and field order outside bodies is
 normalised. Archived cards live in a second file next to the board, described at
-the end.
+the end. An operation that changes nothing, such as archiving when no card is
+done, leaves the file exactly as it is.
+
+Waypoint also keeps a `BOARD.md.lock` file beside the board while it writes. It
+holds nothing and is safe to ignore. To keep it out of version control add
+`*.lock` to `.gitignore`, or `BOARD.md.lock` if the repository tracks other lock
+files such as `Cargo.lock`.
 
 ## Example
 
@@ -66,6 +72,9 @@ The file must start with a line `---`, then YAML, then a second `---` line.
 Unknown keys are an error, so a typo such as `colums` is reported instead of
 ignored.
 
+**Comments in the front matter are not kept.** A YAML `# comment` is read and
+then dropped the next time Waypoint saves a change. Keep notes in a card instead.
+
 | Key | Meaning |
 | --- | --- |
 | `waypoint` | Format version. Always `1`. Required: a file without it is not a board. |
@@ -96,10 +105,17 @@ in the file is its rank.
 
 **Cards without an id.** A heading with no id, such as `### Call the plumber`,
 is a new card. Waypoint gives it the next id from `next_id` the next time it
-saves. This is the quickest way to add a card by hand.
+reads the file, and writes the id back. This is the quickest way to add a card
+by hand.
 
-Ids look like `T-19`: the prefix, a dash and a number. A duplicate id is an
-error.
+Ids look like `T-19`: the board's prefix, a dash and a number. A duplicate id is
+an error.
+
+**Only this board's prefix makes an id.** On a board with prefix `T`, the
+headings `### COVID-19 booster` and `### COVID-19` are cards without an id, titled
+`COVID-19 booster` and `COVID-19`. This means that changing `prefix` by hand
+turns the existing `### T-1 Title` headings into new cards titled `T-1 Title`,
+each with a new id. The archive file is different: see below.
 
 ### Fields
 
@@ -157,6 +173,10 @@ its line number and holds the board read-only until you fix the file.
 - A `##` heading that names no column, a duplicate field, a bad date, a bad id in
   `depends`, a duplicate card id, and a code fence that is never closed while
   headings follow it are errors too.
+- **The same id on the board and in the archive is an error** if the two cards
+  differ in anything but their column and `done` date. Give one of them a new id.
+  If they match, this is what an interrupted save leaves behind: Waypoint keeps
+  the board copy, warns, and removes the archive copy on the next save.
 - **A code block containing a card-like heading raises a warning.** If a fenced
   block contains a line such as `### T-12 Title` or `## Done`, the board still
   loads, and Waypoint warns with the line numbers, because the usual cause is a
@@ -164,10 +184,11 @@ its line number and holds the board read-only until you fix the file.
 
 ## Archive file
 
-The archive for `BOARD.md` is `BOARD.archive.md` in the same directory. It
-starts with `# Archive`, then one `## YYYY-MM` section per month of the cards'
-`done` dates, newest month first, with the cards under it in the same format as
-above. Every archived card needs an id and a `done` date, and has no column.
+The archive for `BOARD.md` is `BOARD.archive.md` in the same directory; if the
+board is a symlink, that is the directory of the real file. It starts with
+`# Archive`, then one `## YYYY-MM` section per month of the cards' `done` dates,
+newest month first, with the cards under it in the same format as above. Every archived card needs an id, of any prefix, and a `done` date, and has
+no column. A card whose prefix is not the board's cannot be restored to it.
 
 ```markdown
 # Archive

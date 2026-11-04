@@ -44,14 +44,16 @@ Now the hallway is no longer blocked. Run `waypoint --help` for every command. A
 
 - `waypoint show T-2` shows one card with its notes.
 - `waypoint set T-2 priority=P1` changes a field.
-- `waypoint ls --next` lists only the cards that are ready to start.
+- `waypoint ls --next` shows the top card of the first active column.
 - `waypoint archive` moves finished cards out of the way.
 
-Every command accepts `--json` for scripts and `--project NAME` to act on a project other than the one in the current folder.
+Every command accepts `--json` for scripts and `--project NAME` to act on a project other than the one in the current folder. Without either, Waypoint uses `$WAYPOINT_PROJECT` if it is set, then the project found from the current folder, and otherwise stops with an error rather than guess.
 
 ## The board file
 
 `BOARD.md` is plain Markdown. The columns and settings sit in a short header, and each card is a heading with text under it. You can edit the file in any editor. A card heading without an id gets one the next time Waypoint reads the file. Run `waypoint help format` for the full description of the format.
+
+While it writes, Waypoint keeps a small `BOARD.md.lock` file beside the board. It is safe to ignore and safe to delete when nothing is running; add `*.lock` to your `.gitignore` to keep it out of version control, or `BOARD.md.lock` if the repository tracks other lock files such as `Cargo.lock`.
 
 ## Configuration
 

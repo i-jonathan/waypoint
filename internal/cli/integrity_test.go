@@ -665,3 +665,10 @@ func TestRestoringACardWithAnotherPrefixLosesNothing(t *testing.T) {
 	assertEq(t, readFile(t, board), boardBefore)
 	assertEq(t, readFile(t, archive), archiveBefore)
 }
+
+func TestFormatGuideCoversCommentsLockFileAndPrefix(t *testing.T) {
+	stdout, _, _ := runCLI(t, t.TempDir(), "help", "format")
+	for _, want := range []string{"Comments in the front matter are not kept", "BOARD.md.lock", "*.lock", "Only this board's prefix makes an id", "next time it\nreads the file"} {
+		assertContains(t, stdout, want)
+	}
+}

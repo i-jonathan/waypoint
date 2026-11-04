@@ -22,7 +22,7 @@ func TestAgentsSnippet(t *testing.T) {
 		`If you edit the board file directly, follow the format printed by "waypoint help format"; a card heading without an id gets one automatically.`,
 		"`waypoint ls --json` and `waypoint show <ID> --json` for reading all cards and one card.",
 		`Run waypoint from inside this project's folder, or pass --project NAME. "waypoint project ls" shows the board file's path.`,
-		`Groups, priorities and columns must already exist on the board: read them with "waypoint ls --json" or the board file's front matter before using them.`,
+		`Groups, priorities and columns must already exist on the board: read them from the board file's front matter before using them.`,
 	} {
 		assertContains(t, stdout, want)
 	}
