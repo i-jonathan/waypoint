@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/gofrs/flock"
@@ -19,6 +20,8 @@ import (
 )
 
 const defaultPort = 4747
+
+var tlsModes = []string{"auto", "on", "off"}
 
 // ProjectRef registers one board. Storage is "markdown" or "sqlite"; Path is
 // absolute.
@@ -33,6 +36,7 @@ type Config struct {
 	Port        int               `yaml:"port"`
 	OpenBrowser bool              `yaml:"open_browser"`
 	DataDir     string            `yaml:"data_dir"`
+	TLS         string            `yaml:"tls"` // "auto", "on" or "off"
 	Appearance  domain.Appearance `yaml:"appearance"`
 	Projects    []ProjectRef      `yaml:"projects"`
 }
@@ -54,12 +58,12 @@ func DefaultPath(env func(string) string) (string, error) {
 }
 
 // Load reads the config at path. A missing file gives the defaults and writes
-// nothing. A file that exists but cannot be decoded, or that has an unknown
-// key, is an error naming the file. Keys the file omits keep their defaults.
+// nothing. A file that exists but cannot be decoded, that has an unknown key,
+// or whose tls is not auto, on or off, is an error naming the file. Keys the file omits keep their defaults.
 // env supplies HOME, used for the default data_dir and for a leading "~/".
 func Load(path string, env func(string) string) (*Config, error) {
 	home := env("HOME")
-	c := &Config{Port: defaultPort, OpenBrowser: true}
+	c := &Config{Port: defaultPort, OpenBrowser: true, TLS: "auto"}
 
 	data, err := os.ReadFile(path)
 	switch {
@@ -73,6 +77,10 @@ func Load(path string, env func(string) string) (*Config, error) {
 		if err := dec.Decode(c); err != nil && !errors.Is(err, io.EOF) {
 			return nil, fmt.Errorf("parse config %s: %w", path, err)
 		}
+	}
+
+	if !slices.Contains(tlsModes, c.TLS) {
+		return nil, fmt.Errorf("config %s: tls %q must be one of %s", path, c.TLS, strings.Join(tlsModes, ", "))
 	}
 
 	if c.DataDir == "" {
