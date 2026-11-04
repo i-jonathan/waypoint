@@ -28,7 +28,9 @@ func Format(b *domain.Board) []byte {
 		byColumn[c.Column] = append(byColumn[c.Column], c)
 	}
 	for _, col := range b.Settings.Columns {
-		sb.WriteString("## " + col.Name + "\n\n")
+		sb.WriteString("## ")
+		sb.WriteString(col.Name)
+		sb.WriteString("\n\n")
 		for _, c := range byColumn[col.Name] {
 			writeCard(&sb, c)
 		}
@@ -49,7 +51,9 @@ func FormatArchive(cards []domain.Card) []byte {
 	current := ""
 	for _, c := range sorted {
 		if m := month(c); m != current {
-			sb.WriteString("## " + m + "\n\n")
+			sb.WriteString("## ")
+			sb.WriteString(m)
+			sb.WriteString("\n\n")
 			current = m
 		}
 		writeCard(&sb, c)
@@ -65,10 +69,15 @@ func finish(sb *strings.Builder) []byte {
 // writeCard writes one card: heading, fields, body, each followed by a blank
 // line.
 func writeCard(sb *strings.Builder, c domain.Card) {
-	sb.WriteString("### " + string(c.ID) + " " + oneLine(strings.TrimSpace(c.Title)) + "\n\n")
+	sb.WriteString("### ")
+	sb.WriteString(string(c.ID))
+	sb.WriteString(" ")
+	sb.WriteString(oneLine(strings.TrimSpace(c.Title)))
+	sb.WriteString("\n\n")
 	fields := cardFieldLines(c)
 	for _, f := range fields {
-		sb.WriteString(f + "\n")
+		sb.WriteString(f)
+		sb.WriteString("\n")
 	}
 	if len(fields) > 0 {
 		sb.WriteString("\n")
@@ -82,7 +91,8 @@ func writeCard(sb *strings.Builder, c domain.Card) {
 	if len(fields) == 0 && startsLikeField(body) {
 		sb.WriteString("\n")
 	}
-	sb.WriteString(body + "\n\n")
+	sb.WriteString(body)
+	sb.WriteString("\n\n")
 }
 
 // cardFieldLines returns the "- key: value" lines of a card in canonical order.

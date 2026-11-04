@@ -73,7 +73,8 @@ func TestNoDashesInOutput(t *testing.T) {
 		{"project", "add", "!!!"}, {"project", "add", "A", "--bogus"},
 	} {
 		o, e, _ := runCLI(t, dir, args...)
-		all.WriteString(o + e)
+		all.WriteString(o)
+		all.WriteString(e)
 	}
 	for _, bad := range []string{"—", "–"} {
 		assertNotContains(t, all.String(), bad)
