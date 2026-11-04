@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -533,4 +535,56 @@ func TestFilesHoldingColumnIDOrRankKeysStillRoundTrip(t *testing.T) {
 	assertContains(t, readFile(t, path), "- column: Done\n- id: 7\n- rank: 3\n- note: kept\n")
 	stdout, _, _ := runCLI(t, dir, "show", "X-1")
 	assertContains(t, stdout, "column: Todo\n")
+}
+
+func TestParallelInitsAllRegister(t *testing.T) {
+	const n = 12
+	var wg sync.WaitGroup
+	for i := range n {
+		dir := t.TempDir()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, stderr, code := runCLI(t, dir, "init", fmt.Sprintf("P%d", i)); code != exitOK {
+				t.Errorf("init: %d %s", code, stderr)
+			}
+		}()
+	}
+	wg.Wait()
+
+	assertEq(t, len(projectList(t, t.TempDir())), n)
+}
+
+func TestParallelAddsAndRemovesAllTakeEffect(t *testing.T) {
+	root := t.TempDir()
+	for i := range 6 {
+		runCLI(t, root, "project", "add", fmt.Sprintf("Old%d", i), "--path", filepath.Join(root, fmt.Sprintf("old%d.md", i)))
+	}
+
+	var wg sync.WaitGroup
+	for i := range 6 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if _, stderr, code := runCLI(t, root, "project", "rm", fmt.Sprintf("Old%d", i)); code != exitOK {
+				t.Errorf("rm: %d %s", code, stderr)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			name := fmt.Sprintf("New%d", i)
+			if _, stderr, code := runCLI(t, root, "project", "add", name, "--path", filepath.Join(root, name+".md")); code != exitOK {
+				t.Errorf("add: %d %s", code, stderr)
+			}
+		}()
+	}
+	wg.Wait()
+
+	got := projectList(t, root)
+	assertEq(t, len(got), 6)
+	for _, p := range got {
+		if !strings.HasPrefix(p.Name, "New") {
+			t.Fatalf("%s is still registered", p.Name)
+		}
+	}
 }

@@ -2,10 +2,12 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"waypoint/internal/domain"
@@ -344,4 +346,81 @@ func TestAddValidatesPathAndStorage(t *testing.T) {
 	assertEqual(t, c.Projects[0].Storage, "markdown")
 	assertEqual(t, c.Projects[1].Storage, "sqlite")
 	assertEqual(t, c.Projects[2].Storage, "sqlite")
+}
+
+func TestUpdateCreatesTheConfigAndItsDirectory(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "new", "dir", "config.yaml")
+	env := envOf(map[string]string{"HOME": home})
+
+	err := Update(path, env, func(c *Config) error {
+		return c.Add(ProjectRef{Name: "A", Path: filepath.Join(home, "a.md")})
+	})
+
+	assertNoErr(t, err)
+	c, err := Load(path, env)
+	assertNoErr(t, err)
+	assertEqual(t, len(c.Projects), 1)
+}
+
+func TestUpdateSavesNothingWhenFnFails(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "config.yaml")
+	boom := errors.New("boom")
+
+	err := Update(path, envOf(map[string]string{"HOME": home}), func(c *Config) error {
+		c.Port = 1
+		return boom
+	})
+
+	assertIs(t, err, boom)
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the config was written: %v", err)
+	}
+}
+
+func TestUpdateFailsOnABrokenConfigWithoutRunningFn(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "config.yaml")
+	if err := os.WriteFile(path, []byte("no_such_key: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Update(path, envOf(map[string]string{"HOME": home}), func(*Config) error {
+		t.Fatal("fn ran on a config that does not parse")
+		return nil
+	})
+
+	if err == nil {
+		t.Fatal("Update succeeded")
+	}
+	data, _ := os.ReadFile(path)
+	assertEqual(t, string(data), "no_such_key: 1\n")
+}
+
+func TestConcurrentUpdatesAllLand(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "config.yaml")
+	env := envOf(map[string]string{"HOME": home})
+
+	const n = 20
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := Update(path, env, func(c *Config) error {
+				name := fmt.Sprintf("P%d", i)
+				return c.Add(ProjectRef{Name: name, Path: filepath.Join(home, name+".md")})
+			})
+			if err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	c, err := Load(path, env)
+	assertNoErr(t, err)
+	assertEqual(t, len(c.Projects), n)
 }

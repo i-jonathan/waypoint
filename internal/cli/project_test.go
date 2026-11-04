@@ -185,9 +185,25 @@ func TestProjectAddDuplicateCreatesNoFile(t *testing.T) {
 }
 
 // unwritableConfig returns a WAYPOINT_CONFIG override whose directory exists
-// but cannot be written, so reading the config works and saving it fails.
+// but cannot be written, so reading the config works and saving it fails. Its
+// lock file is already there, so that taking the lock works too.
 func unwritableConfig(t *testing.T, dir string) map[string]string {
 	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("permissions are not enforced for root")
+	}
+	locked := filepath.Join(dir, "locked")
+	writeFile(t, filepath.Join(locked, "config.yaml.lock"), "")
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	return map[string]string{"WAYPOINT_CONFIG": filepath.Join(locked, "config.yaml")}
+}
+
+func TestProjectAddMakesNoBoardWhenTheConfigCannotBeLocked(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "new.md")
 	if os.Geteuid() == 0 {
 		t.Skip("permissions are not enforced for root")
 	}
@@ -196,7 +212,13 @@ func unwritableConfig(t *testing.T, dir string) map[string]string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(locked, 0o755) })
-	return map[string]string{"WAYPOINT_CONFIG": filepath.Join(locked, "config.yaml")}
+	env := map[string]string{"WAYPOINT_CONFIG": filepath.Join(locked, "config.yaml")}
+
+	_, stderr, code := runCLIEnv(t, dir, env, "project", "add", "New", "--path", path)
+
+	assertEq(t, code, 1)
+	assertContains(t, stderr, "lock config")
+	mustNotExist(t, path)
 }
 
 func TestProjectAddConfigSaveFailureNamesLeftoverFile(t *testing.T) {

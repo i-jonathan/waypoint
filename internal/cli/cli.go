@@ -253,18 +253,14 @@ func errorLine(err error) int {
 	return 0
 }
 
-// loadConfig reads the global config and returns it with its path. A missing
-// file gives the defaults and is not created.
-func (r *runner) loadConfig() (*config.Config, string, error) {
+// loadConfig reads the global config. A missing file gives the defaults and is
+// not created.
+func (r *runner) loadConfig() (*config.Config, error) {
 	path, err := config.DefaultPath(r.env.Getenv)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	cfg, err := config.Load(path, r.env.Getenv)
-	if err != nil {
-		return nil, "", err
-	}
-	return cfg, path, nil
+	return config.Load(path, r.env.Getenv)
 }
 
 // noProjectError is the "cannot tell which project" error. Machine readers
@@ -317,7 +313,7 @@ func (r *runner) resolveProject(cfg *config.Config, name string) (config.Project
 // --project value, normally r.project after r.parse. It does not read the
 // board, so a missing or broken file shows up on the first service call.
 func (r *runner) service(name string) (*app.Service, config.ProjectRef, error) {
-	cfg, _, err := r.loadConfig()
+	cfg, err := r.loadConfig()
 	if err != nil {
 		return nil, config.ProjectRef{}, err
 	}

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gofrs/flock"
 	"gopkg.in/yaml.v3"
 
 	"waypoint/internal/domain"
@@ -100,6 +101,31 @@ func expandHome(p, home string) (string, error) {
 		return "", fmt.Errorf("cannot expand %q: HOME is not set", p)
 	}
 	return filepath.Join(home, p[1:]), nil
+}
+
+// Update changes the config at path under an exclusive lock on <path>.lock: it
+// loads the config, runs fn and saves. Every read-modify-write of the config
+// goes through it, or concurrent writers would overwrite each other's changes.
+// If fn fails nothing is saved. Update waits for as long as the lock is held,
+// and the lock belongs to the operating system, so a crash releases it.
+func Update(path string, env func(string) string, fn func(*Config) error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
+	fl := flock.New(path + ".lock")
+	if err := fl.Lock(); err != nil {
+		return fmt.Errorf("lock config %s: %w", path, err)
+	}
+	defer fl.Unlock()
+
+	c, err := Load(path, env)
+	if err != nil {
+		return err
+	}
+	if err := fn(c); err != nil {
+		return err
+	}
+	return c.Save(path)
 }
 
 // Save writes the config to path, creating parent directories. The write goes

@@ -90,9 +90,9 @@ func (r *runner) cmdInit(args []string) int {
 // --path value ("" for the default under data_dir); with fromInit it is the
 // absolute path of ./BOARD.md instead.
 //
-// The order is: validate, check the registry in memory, create or open the
-// board, and only then write the config. A failure before the last step
-// leaves the config as it was.
+// The order is: validate, then under the config lock check the registry, create
+// or open the board, and only then write the config. A failure before the last
+// step leaves the config as it was.
 func (r *runner) addProject(name, pathFlag, prefix string, fromInit bool) int {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -102,35 +102,36 @@ func (r *runner) addProject(name, pathFlag, prefix string, fromInit bool) int {
 	if err := settings.Validate(); err != nil {
 		return r.fail(err)
 	}
-	cfg, cfgPath, err := r.loadConfig()
+	cfgPath, err := config.DefaultPath(r.env.Getenv)
 	if err != nil {
 		return r.fail(err)
 	}
 
-	path, err := r.boardPath(cfg, name, pathFlag)
-	if err != nil {
-		return r.fail(err)
-	}
-	if q, ok := registeredAt(cfg, path); ok {
-		if fromInit {
-			return r.fail(fmt.Errorf("%w: %s here is already registered as project %q", domain.ErrInvalid, initBoardFile, q.Name))
+	var ref config.ProjectRef
+	var created bool
+	err = config.Update(cfgPath, r.env.Getenv, func(cfg *config.Config) error {
+		path, err := r.boardPath(cfg, name, pathFlag)
+		if err != nil {
+			return err
 		}
-		return r.fail(fmt.Errorf("%w: %s is already registered as %q", domain.ErrInvalid, path, q.Name))
-	}
-	if config.StorageFor(path) == "sqlite" {
-		return r.fail(storage.ErrSQLite)
-	}
-	if err := cfg.Add(config.ProjectRef{Name: name, Path: path}); err != nil {
-		return r.fail(err)
-	}
-	ref := cfg.Projects[len(cfg.Projects)-1]
-
-	created, err := openOrCreate(r, ref, settings)
+		if q, ok := registeredAt(cfg, path); ok {
+			if fromInit {
+				return fmt.Errorf("%w: %s here is already registered as project %q", domain.ErrInvalid, initBoardFile, q.Name)
+			}
+			return fmt.Errorf("%w: %s is already registered as %q", domain.ErrInvalid, path, q.Name)
+		}
+		if config.StorageFor(path) == "sqlite" {
+			return storage.ErrSQLite
+		}
+		if err := cfg.Add(config.ProjectRef{Name: name, Path: path}); err != nil {
+			return err
+		}
+		ref = cfg.Projects[len(cfg.Projects)-1]
+		created, err = openOrCreate(r, ref, settings)
+		return err
+	})
 	if err != nil {
-		return r.fail(err)
-	}
-	if err := cfg.Save(cfgPath); err != nil {
-		if created {
+		if created { // the board was made, so it was the save that failed
 			err = fmt.Errorf("%w (the new board file %s was left behind)", err, ref.Path)
 		}
 		return r.fail(err)
@@ -230,7 +231,7 @@ func (r *runner) cmdProjectLs(args []string) int {
 	if len(pos) != 0 {
 		return r.usageError("unexpected argument "+fmt.Sprintf("%q", pos[0]), usageLs)
 	}
-	cfg, _, err := r.loadConfig()
+	cfg, err := r.loadConfig()
 	if err != nil {
 		return r.fail(err)
 	}
@@ -272,18 +273,19 @@ func (r *runner) cmdProjectRm(args []string) int {
 	if len(pos) != 1 {
 		return r.usageError("expected one project NAME", usageRm)
 	}
-	cfg, cfgPath, err := r.loadConfig()
+	cfgPath, err := config.DefaultPath(r.env.Getenv)
 	if err != nil {
 		return r.fail(err)
 	}
-	ref, ok := cfg.Find(pos[0])
-	if !ok {
-		return r.fail(fmt.Errorf("%w: no project named %q", domain.ErrNotFound, pos[0]))
-	}
-	if err := cfg.Remove(pos[0]); err != nil {
-		return r.fail(err)
-	}
-	if err := cfg.Save(cfgPath); err != nil {
+	var ref config.ProjectRef
+	err = config.Update(cfgPath, r.env.Getenv, func(cfg *config.Config) error {
+		var ok bool
+		if ref, ok = cfg.Find(pos[0]); !ok {
+			return fmt.Errorf("%w: no project named %q", domain.ErrNotFound, pos[0])
+		}
+		return cfg.Remove(pos[0])
+	})
+	if err != nil {
 		return r.fail(err)
 	}
 	if r.json {
