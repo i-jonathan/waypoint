@@ -230,3 +230,105 @@ func TestNoOpsLeaveTheBoardFileAlone(t *testing.T) {
 		}
 	}
 }
+
+// hashOf reads the hash out of a command's JSON output.
+func hashOf(t *testing.T, stdout string) string {
+	t.Helper()
+	var got struct {
+		Hash string `json:"hash"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("%v in %q", err, stdout)
+	}
+	if got.Hash == "" {
+		t.Fatalf("no hash in %q", stdout)
+	}
+	return got.Hash
+}
+
+func TestReturnedHashMatchesTheFile(t *testing.T) {
+	cases := map[string]struct {
+		stdin string
+		args  []string
+	}{
+		"trailing newline": {"text\n", []string{"body=-"}},
+		"heading":          {"# Heading\n\ntext", []string{"body=-"}},
+		"unclosed fence":   {"```go\ncode", []string{"body=-"}},
+		"crlf":             {"one\r\ntwo\r\n", []string{"body=-"}},
+		"extra with space": {"", []string{"note=value "}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			runCLI(t, dir, "init", "P")
+			runCLI(t, dir, "add", "Card")
+
+			args := append([]string{"set", "T-1", "--json"}, c.args...)
+			stdout, stderr, code := runStdin(t, dir, c.stdin, args...)
+			if code != exitOK {
+				t.Fatalf("set: %d %s", code, stderr)
+			}
+			hash := hashOf(t, stdout)
+
+			shown, _, _ := runCLI(t, dir, "show", "T-1", "--json")
+			assertEq(t, hash, hashOf(t, shown))
+			if _, stderr, code := runCLI(t, dir, "set", "T-1", "other=1", "--if-match", hash); code != exitOK {
+				t.Fatalf("next write with the returned hash: %d %s", code, stderr)
+			}
+		})
+	}
+}
+
+func TestReturnedHashMatchesTheFileWhenAddingACard(t *testing.T) {
+	dir := t.TempDir()
+	runCLI(t, dir, "init", "P")
+
+	stdout, stderr, code := runStdin(t, dir, "# Heading\n", "add", "Card", "--body", "-", "--json")
+	if code != exitOK {
+		t.Fatalf("add: %d %s", code, stderr)
+	}
+
+	if _, stderr, code := runCLI(t, dir, "set", "T-1", "other=1", "--if-match", hashOf(t, stdout)); code != exitOK {
+		t.Fatalf("next write with the returned hash: %d %s", code, stderr)
+	}
+}
+
+func TestReturnedHashMatchesTheFileForAnAutoArchivedCard(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "BOARD.md")
+	runCLI(t, dir, "init", "P")
+	writeFile(t, path, strings.Replace(readFile(t, path), "columns:", "archive: {mode: auto, after_days: 0}\ncolumns:", 1))
+	runCLI(t, dir, "add", "Card")
+
+	stdout, stderr, code := runCLI(t, dir, "done", "T-1", "--json")
+	if code != exitOK {
+		t.Fatalf("done: %d %s", code, stderr)
+	}
+	assertContains(t, stdout, `"archived":true`)
+	assertNotContains(t, readFile(t, path), "### T-1")
+
+	if _, stderr, code := runCLI(t, dir, "set", "T-1", "other=1", "--if-match", hashOf(t, stdout)); code != exitOK {
+		t.Fatalf("next write with the returned hash: %d %s", code, stderr)
+	}
+}
+
+func TestWriteOutputNamesTheArchiveForAnAutoArchivedCard(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "BOARD.md")
+	runCLI(t, dir, "init", "P")
+	writeFile(t, path, strings.Replace(readFile(t, path), "columns:", "archive: {mode: auto, after_days: 0}\ncolumns:", 1))
+
+	stdout, _, _ := runCLI(t, dir, "add", "Straight to done", "--column", "Done")
+	assertEq(t, stdout, "Created T-1 in the archive\n")
+
+	runCLI(t, dir, "add", "Finish me")
+	stdout, _, _ = runCLI(t, dir, "done", "T-2")
+	assertEq(t, stdout, "Moved T-2 to the archive\n")
+
+	runCLI(t, dir, "add", "Move me")
+	stdout, _, _ = runCLI(t, dir, "move", "T-3", "Done")
+	assertEq(t, stdout, "Moved T-3 to the archive\n")
+
+	stdout, _, _ = runCLI(t, dir, "restore", "T-3", "--column", "Todo")
+	assertEq(t, stdout, "Restored T-3 to Todo\n")
+}

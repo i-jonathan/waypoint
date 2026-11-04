@@ -77,6 +77,15 @@ func splitList(s string) []domain.CardID {
 	return ids
 }
 
+// place says where a card just written now is. Auto-archive can move it out of
+// its column in the same write, and an archived card has no column.
+func place(cv app.CardView) string {
+	if cv.Archived {
+		return "the archive"
+	}
+	return cv.Column
+}
+
 // oneID checks that exactly one card ID was given.
 func oneID(pos []string) (domain.CardID, error) {
 	if len(pos) != 1 {
@@ -246,7 +255,7 @@ func (r *runner) cmdAdd(args []string) int {
 	if err != nil {
 		return r.fail(err)
 	}
-	return r.wrote(svc, cv, fmt.Sprintf("Created %s in %s", cv.ID, cv.Column))
+	return r.wrote(svc, cv, fmt.Sprintf("Created %s in %s", cv.ID, place(cv)))
 }
 
 func (r *runner) cmdMove(args []string) int {
@@ -287,7 +296,7 @@ func (r *runner) cmdMove(args []string) int {
 	if err != nil {
 		return r.fail(err)
 	}
-	return r.wrote(svc, cv, fmt.Sprintf("Moved %s to %s", cv.ID, cv.Column))
+	return r.wrote(svc, cv, fmt.Sprintf("Moved %s to %s", cv.ID, place(cv)))
 }
 
 func (r *runner) cmdSet(args []string) int {
@@ -399,7 +408,7 @@ func (r *runner) cmdDone(args []string) int {
 	if err != nil {
 		return r.fail(err)
 	}
-	return r.wrote(svc, cv, fmt.Sprintf("Moved %s to %s", cv.ID, cv.Column))
+	return r.wrote(svc, cv, fmt.Sprintf("Moved %s to %s", cv.ID, place(cv)))
 }
 
 func (r *runner) cmdArchive(args []string) int {
@@ -464,7 +473,7 @@ func (r *runner) cmdRestore(args []string) int {
 	if err != nil {
 		return r.fail(err)
 	}
-	return r.wrote(svc, cv, fmt.Sprintf("Restored %s to %s", cv.ID, cv.Column))
+	return r.wrote(svc, cv, fmt.Sprintf("Restored %s to %s", cv.ID, place(cv)))
 }
 
 func (r *runner) cmdRm(args []string) int {

@@ -242,7 +242,7 @@ func TestWriteReturnsCardArchivedByThatWrite(t *testing.T) {
 	equal(t, v.Archived, true)
 	equal(t, v.Next, false)
 	equal(t, len(v.Blockers), 0)
-	equal(t, v.Column, "Done")
+	equal(t, v.Column, "") // as the archive file holds it, so the hash matches
 
 	v, err = e.svc.Restore(context.Background(), a.ID, "Todo")
 	noErr(t, err)
@@ -643,4 +643,18 @@ func TestReadDoesNotResaveWhenAnotherReaderAssignedTheIDs(t *testing.T) {
 	if repo.saves != 0 {
 		t.Fatalf("%d saves after the other reader already saved", repo.saves)
 	}
+}
+
+func TestWriteReturnsTheCardAsTheFileHoldsIt(t *testing.T) {
+	e := newEnv(t)
+	a := e.create("A", "")
+	body := "# Heading\n\ntext\n"
+
+	v, err := e.svc.UpdateCard(context.Background(), a.ID, domain.CardPatch{Body: &body}, "")
+	noErr(t, err)
+
+	equal(t, v.Body, "#### Heading\n\ntext")
+	got, err := e.svc.Get(context.Background(), a.ID)
+	noErr(t, err)
+	equal(t, v.Hash, got.Hash)
 }

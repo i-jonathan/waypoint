@@ -102,8 +102,10 @@ func (v viewer) find(id domain.CardID) (CardView, error) {
 // apply runs one operation under the board's lock: load fresh state, run fn,
 // auto-archive when due, save. Nothing is saved if Load or fn fails, or if
 // nothing changed and Load assigned no ids, so a no-op leaves a hand-kept file
-// exactly as it is. It returns the resulting board. An unlock failure is
-// reported only when nothing else failed.
+// exactly as it is. It returns the board as the file now holds it: a save can
+// normalise what fn wrote, and every view and hash a caller gets must match
+// the file, so after saving it loads again while still holding the lock. An
+// unlock failure is reported only when nothing else failed.
 func (s *Service) apply(ctx context.Context, fn func(*domain.Board) error) (b *domain.Board, err error) {
 	unlock, err := s.repo.Lock(ctx)
 	if err != nil {
@@ -134,6 +136,10 @@ func (s *Service) apply(ctx context.Context, fn func(*domain.Board) error) (b *d
 	}
 	if err = s.repo.Save(ctx, b); err != nil {
 		return nil, err
+	}
+	b, _, err = s.repo.Load(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("the change was saved, but reading the board back failed: %w", err)
 	}
 	return b, nil
 }
