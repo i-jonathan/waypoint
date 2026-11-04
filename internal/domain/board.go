@@ -60,7 +60,11 @@ type ArchiveSettings struct {
 // Appearance holds per-board display overrides. An empty value inherits the
 // global setting.
 type Appearance struct {
-	Theme, Accent, Density, Swimlane, Textures string
+	Theme    string `yaml:"theme,omitempty"`
+	Accent   string `yaml:"accent,omitempty"`
+	Density  string `yaml:"density,omitempty"`
+	Swimlane string `yaml:"swimlane,omitempty"`
+	Textures string `yaml:"textures,omitempty"`
 }
 
 // Settings is the board configuration.
