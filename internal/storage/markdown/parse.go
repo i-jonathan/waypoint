@@ -274,9 +274,11 @@ func scanCards(lines []string, base int, opts scanOptions) ([]rawCard, []string,
 			seen[card.ID] = base + i + 1
 		}
 
-		// Fields: after any blank lines, consecutive "- key: value" lines.
+		// Fields: after at most one blank line, consecutive "- key: value"
+		// lines. A second blank line means the card has no fields, which is how
+		// a body that starts with a field-like line is kept out of the fields.
 		j := i + 1
-		for j < len(lines) && strings.TrimSpace(lines[j]) == "" {
+		if j < len(lines) && strings.TrimSpace(lines[j]) == "" {
 			j++
 		}
 		fieldsSeen := map[string]bool{}

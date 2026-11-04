@@ -461,3 +461,20 @@ func TestParseNoNoticeForOrdinaryHeadingInCodeBlock(t *testing.T) {
 		}
 	}
 }
+
+func TestSecondBlankLineEndsFieldBlock(t *testing.T) {
+	const head = "---\nwaypoint: 1\nname: x\nprefix: T\nnext_id: 5\n---\n\n## Todo\n\n"
+	// One blank line may separate the heading from its fields.
+	b, err := Parse([]byte(head + "### T-1 One\n\n- group: A\n\nbody\n"))
+	assertNoErr(t, err)
+	assertEqual(t, b.Cards[0].Group, "A")
+	assertEqual(t, b.Cards[0].Body, "body")
+
+	// A second blank line means the card has no fields, so a list item that
+	// looks like a field is body text.
+	b, err = Parse([]byte(head + "### T-1 One\n\n\n- group: A\n- note: b\n"))
+	assertNoErr(t, err)
+	assertEqual(t, b.Cards[0].Group, "")
+	assertEqual(t, b.Cards[0].Extra, []domain.Field(nil))
+	assertEqual(t, b.Cards[0].Body, "- group: A\n- note: b")
+}
