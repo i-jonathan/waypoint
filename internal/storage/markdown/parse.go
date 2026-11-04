@@ -64,15 +64,27 @@ func ParseAssigned(data []byte) (*domain.Board, []domain.CardID, error) {
 	for i, c := range settings.Columns {
 		columnIndex[c.Name] = i
 	}
-	raw, err := scanCards(lines[closing+1:], closing+1, func(name string) error {
-		if _, ok := columnIndex[name]; !ok {
-			return fmt.Errorf("unknown column %q", name)
-		}
-		return nil
+	cardLike := regexp.MustCompile(`^### ` + regexp.QuoteMeta(settings.Prefix) + `-\d+[ \t]+\S`)
+	raw, notices, err := scanCards(lines[closing+1:], closing+1, scanOptions{
+		section: func(name string) error {
+			if _, ok := columnIndex[name]; !ok {
+				return fmt.Errorf("unknown column %q", name)
+			}
+			return nil
+		},
+		looksLikeHeading: func(line string) bool {
+			if cardLike.MatchString(line) {
+				return true
+			}
+			name, ok := strings.CutPrefix(line, "## ")
+			_, known := columnIndex[strings.TrimSpace(name)]
+			return ok && known
+		},
 	})
 	if err != nil {
 		return nil, nil, err
 	}
+	b.Notices = notices
 
 	// An explicit id at or above next_id moves next_id past it, so an id is
 	// never reused. This happens before id-less cards are numbered.
@@ -118,11 +130,14 @@ func ParseAssigned(data []byte) (*domain.Board, []domain.CardID, error) {
 // archive never assigns ids.
 func ParseArchive(data []byte, _ domain.Settings) ([]domain.Card, error) {
 	lines := splitLines(data)
-	raw, err := scanCards(lines, 0, func(name string) error {
-		if _, err := time.Parse("2006-01", name); err != nil || len(name) != len("2006-01") {
-			return fmt.Errorf("archive section %q must be YYYY-MM", name)
-		}
-		return nil
+	raw, _, err := scanCards(lines, 0, scanOptions{
+		title: "# Archive",
+		section: func(name string) error {
+			if _, err := time.Parse("2006-01", name); err != nil || len(name) != len("2006-01") {
+				return fmt.Errorf("archive section %q must be YYYY-MM", name)
+			}
+			return nil
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -155,33 +170,52 @@ type rawCard struct {
 	hasID bool
 }
 
+// scanOptions tunes scanCards for the board and archive files.
+type scanOptions struct {
+	// section validates the name of each ## heading; its error is reported on
+	// that line.
+	section func(name string) error
+	// title is the one non-blank line allowed outside a card ("" for none).
+	title string
+	// looksLikeHeading, when set, picks lines inside a code block that read
+	// like a column or card heading; each one yields a notice.
+	looksLikeHeading func(line string) bool
+}
+
 // scanCards reads the ## sections and ### cards of lines. base is the number
-// of file lines before lines[0], for error positions. section validates the
-// name of each ## heading; its error is reported on that line.
-func scanCards(lines []string, base int, section func(name string) error) ([]rawCard, error) {
+// of file lines before lines[0], for error positions. Any non-blank line
+// outside a card is an error, because writing the file back would drop it.
+// The notices are findings that do not block parsing.
+func scanCards(lines []string, base int, opts scanOptions) ([]rawCard, []string, error) {
 	fail := func(i int, format string, args ...any) error {
 		return &ParseError{Line: base + i + 1, Msg: fmt.Sprintf(format, args...)}
 	}
 
-	// Mark which lines are inside fenced code. The extra last line cannot
-	// close a fence, so it is inside one exactly when a fence is never closed.
-	inFence := make([]bool, 0, len(lines)+1)
-	domain.ScanLines(strings.Join(lines, "\n")+"\nx", func(_ int, _ string, f bool) {
-		inFence = append(inFence, f)
+	// opener[i] is the line that opened the code fence line i is in, or -1.
+	// The extra last line cannot close a fence, so it is inside one exactly
+	// when a fence is never closed.
+	opener := make([]int, 0, len(lines)+1)
+	domain.ScanFences(strings.Join(lines, "\n")+"\nx", func(_ int, _ string, o int) {
+		opener = append(opener, o)
 	})
-	if unclosed := inFence[len(lines)]; unclosed {
-		start := len(lines) - 1
-		for start > 0 && inFence[start-1] {
-			start--
-		}
+	inFence := func(i int) bool { return opener[i] >= 0 }
+	if start := opener[len(lines)]; start >= 0 {
 		for i := start; i < len(lines); i++ {
 			if headingRE.MatchString(lines[i]) {
-				return nil, fail(i, "heading is inside a code fence that is never closed (opened on line %d)", base+start+1)
+				return nil, nil, fail(i, "heading is inside a code fence that is never closed (opened on line %d)", base+start+1)
+			}
+		}
+	}
+	var notices []string
+	if opts.looksLikeHeading != nil {
+		for i, line := range lines {
+			if inFence(i) && opts.looksLikeHeading(line) {
+				notices = append(notices, fmt.Sprintf("line %d: this looks like a card heading inside a code block opened on line %d; if the block should have ended earlier, close it", base+i+1, base+opener[i]+1))
 			}
 		}
 	}
 	heading := func(i int) (marks, text string, ok bool) {
-		if inFence[i] {
+		if inFence(i) {
 			return "", "", false
 		}
 		m := headingRE.FindStringSubmatch(lines[i])
@@ -200,12 +234,15 @@ func scanCards(lines []string, base int, section func(name string) error) ([]raw
 	for i := 0; i < len(lines); {
 		marks, text, ok := heading(i)
 		if !ok {
-			i++ // text before the first heading, or between ## and the first ###
+			if strings.TrimSpace(lines[i]) != "" && (opts.title == "" || strings.TrimRight(lines[i], " \t") != opts.title) {
+				return nil, nil, fail(i, "text outside a card would be lost: move it into a card or delete it")
+			}
+			i++
 			continue
 		}
 		if marks == "##" {
-			if err := section(text); err != nil {
-				return nil, fail(i, "%v", err)
+			if err := opts.section(text); err != nil {
+				return nil, nil, fail(i, "%v", err)
 			}
 			current, inColumn = text, true
 			i++
@@ -214,7 +251,7 @@ func scanCards(lines []string, base int, section func(name string) error) ([]raw
 
 		// A ### card heading.
 		if !inColumn {
-			return nil, fail(i, "card %q appears before any ## column heading", text)
+			return nil, nil, fail(i, "card %q appears before any ## column heading", text)
 		}
 		card := domain.Card{Column: current}
 		first, rest := text, ""
@@ -227,12 +264,12 @@ func scanCards(lines []string, base int, section func(name string) error) ([]raw
 			card.ID, title = domain.CardID(first), strings.TrimSpace(rest)
 		}
 		if title = strings.TrimSpace(title); title == "" {
-			return nil, fail(i, "card heading has no title")
+			return nil, nil, fail(i, "card heading has no title")
 		}
 		card.Title = title
 		if hasID {
 			if line, dup := seen[card.ID]; dup {
-				return nil, fail(i, "duplicate card id %s (first on line %d)", card.ID, line)
+				return nil, nil, fail(i, "duplicate card id %s (first on line %d)", card.ID, line)
 			}
 			seen[card.ID] = base + i + 1
 		}
@@ -250,11 +287,11 @@ func scanCards(lines []string, base int, section func(name string) error) ([]raw
 			}
 			key, value := m[1], strings.TrimRight(m[2], " \t")
 			if fieldsSeen[key] {
-				return nil, fail(j, "duplicate field %q", key)
+				return nil, nil, fail(j, "duplicate field %q", key)
 			}
 			fieldsSeen[key] = true
 			if err := setField(&card, key, value); err != nil {
-				return nil, fail(j, "%v", err)
+				return nil, nil, fail(j, "%v", err)
 			}
 		}
 
@@ -270,7 +307,7 @@ func scanCards(lines []string, base int, section func(name string) error) ([]raw
 		cards = append(cards, rawCard{card: card, line: base + i + 1, hasID: hasID})
 		i = end
 	}
-	return cards, nil
+	return cards, notices, nil
 }
 
 // isFieldKey reports whether key can start a field line: a built-in field or a

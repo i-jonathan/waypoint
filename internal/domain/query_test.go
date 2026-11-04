@@ -102,6 +102,15 @@ func TestWarningsOrder(t *testing.T) {
 	})
 }
 
+func TestWarningsAppendsNotices(t *testing.T) {
+	b := NewBoard("x", "T")
+	b.Settings.Groups = []Group{{Name: "Web"}}
+	mustAdd(t, b, NewCard{Title: "A"})
+	b.Cards[0].Group = "Nope"
+	b.Notices = []string{"line 9: look here"}
+	assertEqual(t, b.Warnings(), []string{`T-1 has unknown group "Nope"`, "line 9: look here"})
+}
+
 func TestWarningsUnknownSoftData(t *testing.T) {
 	b := NewBoard("x", "T")
 	b.Settings.Groups = []Group{{Name: "Web"}}

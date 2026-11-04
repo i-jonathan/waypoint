@@ -50,19 +50,29 @@ func fenceRun(line string) (char byte, n int, rest string, ok bool) {
 // closer must be at least as long as the opener and carry no text after it. An
 // unclosed fence runs to the end of the body.
 func ScanLines(body string, fn func(i int, line string, inFence bool)) {
+	ScanFences(body, func(i int, line string, opener int) { fn(i, line, opener >= 0) })
+}
+
+// ScanFences is ScanLines that also says which line opened the fence a line
+// belongs to: opener is that line's 0-based index (for the delimiter lines
+// themselves too), or -1 outside a fence. Two fences back to back have
+// different openers.
+func ScanFences(body string, fn func(i int, line string, opener int)) {
 	var open byte // fence character, or 0 outside a fence
-	openLen := 0
+	openLen, openAt := 0, -1
 	for i, line := range strings.Split(body, "\n") {
 		char, n, rest, ok := fenceRun(line)
 		switch {
 		case open == 0 && ok && !(char == '`' && strings.Contains(rest, "`")):
-			open, openLen = char, n
-			fn(i, line, true)
+			open, openLen, openAt = char, n, i
+			fn(i, line, openAt)
 		case open != 0 && ok && char == open && n >= openLen && strings.TrimSpace(rest) == "":
 			open = 0
-			fn(i, line, true)
+			fn(i, line, openAt)
+		case open != 0:
+			fn(i, line, openAt)
 		default:
-			fn(i, line, open != 0)
+			fn(i, line, -1)
 		}
 	}
 }

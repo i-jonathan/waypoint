@@ -105,3 +105,10 @@ func TestToggleCheckOutOfRange(t *testing.T) {
 	}
 	assertTrue(t, errors.Is(b.ToggleCheck("T-99", 1), ErrNotFound))
 }
+
+func TestScanFencesOpeners(t *testing.T) {
+	body := "a\n```\nb\n```\n```\nc\n```\nd\n~~~\ne"
+	var got []int
+	ScanFences(body, func(_ int, _ string, opener int) { got = append(got, opener) })
+	assertEqual(t, got, []int{-1, 1, 1, 1, 4, 4, 4, -1, 8, 8})
+}

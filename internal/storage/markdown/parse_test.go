@@ -377,3 +377,87 @@ func TestParseArchiveErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestParseTextOutsideCards(t *testing.T) {
+	const msg = "text outside a card would be lost: move it into a card or delete it"
+	cases := map[string]struct{ src, at string }{
+		"h1 before first column": {board("# My board\n\n## Todo\n\n### T-1 One\n"), "# My board"},
+		"intro text":             {board("Some intro.\n\n## Todo\n"), "Some intro."},
+		"note under column":      {board("## Todo\n\nA note.\n\n### T-1 One\n"), "A note."},
+		"note in empty column":   {board("## Todo\n\n### T-1 One\n\n## Done\n\nTrailing note\n"), "Trailing note"},
+		"fence outside card":     {board("## Todo\n\n```\ncode\n```\n\n### T-1 One\n"), "```"},
+		"heading ends card body": {board("## Todo\n\n### T-1 One\n\nbody\n\n## Done\n\nmore text\n"), "more text"},
+	}
+	for name, c := range cases {
+		_, err := Parse([]byte(c.src))
+		var pe *ParseError
+		if !errors.As(err, &pe) {
+			t.Errorf("%s: got %v, want ParseError", name, err)
+			continue
+		}
+		if want := lineOf(t, c.src, c.at); pe.Line != want || pe.Msg != msg {
+			t.Errorf("%s: got line %d %q, want line %d", name, pe.Line, pe.Msg, want)
+		}
+	}
+	// Blank lines are fine, and so is a board with no cards.
+	_, err := Parse([]byte(board("\n\n## Todo\n\n   \n\n## Done\n\n")))
+	assertNoErr(t, err)
+}
+
+func TestParseArchiveTextOutsideCards(t *testing.T) {
+	s := domain.NewBoard("x", "T").Settings
+	for name, src := range map[string]string{
+		"other title":   "# History\n\n## 2026-10\n",
+		"intro":         "# Archive\n\nOld stuff.\n\n## 2026-10\n",
+		"note in month": "# Archive\n\n## 2026-10\n\nA note.\n\n### T-9 Old\n- done: 2026-10-01\n",
+	} {
+		_, err := ParseArchive([]byte(src), s)
+		var pe *ParseError
+		if !errors.As(err, &pe) || !strings.HasPrefix(pe.Msg, "text outside a card") {
+			t.Errorf("%s: got %v", name, err)
+		}
+	}
+	cards, err := ParseArchive([]byte("\n# Archive\n\n## 2026-10\n\n### T-9 Old\n- done: 2026-10-01\n"), s)
+	assertNoErr(t, err)
+	assertEqual(t, len(cards), 1)
+}
+
+func TestParseNoticeForCardHeadingInCodeBlock(t *testing.T) {
+	// T-1 has a stray fence; T-2 and T-3 are swallowed into its body until the
+	// lone fence line ends the block, so nothing is unclosed and nothing errors.
+	src := board("## Todo\n\n### T-1 One\n\n```\nstray\n\n### T-2 Two\n\n### T-3 Three\n\n```\n\n## Done\n\n### T-4 Four\n")
+	b, err := Parse([]byte(src))
+	assertNoErr(t, err)
+	assertEqual(t, ids(b.Cards), []domain.CardID{"T-1", "T-4"})
+	opened := lineOf(t, src, "```")
+	assertEqual(t, b.Notices, []string{
+		"line " + strconv.Itoa(lineOf(t, src, "T-2 Two")) + ": this looks like a card heading inside a code block opened on line " + strconv.Itoa(opened) + "; if the block should have ended earlier, close it",
+		"line " + strconv.Itoa(lineOf(t, src, "T-3 Three")) + ": this looks like a card heading inside a code block opened on line " + strconv.Itoa(opened) + "; if the block should have ended earlier, close it",
+	})
+	assertEqual(t, b.Warnings(), b.Notices)
+
+	// The same holds with CRLF line endings.
+	b2, err := Parse([]byte(strings.ReplaceAll(src, "\n", "\r\n")))
+	assertNoErr(t, err)
+	assertEqual(t, b2, b)
+}
+
+func TestParseNoticeForColumnHeadingInCodeBlock(t *testing.T) {
+	src := board("## Todo\n\n### T-1 One\n\n```md\n## Done\n## Elsewhere\n```\n")
+	b, err := Parse([]byte(src))
+	assertNoErr(t, err)
+	assertEqual(t, len(b.Notices), 1)
+	if !strings.HasPrefix(b.Notices[0], "line "+strconv.Itoa(lineOf(t, src, "## Done"))+": ") {
+		t.Fatalf("notice %q", b.Notices[0])
+	}
+}
+
+func TestParseNoNoticeForOrdinaryHeadingInCodeBlock(t *testing.T) {
+	for _, line := range []string{"### not a card", "### X-1 other prefix", "### T-x not digits", "### T-3", "#### T-3 deeper", "  ### T-3 indented", "## Archive"} {
+		b, err := Parse([]byte(board("## Todo\n\n### T-1 One\n\n```\n" + line + "\n```\n")))
+		assertNoErr(t, err)
+		if len(b.Notices) != 0 {
+			t.Errorf("%q: unexpected notices %v", line, b.Notices)
+		}
+	}
+}

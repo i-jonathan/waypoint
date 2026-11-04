@@ -55,7 +55,8 @@ func (b *Board) NextUp() (Card, bool) {
 
 // Warnings lists board problems that do not block saving: columns over their
 // WIP limit (in column order), then, for each card in rank order, a group or
-// priority that the settings do not define (as a hand-edited file can hold).
+// priority that the settings do not define (as a hand-edited file can hold),
+// then the board's Notices.
 func (b *Board) Warnings() []string {
 	out := []string{}
 	for _, col := range b.Settings.Columns {
@@ -71,7 +72,7 @@ func (b *Board) Warnings() []string {
 			out = append(out, fmt.Sprintf("%s has unknown priority %q", c.ID, c.Priority))
 		}
 	}
-	return out
+	return append(out, b.Notices...)
 }
 
 func (b *Board) hasGroup(name string) bool {

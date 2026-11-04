@@ -79,6 +79,10 @@ type Board struct {
 	Settings Settings
 	Cards    []Card
 	Archived []Card
+	// Notices are findings from reading the board file, such as a card
+	// heading that sits inside a code block. They are not persisted, and
+	// Warnings reports them after its own.
+	Notices []string
 }
 
 var prefixRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
