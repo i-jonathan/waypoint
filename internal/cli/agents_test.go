@@ -71,7 +71,7 @@ func TestHelpWithoutTopicPrintsUsage(t *testing.T) {
 }
 
 func TestUsageListsAgentsAndHelpFormat(t *testing.T) {
-	stdout, _, _ := runCLI(t, t.TempDir())
+	stdout, _, _ := runCLI(t, t.TempDir(), "--help")
 	assertContains(t, stdout, "agents")
 	assertContains(t, stdout, "help format")
 }

@@ -31,6 +31,7 @@ type Env struct {
 	Getenv         func(string) string
 	Cwd            string
 	Now            app.Clock
+	OpenURL        func(url string) error // opens a page in the browser; nil means never
 }
 
 // Exit codes returned by Run.
@@ -43,8 +44,11 @@ const (
 const usageText = `Waypoint, a local kanban tracker
 
 Usage: waypoint <command> [flags]
+       waypoint            Start the web UI (same as "waypoint serve")
 
 Commands:
+  serve                Start the web UI (--port N, --no-open)
+  trust                Trust the local certificate so the UI can use HTTPS and HTTP/2
   init [NAME]          Register ./BOARD.md in this directory as a project
   project add NAME     Add a project (--path FILE, --prefix T)
   project ls           List projects
@@ -81,8 +85,7 @@ type runner struct {
 func Run(ctx context.Context, args []string, env Env) int {
 	r := &runner{ctx: ctx, env: env}
 	if len(args) == 0 {
-		fmt.Fprint(env.Stdout, usageText)
-		return exitOK
+		return r.cmdServe(nil)
 	}
 	switch args[0] {
 	case "-h", "--help", "-help":
@@ -90,6 +93,10 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return exitOK
 	case "help":
 		return r.cmdHelp(args[1:])
+	case "serve":
+		return r.cmdServe(args[1:])
+	case "trust":
+		return r.cmdTrust(args[1:])
 	case "agents":
 		return r.cmdAgents(args[1:])
 	case "init":

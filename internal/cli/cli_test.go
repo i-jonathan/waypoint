@@ -18,17 +18,19 @@ func newTestRunner(t *testing.T, cwd string, extra map[string]string) *runner {
 	return &runner{ctx: context.Background(), env: env}
 }
 
-func TestNoArgsPrintsUsageAndExitsZero(t *testing.T) {
-	stdout, stderr, code := runCLI(t, t.TempDir())
+func TestHelpPrintsUsageListingServeAndTrust(t *testing.T) {
+	stdout, stderr, code := runCLI(t, t.TempDir(), "--help")
 	assertEq(t, code, 0)
 	assertEq(t, stderr, "")
 	assertContains(t, stdout, "Usage: waypoint")
 	assertContains(t, stdout, "project add")
 	assertContains(t, stdout, "init")
+	assertContains(t, stdout, "serve")
+	assertContains(t, stdout, "trust")
 }
 
 func TestHelpFlagsPrintUsage(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}, {"project", "--help"}, {"project", "add", "--help"}, {"init", "-h"}} {
+	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}, {"serve", "--help"}, {"trust", "-h"}, {"project", "--help"}, {"project", "add", "--help"}, {"init", "-h"}} {
 		stdout, stderr, code := runCLI(t, t.TempDir(), args...)
 		assertEq(t, code, 0)
 		assertEq(t, stderr, "")
@@ -65,7 +67,7 @@ func TestNoDashesInOutput(t *testing.T) {
 	dir := t.TempDir()
 	var all strings.Builder
 	for _, args := range [][]string{
-		{}, {"--help"}, {"project", "--help"}, {"project", "add", "--help"}, {"project", "ls", "--help"},
+		{"serve", "--help"}, {"trust", "--help"}, {"--help"}, {"project", "--help"}, {"project", "add", "--help"}, {"project", "ls", "--help"},
 		{"project", "rm", "--help"}, {"init", "--help"}, {"bogus"}, {"project", "ls"}, {"project", "rm", "x"},
 		{"project", "add", "!!!"}, {"project", "add", "A", "--bogus"},
 	} {

@@ -23,7 +23,7 @@ type Deps struct {
 	Now        app.Clock           // nil means time.Now
 	Broker     *Broker             // nil means a broker of its own
 	Port       int                 // the port the server listens on, for the Host check
-	UI         fs.FS               // the built web UI; unused until the static handler exists
+	UI         fs.FS               // the built web UI, served for every path outside /api/; nil serves none
 	Logger     *slog.Logger        // nil means slog.Default
 }
 
@@ -79,6 +79,9 @@ func Handler(d Deps) http.Handler {
 	handle("/api/", func(http.ResponseWriter, *http.Request) error {
 		return fmt.Errorf("%w: no such endpoint", domain.ErrNotFound)
 	})
+	if d.UI != nil {
+		mux.Handle("/", UI(d.UI))
+	}
 	return a.guard(mux)
 }
 

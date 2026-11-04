@@ -27,12 +27,21 @@ var pingInterval = 25 * time.Second
 
 // Broker fans events out to subscribers.
 type Broker struct {
-	mu   sync.Mutex
-	subs map[chan Event]struct{}
+	mu        sync.Mutex
+	subs      map[chan Event]struct{}
+	done      chan struct{} // closed by Close
+	closeOnce sync.Once
 }
 
 func NewBroker() *Broker {
-	return &Broker{subs: map[chan Event]struct{}{}}
+	return &Broker{subs: map[chan Event]struct{}{}, done: make(chan struct{})}
+}
+
+// Close ends every open stream, and every later ServeSSE returns at once. The
+// server calls it before a graceful shutdown, which would otherwise wait for
+// open browser tabs. It is safe to call more than once.
+func (b *Broker) Close() {
+	b.closeOnce.Do(func() { close(b.done) })
 }
 
 // Publish hands e to every subscriber. It never blocks: a subscriber whose
@@ -78,6 +87,12 @@ func (b *Broker) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	select {
+	case <-b.done:
+		http.Error(w, "server is shutting down", http.StatusServiceUnavailable)
+		return
+	default:
+	}
 	ch, cancel := b.Subscribe()
 	defer cancel()
 
@@ -96,6 +111,8 @@ func (b *Broker) ServeSSE(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-b.done:
 			return
 		case e := <-ch:
 			data, err := json.Marshal(e)

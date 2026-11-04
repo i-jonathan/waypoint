@@ -479,7 +479,7 @@ func TestUsageListsCardCommands(t *testing.T) {
 	var out bytes.Buffer
 	env, _, _ := testEnv(t, t.TempDir(), nil)
 	env.Stdout = &out
-	Run(context.Background(), nil, env)
+	Run(context.Background(), []string{"--help"}, env)
 	for _, c := range []string{"ls ", "show ", "add ", "move ", "set ", "check ", "done ", "archive", "restore ", "rm "} {
 		assertContains(t, out.String(), "\n  "+c)
 	}
