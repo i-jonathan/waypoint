@@ -525,3 +525,44 @@ func TestArchiveKeepsAnIDOfAnyPrefix(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestDatesRoundTripThroughFormatAndParse(t *testing.T) {
+	cases := []struct{ written, stored string }{
+		{"2026-10-26", "2026-10-26"},
+		{"2026-11-04T23:52:10Z", "2026-11-04T23:52:10Z"},
+		{"2026-11-04T10:00:00+01:00", "2026-11-04T09:00:00Z"},
+		{"2026-11-04T10:00:00-05:30", "2026-11-04T15:30:00Z"},
+		{"2026-11-04T23:52:10.75Z", "2026-11-04T23:52:10Z"},
+		{"2026-11-04T00:00:00Z", "2026-11-04"},
+		{"2026-11-04T01:00:00+01:00", "2026-11-04"},
+	}
+	for _, c := range cases {
+		t.Run(c.written, func(t *testing.T) {
+			b, err := Parse([]byte(board("## Todo\n\n### T-1 Card\n\n- created: " + c.written + "\n")))
+			assertNoErr(t, err)
+
+			once := Format(b)
+			if want := "- created: " + c.stored + "\n"; !strings.Contains(string(once), want) {
+				t.Fatalf("%q not in\n%s", want, once)
+			}
+			again, err := Parse(once)
+			assertNoErr(t, err)
+			assertEqual(t, string(Format(again)), string(once))
+		})
+	}
+}
+
+func TestParseRejectsABadDateOnItsLine(t *testing.T) {
+	for _, value := range []string{"2026-11-04T25:00:00Z", "2026-11-04 10:00", "2026-11-04T10:00:00", "soon"} {
+		src := board("## Todo\n\n### T-1 Card\n\n- created: " + value + "\n")
+		assertEqual(t, parseErr(t, src).Line, lineOf(t, src, "- created:"))
+	}
+}
+
+func TestArchiveSectionIsTheMonthOfTheStoredUTCValue(t *testing.T) {
+	done := time.Date(2026, 10, 31, 23, 30, 0, 0, time.FixedZone("UTC-5", -5*3600)) // 2026-11-01 04:30 UTC
+	got := string(FormatArchive([]domain.Card{{ID: "T-1", Title: "A", Done: domain.Stamp(done)}}))
+	if !strings.Contains(got, "## 2026-11\n") || !strings.Contains(got, "- done: 2026-11-01T04:30:00Z\n") {
+		t.Fatalf("got\n%s", got)
+	}
+}

@@ -408,7 +408,9 @@ func setField(c *domain.Card, key, value string) error {
 	return nil
 }
 
-// parseDate reads YYYY-MM-DD. An empty value means unset.
+// parseDate reads YYYY-MM-DD or an RFC 3339 timestamp with any offset. It
+// returns the value as stored, in UTC and whole seconds. An empty value means
+// unset.
 func parseDate(key, value string) (time.Time, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -416,9 +418,12 @@ func parseDate(key, value string) (time.Time, error) {
 	}
 	t, err := time.Parse(dateLayout, value)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("invalid %s date %q (want YYYY-MM-DD)", key, value)
+		t, err = time.Parse(time.RFC3339, value)
 	}
-	return t, nil
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid %s date %q (want YYYY-MM-DD or a timestamp such as 2026-11-04T23:52:10Z)", key, value)
+	}
+	return domain.Stamp(t), nil
 }
 
 // trimBlankLines joins lines with "\n", dropping blank lines at both ends but

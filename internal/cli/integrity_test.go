@@ -152,7 +152,7 @@ func TestCrashResidueStillResolvesWhenColumnAndDoneDiffer(t *testing.T) {
 	dir, board, archive := archivedBoard(t)
 	// What a crash leaves behind: the same card in both files, but on the
 	// board it is in another column and has no done date.
-	residue := "## Todo\n\n### T-1 Keep me\n\n- created: 2026-11-03\n\nMonths of notes.\n"
+	residue := "## Todo\n\n### T-1 Keep me\n\n- created: 2026-11-03T12:00:00Z\n\nMonths of notes.\n"
 	writeFile(t, board, strings.Replace(readFile(t, board), "## Todo\n", residue, 1))
 
 	stdout, stderr, code := runCLI(t, dir, "ls")
@@ -401,33 +401,6 @@ func TestNoOpOnAReadOnlyBoardSucceeds(t *testing.T) {
 
 	if _, stderr, code := runCLI(t, dir, "archive"); code != exitOK {
 		t.Fatalf("archive: %d %s", code, stderr)
-	}
-}
-
-func TestCardDatesUseTheLocalDate(t *testing.T) {
-	cases := []struct {
-		name string
-		now  time.Time
-		want string
-	}{
-		{"evening west of UTC", time.Date(2026, 11, 3, 22, 0, 0, 0, time.FixedZone("UTC-5", -5*3600)), "2026-11-03"},
-		{"morning east of UTC", time.Date(2026, 11, 4, 1, 0, 0, 0, time.FixedZone("UTC+9", 9*3600)), "2026-11-04"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			dir := t.TempDir()
-			runCLI(t, dir, "init", "P")
-			env, _, errb := testEnv(t, dir, nil)
-			env.Now = func() time.Time { return c.now }
-
-			if code := Run(context.Background(), []string{"add", "Card", "--column", "Done"}, env); code != exitOK {
-				t.Fatalf("add: %d %s", code, errb)
-			}
-
-			board := readFile(t, filepath.Join(dir, "BOARD.md"))
-			assertContains(t, board, "- created: "+c.want+"\n")
-			assertContains(t, board, "- done: "+c.want+"\n")
-		})
 	}
 }
 
@@ -846,4 +819,124 @@ func TestRealCardsOrALoneTitleAreNotAWrongPrefix(t *testing.T) {
 			assertContains(t, readFile(t, path), " COVID-19 booster\n")
 		})
 	}
+}
+
+// runAt runs the CLI with the clock at now, in now's location.
+func runAt(t *testing.T, dir string, now time.Time, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	env, out, errb := testEnv(t, dir, nil)
+	env.Now = func() time.Time { return now }
+	code = Run(context.Background(), args, env)
+	return out.String(), errb.String(), code
+}
+
+var (
+	westOfUTC = time.FixedZone("UTC-5", -5*3600)
+	eastOfUTC = time.FixedZone("UTC+9", 9*3600)
+)
+
+func TestDatesAreStoredInUTCAndShownInLocalTime(t *testing.T) {
+	moment := time.Date(2026, 11, 4, 2, 30, 10, 700_000_000, time.UTC)
+	cases := map[string]struct {
+		zone *time.Location
+		want string
+	}{
+		"west of UTC, still the 3rd": {westOfUTC, "2026-11-03"},
+		"east of UTC, the 4th":       {eastOfUTC, "2026-11-04"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			now := moment.In(c.zone)
+			runCLI(t, dir, "init", "P")
+			if _, stderr, code := runAt(t, dir, now, "add", "Card", "--column", "Done"); code != exitOK {
+				t.Fatalf("add: %d %s", code, stderr)
+			}
+
+			board := readFile(t, filepath.Join(dir, "BOARD.md"))
+			assertContains(t, board, "- created: 2026-11-04T02:30:10Z\n")
+			assertContains(t, board, "- done: 2026-11-04T02:30:10Z\n")
+
+			stdout, _, _ := runAt(t, dir, now, "show", "T-1")
+			assertContains(t, stdout, "created: "+c.want+"\n")
+			assertContains(t, stdout, "done: "+c.want+"\n")
+
+			stdout, _, _ = runAt(t, dir, now, "show", "T-1", "--json")
+			assertContains(t, stdout, `"created":"2026-11-04T02:30:10Z"`)
+			assertContains(t, stdout, `"done":"2026-11-04T02:30:10Z"`)
+		})
+	}
+}
+
+func TestDateOnlyValuesRoundTripAndAreShownVerbatim(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "BOARD.md")
+	content := strings.Replace(boardFile, "## Done\n", "## Done\n\n### X-3 Finished\n\n- created: 2026-10-26\n- done: 2026-10-27\n", 1)
+	writeFile(t, path, strings.Replace(content, "next_id: 3", "next_id: 4", 1))
+	runCLI(t, dir, "init", "P")
+	now := time.Date(2026, 11, 3, 20, 0, 0, 0, westOfUTC)
+
+	if _, stderr, code := runAt(t, dir, now, "set", "X-1", "note=x"); code != exitOK {
+		t.Fatalf("set: %d %s", code, stderr)
+	}
+
+	board := readFile(t, path)
+	assertContains(t, board, "- created: 2026-10-26\n- done: 2026-10-27\n")
+	assertContains(t, board, "- created: 2026-11-01\n")
+
+	stdout, _, _ := runAt(t, dir, now, "show", "X-3")
+	assertContains(t, stdout, "created: 2026-10-26\n")
+	assertContains(t, stdout, "done: 2026-10-27\n")
+
+	stdout, _, _ = runAt(t, dir, now, "show", "X-3", "--json")
+	assertContains(t, stdout, `"created":"2026-10-26","done":"2026-10-27"`)
+	stdout, _, _ = runAt(t, dir, now, "show", "X-2", "--json")
+	assertContains(t, stdout, `"done":null`)
+}
+
+func TestHandWrittenOffsetIsNormalisedToUTC(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "BOARD.md")
+	writeFile(t, path, strings.Replace(boardFile, "- created: 2026-11-01\n", "- created: 2026-11-04T10:00:00+01:00\n", 1))
+	runCLI(t, dir, "init", "P")
+
+	if _, stderr, code := runCLI(t, dir, "set", "X-1", "note=x"); code != exitOK {
+		t.Fatalf("set: %d %s", code, stderr)
+	}
+
+	assertContains(t, readFile(t, path), "- created: 2026-11-04T09:00:00Z\n")
+}
+
+func TestBadTimestampIsAParseErrorOnItsLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "BOARD.md")
+	writeFile(t, path, boardFile)
+	runCLI(t, dir, "init", "P")
+	content := strings.Replace(boardFile, "- created: 2026-11-01\n", "- created: 2026-11-04T25:00:00Z\n", 1)
+	writeFile(t, path, content)
+	line := 1 + strings.Count(content[:strings.Index(content, "T25:00")], "\n")
+
+	stdout, _, code := runCLI(t, dir, "ls", "--json")
+
+	assertEq(t, code, exitError)
+	assertContains(t, stdout, `"code":"parse"`)
+	assertContains(t, stdout, fmt.Sprintf(`"line":%d`, line))
+	assertEq(t, readFile(t, path), content)
+}
+
+func TestArchiveMonthIsTheMonthOfTheStoredUTCValue(t *testing.T) {
+	dir := t.TempDir()
+	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "add", "Card")
+	// Still October here, but already November in UTC.
+	now := time.Date(2026, 10, 31, 22, 0, 0, 0, westOfUTC)
+
+	if _, stderr, code := runAt(t, dir, now, "done", "T-1"); code != exitOK {
+		t.Fatalf("done: %d %s", code, stderr)
+	}
+	runAt(t, dir, now, "archive")
+
+	archive := readFile(t, filepath.Join(dir, "BOARD.archive.md"))
+	assertContains(t, archive, "## 2026-11\n")
+	assertContains(t, archive, "- done: 2026-11-01T03:00:00Z\n")
 }

@@ -51,7 +51,7 @@ Every command accepts `--json` for scripts and `--project NAME` to act on a proj
 
 ## The board file
 
-`BOARD.md` is plain Markdown. The columns and settings sit in a short header, and each card is a heading with text under it. You can edit the file in any editor. A card heading without an id gets one the next time Waypoint reads the file. Run `waypoint help format` for the full description of the format.
+`BOARD.md` is plain Markdown. The columns and settings sit in a short header, and each card is a heading with text under it. You can edit the file in any editor. A card heading without an id gets one the next time Waypoint reads the file. Dates are stored as UTC timestamps such as `2026-11-04T23:52:10Z` and shown in your local time; a plain date such as `2026-10-26` also works and stays as written. Run `waypoint help format` for the full description of the format.
 
 While it writes, Waypoint keeps a small `BOARD.md.lock` file beside the board. It is safe to ignore and safe to delete when nothing is running; add `*.lock` to your `.gitignore` to keep it out of version control, or `BOARD.md.lock` if the repository tracks other lock files such as `Cargo.lock`.
 

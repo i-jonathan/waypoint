@@ -125,9 +125,9 @@ func (s *Service) apply(ctx context.Context, fn func(*domain.Board) error) (b *d
 	if err = fn(b); err != nil {
 		return nil, err
 	}
-	today := domain.Day(s.now())
-	if due := b.DueForArchive(today); len(due) > 0 { // empty unless mode is auto
-		if err = b.Archive(due, today); err != nil {
+	now := s.now()
+	if due := b.DueForArchive(now); len(due) > 0 { // empty unless mode is auto
+		if err = b.Archive(due, now); err != nil {
 			return nil, err
 		}
 	}
@@ -220,7 +220,7 @@ func (s *Service) change(ctx context.Context, id domain.CardID, fn func(*domain.
 func (s *Service) CreateCard(ctx context.Context, n domain.NewCard) (CardView, error) {
 	var id domain.CardID
 	b, err := s.apply(ctx, func(b *domain.Board) error {
-		c, err := b.AddCard(n, domain.Day(s.now()))
+		c, err := b.AddCard(n, s.now())
 		id = c.ID
 		return err
 	})
@@ -233,7 +233,7 @@ func (s *Service) CreateCard(ctx context.Context, n domain.NewCard) (CardView, e
 // MoveCard moves a card to a column and position.
 func (s *Service) MoveCard(ctx context.Context, id domain.CardID, to string, index int) (CardView, error) {
 	return s.change(ctx, id, func(b *domain.Board) error {
-		return b.MoveCard(id, to, index, domain.Day(s.now()))
+		return b.MoveCard(id, to, index, s.now())
 	})
 }
 
@@ -243,7 +243,7 @@ func (s *Service) Done(ctx context.Context, id domain.CardID) (CardView, error) 
 	return s.change(ctx, id, func(b *domain.Board) error {
 		for _, col := range b.Settings.Columns {
 			if col.Done {
-				return b.MoveCard(id, col.Name, -1, domain.Day(s.now()))
+				return b.MoveCard(id, col.Name, -1, s.now())
 			}
 		}
 		return fmt.Errorf("%w: board has no done column", domain.ErrInvalid)
@@ -285,7 +285,7 @@ func (s *Service) ArchiveDone(ctx context.Context) ([]domain.CardID, error) {
 			return fmt.Errorf("%w: archiving is off for this board", domain.ErrInvalid)
 		}
 		ids = append(ids, b.DoneCards()...)
-		return b.Archive(ids, domain.Day(s.now()))
+		return b.Archive(ids, s.now())
 	})
 	if err != nil {
 		return nil, err
@@ -297,6 +297,6 @@ func (s *Service) ArchiveDone(ctx context.Context) ([]domain.CardID, error) {
 // first column.
 func (s *Service) Restore(ctx context.Context, id domain.CardID, to string) (CardView, error) {
 	return s.change(ctx, id, func(b *domain.Board) error {
-		return b.Restore(id, to, domain.Day(s.now()))
+		return b.Restore(id, to, s.now())
 	})
 }

@@ -95,27 +95,8 @@ func TestFind(t *testing.T) {
 func TestDayTruncatesToUTCDate(t *testing.T) {
 	loc := time.FixedZone("UTC+5", 5*3600)
 	in := time.Date(2026, 11, 4, 2, 30, 0, 0, loc) // 2026-11-03 21:30 UTC
-	assertEqual(t, Day(in), time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC))
+	assertEqual(t, Day(in), time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC))
 	assertTrue(t, Day(time.Time{}).Year() == 1)
-}
-
-func TestDayIsTheDateInTheTimesOwnZone(t *testing.T) {
-	east := time.FixedZone("UTC+9", 9*3600)
-	west := time.FixedZone("UTC-5", -5*3600)
-	nov := func(d int) time.Time { return time.Date(2026, 11, d, 0, 0, 0, 0, time.UTC) }
-	cases := []struct {
-		name string
-		in   time.Time
-		want time.Time
-	}{
-		{"east, just before midnight", time.Date(2026, 11, 3, 23, 59, 59, 0, east), nov(3)},
-		{"east, just after midnight", time.Date(2026, 11, 4, 0, 0, 1, 0, east), nov(4)},
-		{"west, just before midnight", time.Date(2026, 11, 3, 23, 59, 59, 0, west), nov(3)},
-		{"west, just after midnight", time.Date(2026, 11, 4, 0, 0, 1, 0, west), nov(4)},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) { assertEqual(t, Day(c.in), c.want) })
-	}
 }
 
 func TestDayLeavesAParsedDateAlone(t *testing.T) {

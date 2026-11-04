@@ -215,7 +215,7 @@ func (r *runner) cmdShow(args []string) int {
 	if r.json {
 		r.printJSON(cv)
 	} else {
-		writeCardDetail(r.env.Stdout, cv)
+		writeCardDetail(r.env.Stdout, cv, r.location())
 	}
 	return exitOK
 }

@@ -8,8 +8,8 @@ import (
 )
 
 // DueForArchive lists the cards that auto archiving would move: in a done
-// column, with a done date, at least Archive.AfterDays whole days old. It is
-// empty unless the archive mode is auto.
+// column, with a done date, at least Archive.AfterDays whole UTC calendar days
+// old. It is empty unless the archive mode is auto.
 func (b *Board) DueForArchive(today time.Time) []CardID {
 	if b.Settings.Archive.Mode != ArchiveAuto {
 		return nil
@@ -41,8 +41,8 @@ func (b *Board) DoneCards() []CardID {
 // Archive moves cards from the board to the front of the archive, keeping the
 // given order at the front so the archive stays newest first. Every id must be
 // a card in a done column; otherwise nothing changes. A card with no done date
-// is given today's, because an archived card must be dated to be read back.
-func (b *Board) Archive(ids []CardID, today time.Time) error {
+// is stamped now, because an archived card must be dated to be read back.
+func (b *Board) Archive(ids []CardID, now time.Time) error {
 	for _, id := range ids {
 		i := b.indexOf(id)
 		if i < 0 {
@@ -60,7 +60,7 @@ func (b *Board) Archive(ids []CardID, today time.Time) error {
 		}
 		card := b.Cards[i]
 		if card.Done.IsZero() {
-			card.Done = Day(today)
+			card.Done = Stamp(now)
 		}
 		moved = append(moved, card)
 		b.Cards = slices.Delete(b.Cards, i, i+1)
@@ -72,7 +72,7 @@ func (b *Board) Archive(ids []CardID, today time.Time) error {
 // Restore moves an archived card back to the bottom of a column; "" means the
 // first column. Its done date is set or cleared to match the column. Restoring
 // is not a move between columns, so moves_to and WIP limits do not apply.
-func (b *Board) Restore(id CardID, to string, today time.Time) error {
+func (b *Board) Restore(id CardID, to string, now time.Time) error {
 	at := slices.IndexFunc(b.Archived, func(c Card) bool { return c.ID == id })
 	if at < 0 {
 		return fmt.Errorf("%w: archived card %s", ErrNotFound, id)
@@ -94,7 +94,7 @@ func (b *Board) Restore(id CardID, to string, today time.Time) error {
 	card.Column = col.Name
 	card.Done = time.Time{}
 	if col.Done {
-		card.Done = Day(today)
+		card.Done = Stamp(now)
 	}
 	b.Archived = slices.Delete(b.Archived, at, at+1)
 	b.Cards = slices.Insert(b.Cards, b.bottomOf(col.Name), card)

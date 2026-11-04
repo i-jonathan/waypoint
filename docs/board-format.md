@@ -137,8 +137,8 @@ Known fields, always written in this order:
 | `group` | A group name. |
 | `priority` | A priority name. |
 | `depends` | Card ids separated by commas: `T-17, T-18`. |
-| `created` | A date, `YYYY-MM-DD`. |
-| `done` | A date, `YYYY-MM-DD`. Set when a card enters a done column and cleared when it leaves. |
+| `created` | When the card was added. See Dates below. |
+| `done` | When the card was finished. Set when a card enters a done column and cleared when it leaves. See Dates below. |
 
 Any other `- key: value` line is kept as an extra field, in its original order.
 Extra field names are lowercase letters, digits, `_` and `-`, starting with a
@@ -151,6 +151,19 @@ A list item in the body such as `- Note: see below` is not a field, because
 looks like a field (`- estimate: small`), Waypoint writes two blank lines after
 the heading. The second blank line tells the reader that this card has no
 fields and that line is text. When editing by hand, do the same.
+
+### Dates
+
+Waypoint stores `created` and `done` as full UTC timestamps in whole seconds, such
+as `2026-11-04T23:52:10Z`, so the file never depends on the machine's time zone.
+It shows them as the local calendar date, so that timestamp reads `2026-11-04` in
+London and `2026-11-05` in Tokyo.
+
+By hand you can also write a plain date, `2026-10-26`. It stays exactly as
+written, is never converted to a timestamp, and shows as that same date in every
+time zone. A value at exactly midnight UTC counts as a plain date and is written
+as one. A timestamp with another offset, such as `2026-11-04T10:00:00+01:00`, is
+read and written back in UTC.
 
 ### Body
 
@@ -195,8 +208,8 @@ its line number and holds the board read-only until you fix the file.
 
 The archive for `BOARD.md` is `BOARD.archive.md` in the same directory; if the
 board is a symlink, that is the directory of the real file. It starts with
-`# Archive`, then one `## YYYY-MM` section per month of the cards' `done` dates,
-newest month first, with the cards under it in the same format as above. Every archived card needs an id, of any prefix, and a `done` date, and has
+`# Archive`, then one `## YYYY-MM` section per month of the cards' stored UTC
+`done` dates, newest month first, with the cards under it in the same format as above. Every archived card needs an id, of any prefix, and a `done` date, and has
 no column. A card whose prefix is not the board's cannot be restored to it.
 
 ```markdown

@@ -113,7 +113,7 @@ func TestRestoreToDoneColumnSetsDoneAndKeepsOrder(t *testing.T) {
 	mustAdd(t, b, NewCard{Title: "later", Column: "In progress"})
 	assertNoErr(t, b.Restore(id, "Done", today))
 	card, _, _ := b.Find(id)
-	assertEqual(t, card.Done, time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC))
+	assertEqual(t, card.Done, Stamp(today))
 	assertEqual(t, b.Cards[len(b.Cards)-1].ID, id)
 	assertEqual(t, b.Cards[0].Title, "later")
 }
@@ -139,5 +139,20 @@ func TestArchiveStampsUndatedCards(t *testing.T) {
 	b.Cards[1].Done = time.Time{} // a hand-added card under Done has no date
 	assertNoErr(t, b.Archive([]CardID{dated, undated}, today))
 	assertEqual(t, b.Archived[0].Done, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
-	assertEqual(t, b.Archived[1].Done, Day(today))
+	assertEqual(t, b.Archived[1].Done, Stamp(today))
+}
+
+func TestDueForArchiveCountsUTCCalendarDays(t *testing.T) {
+	b := NewBoard("x", "T")
+	b.Settings.Archive = ArchiveSettings{Mode: ArchiveAuto, AfterDays: 1}
+	id := addDone(t, b, "late", today)
+	b.Cards[0].Done = time.Date(2026, 11, 2, 23, 59, 0, 0, time.UTC)
+
+	// Two minutes later, but on the next UTC calendar day.
+	now := time.Date(2026, 11, 3, 0, 1, 0, 0, time.UTC)
+	assertEqual(t, b.DueForArchive(now), []CardID{id})
+	assertEqual(t, b.DueForArchive(now.In(time.FixedZone("UTC-5", -5*3600))), []CardID{id})
+
+	// Still the same UTC calendar day.
+	assertEqual(t, len(b.DueForArchive(time.Date(2026, 11, 2, 23, 59, 59, 0, time.UTC))), 0)
 }

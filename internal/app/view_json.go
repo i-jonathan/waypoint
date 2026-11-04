@@ -8,8 +8,6 @@ import (
 	"waypoint/internal/domain"
 )
 
-const jsonDay = "2006-01-02"
-
 type fieldJSON struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
@@ -46,14 +44,14 @@ type cardViewJSON struct {
 	Hash      string          `json:"hash"`
 }
 
-// MarshalJSON encodes the view with lower-case keys, dates as "YYYY-MM-DD"
-// (null when unset), and empty lists as [].
+// MarshalJSON encodes the view with lower-case keys, dates as stored (see
+// domain.StoredDate; null when unset), and empty lists as [].
 func (cv CardView) MarshalJSON() ([]byte, error) {
 	out := cardViewJSON{
 		ID: cv.ID, Title: cv.Title, Column: cv.Column, Group: cv.Group, Priority: cv.Priority,
 		Depends:   append([]domain.CardID{}, cv.Depends...),
-		Created:   dayJSON(cv.Created),
-		Done:      dayJSON(cv.Done),
+		Created:   dateJSON(cv.Created),
+		Done:      dateJSON(cv.Done),
 		Body:      cv.Body,
 		Extra:     make([]fieldJSON, 0, len(cv.Extra)),
 		Archived:  cv.Archived,
@@ -79,10 +77,10 @@ func (cv CardView) MarshalJSON() ([]byte, error) {
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
-func dayJSON(t time.Time) *string {
+func dateJSON(t time.Time) *string {
 	if t.IsZero() {
 		return nil
 	}
-	s := t.Format(jsonDay)
+	s := domain.StoredDate(t)
 	return &s
 }

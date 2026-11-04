@@ -31,8 +31,8 @@ type Field struct {
 	Key, Value string
 }
 
-// Card is a single board card. Created and Done are date-only (UTC midnight);
-// the zero time means unset.
+// Card is a single board card. Created and Done are stored in UTC, as a Stamp,
+// or at 00:00 UTC for a date-only value; the zero time means unset.
 type Card struct {
 	ID                             CardID
 	Title, Column, Group, Priority string
@@ -228,12 +228,4 @@ func (b *Board) Find(id CardID) (c Card, archived bool, ok bool) {
 		}
 	}
 	return Card{}, false, false
-}
-
-// Day returns the calendar date of t in t's own location, as 00:00 UTC on that
-// date. "Today" is the date the user sees, and a date parsed from a file,
-// already at 00:00 UTC, stays the same.
-func Day(t time.Time) time.Time {
-	y, m, d := t.Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }

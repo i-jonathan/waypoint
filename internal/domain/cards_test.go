@@ -42,7 +42,7 @@ func TestAddCardAssignsIDAndDefaults(t *testing.T) {
 	first := mustAdd(t, b, NewCard{Title: "A"})
 	assertEqual(t, first.ID, CardID("T-7"))
 	assertEqual(t, first.Column, "Todo")
-	assertEqual(t, first.Created, time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC))
+	assertEqual(t, first.Created, Stamp(today))
 	assertTrue(t, first.Done.IsZero())
 	assertEqual(t, b.Settings.NextID, 8)
 
@@ -55,7 +55,7 @@ func TestAddCardAssignsIDAndDefaults(t *testing.T) {
 func TestAddCardToDoneColumnSetsDone(t *testing.T) {
 	b := NewBoard("x", "T")
 	c := mustAdd(t, b, NewCard{Title: "A", Column: "Done"})
-	assertEqual(t, c.Done, time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC))
+	assertEqual(t, c.Done, Stamp(today))
 }
 
 func TestAddCardUnknownColumnOrGroupOrPriority(t *testing.T) {
@@ -100,7 +100,7 @@ func TestMoveAllowedSetsAndClearsDone(t *testing.T) {
 	assertNoErr(t, b.MoveCard(id, "Done", -1, today))
 	c, _, _ := b.Find(id)
 	assertEqual(t, c.Column, "Done")
-	assertEqual(t, c.Done, time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC))
+	assertEqual(t, c.Done, Stamp(today))
 
 	assertNoErr(t, b.MoveCard(id, "In progress", -1, today))
 	c, _, _ = b.Find(id)

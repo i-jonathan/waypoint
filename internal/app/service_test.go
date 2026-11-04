@@ -351,7 +351,7 @@ func TestDoneMovesToFirstDoneColumn(t *testing.T) {
 	v, err := e.svc.Done(context.Background(), a.ID)
 	noErr(t, err)
 	equal(t, v.Column, "Done")
-	equal(t, v.Done, domain.Day(e.now))
+	equal(t, v.Done, domain.Stamp(e.now))
 
 	var titles []string
 	for _, c := range e.board().CardsIn("Done") {

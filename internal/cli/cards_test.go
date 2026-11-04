@@ -377,7 +377,7 @@ func TestJSONOutput(t *testing.T) {
 
 	assertEq(t, cards[0]["id"], "T-1")
 	assertEq(t, cards[0]["next"], true)
-	assertEq(t, cards[0]["created"], "2026-11-03")
+	assertEq(t, cards[0]["created"], "2026-11-03T12:00:00Z")
 	assertEq(t, cards[0]["done"], nil)
 	assertEq(t, cards[0]["checklist"].(map[string]any)["total"], any(float64(2)))
 	assertEq(t, len(cards[0]["blockers"].([]any)), 0)

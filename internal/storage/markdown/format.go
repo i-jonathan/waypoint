@@ -120,10 +120,10 @@ func cardFieldLines(c domain.Card) []string {
 		add("depends", strings.Join(ids, ", "))
 	}
 	if !c.Created.IsZero() {
-		add("created", domain.Day(c.Created).Format(dateLayout))
+		add("created", domain.StoredDate(c.Created))
 	}
 	if !c.Done.IsZero() {
-		add("done", domain.Day(c.Done).Format(dateLayout))
+		add("done", domain.StoredDate(c.Done))
 	}
 	for _, f := range c.Extra {
 		add(f.Key, f.Value)

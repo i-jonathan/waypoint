@@ -44,7 +44,7 @@ func (e wipError) Unwrap() error { return ErrWIPLimit }
 
 // AddCard appends a new card at the bottom of its column and assigns it the
 // next id. On error the board is unchanged.
-func (b *Board) AddCard(n NewCard, today time.Time) (Card, error) {
+func (b *Board) AddCard(n NewCard, now time.Time) (Card, error) {
 	title, err := cleanTitle(n.Title)
 	if err != nil {
 		return Card{}, err
@@ -96,12 +96,12 @@ func (b *Board) AddCard(n NewCard, today time.Time) (Card, error) {
 		Group:    group,
 		Priority: priority,
 		Depends:  slices.Clone(n.Depends),
-		Created:  Day(today),
+		Created:  Stamp(now),
 		Body:     n.Body,
 		Extra:    slices.Clone(n.Extra),
 	}
 	if col.Done {
-		card.Done = Day(today)
+		card.Done = Stamp(now)
 	}
 	b.Settings.NextID++
 	b.Cards = slices.Insert(b.Cards, b.bottomOf(col.Name), card)
@@ -112,7 +112,7 @@ func (b *Board) AddCard(n NewCard, today time.Time) (Card, error) {
 // at or past the end of the target column means the bottom. Moving within the
 // same column only reorders and is always allowed. On error the board is
 // unchanged.
-func (b *Board) MoveCard(id CardID, to string, index int, today time.Time) error {
+func (b *Board) MoveCard(id CardID, to string, index int, now time.Time) error {
 	from := b.indexOf(id)
 	if from < 0 {
 		return fmt.Errorf("%w: card %s", ErrNotFound, id)
@@ -134,7 +134,7 @@ func (b *Board) MoveCard(id CardID, to string, index int, today time.Time) error
 		case !dest.Done:
 			card.Done = time.Time{}
 		case !src.Done:
-			card.Done = Day(today)
+			card.Done = Stamp(now)
 		}
 		card.Column = dest.Name
 	}

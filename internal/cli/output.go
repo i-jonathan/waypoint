@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"waypoint/internal/app"
@@ -13,7 +14,6 @@ import (
 const (
 	emptyBoardText = "No cards yet. Add one with: waypoint add \"Title\"\n"
 	noMatchText    = "No cards match.\n"
-	dayLayout      = "2006-01-02"
 )
 
 // writeCardLines prints cards one per line, aligned in columns: id, column,
@@ -75,8 +75,9 @@ func blockerList(bl []domain.Blocker) string {
 }
 
 // writeCardDetail prints one card for "show": the id and title, one
-// "key: value" line per set field, then a blank line and the body.
-func writeCardDetail(w io.Writer, cv app.CardView) {
+// "key: value" line per set field, then a blank line and the body. Dates are
+// shown in loc.
+func writeCardDetail(w io.Writer, cv app.CardView, loc *time.Location) {
 	fmt.Fprintf(w, "%s %s\n", cv.ID, cv.Title)
 	field := func(key, value string) {
 		if value != "" {
@@ -94,10 +95,10 @@ func writeCardDetail(w io.Writer, cv app.CardView) {
 		field("depends", strings.Join(ids, ", "))
 	}
 	if !cv.Created.IsZero() {
-		field("created", cv.Created.Format(dayLayout))
+		field("created", domain.DisplayDate(cv.Created, loc))
 	}
 	if !cv.Done.IsZero() {
-		field("done", cv.Done.Format(dayLayout))
+		field("done", domain.DisplayDate(cv.Done, loc))
 	}
 	for _, f := range cv.Extra {
 		field(f.Key, f.Value)
@@ -114,6 +115,14 @@ func writeCardDetail(w io.Writer, cv app.CardView) {
 	if body := strings.TrimRight(cv.Body, "\r\n"); body != "" {
 		fmt.Fprintf(w, "\n%s\n", body)
 	}
+}
+
+// location is the zone dates are shown in: that of the clock.
+func (r *runner) location() *time.Location {
+	if r.env.Now == nil {
+		return time.UTC
+	}
+	return r.env.Now().Location()
 }
 
 // printWarnings writes board warnings to stderr, in both output modes, so

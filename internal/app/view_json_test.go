@@ -38,6 +38,20 @@ func TestCardViewJSONShape(t *testing.T) {
 	}
 }
 
+func TestCardViewJSONDates(t *testing.T) {
+	got, err := json.Marshal(app.CardView{Card: domain.Card{
+		ID:      "T-1",
+		Created: time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC),
+		Done:    time.Date(2026, 11, 4, 23, 52, 10, 0, time.UTC),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"created":"2026-10-26","done":"2026-11-04T23:52:10Z"`; !strings.Contains(string(got), want) {
+		t.Fatalf("%s does not contain %s", got, want)
+	}
+}
+
 func TestCardViewJSONEmptyListsAreArrays(t *testing.T) {
 	got, err := json.Marshal(app.CardView{Card: domain.Card{ID: "T-1", Title: "x", Column: "Todo"}})
 	if err != nil {
