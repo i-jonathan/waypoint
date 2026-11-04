@@ -2,6 +2,7 @@ import { readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { defineConfig, type Plugin } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { svelteTesting } from '@testing-library/svelte/vite';
 
 const outDir = '../internal/http/dist';
 const API = 'http://127.0.0.1:4747';
@@ -27,7 +28,7 @@ function cleanOutDir(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [svelte(), cleanOutDir()],
+  plugins: [svelte(), svelteTesting(), cleanOutDir()],
   build: { outDir, emptyOutDir: false },
   server: {
     port: 5173,
@@ -58,5 +59,6 @@ export default defineConfig({
   },
   test: {
     include: ['tests/**/*.test.ts'],
+    setupFiles: ['tests/setup-dom.ts'],
   },
 });
