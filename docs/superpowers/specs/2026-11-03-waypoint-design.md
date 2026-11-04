@@ -57,7 +57,7 @@ arbitrary markdown formats.
 |---|---|
 | **Project** | A board plus its settings. It has a name, an id prefix (e.g. `T`), a storage type and a storage path. |
 | **Column** | Name, order, optional WIP limit, list of columns it may move to, and a "counts as done" flag. |
-| **Card** | `id` (prefix + number, never reused), title, column, rank (position within the column), optional group, optional priority, `depends` (list of card ids), `created`, `done` (date, set on entering a done column), free markdown body, and any extra key/value fields (preserved, displayed, filterable). |
+| **Card** | `id` (prefix + number, never reused), title, column, rank (position within the column), optional group, optional priority, `depends` (list of card ids), `created`, `done` (timestamp, set on entering a done column), free markdown body, and any extra key/value fields (preserved, displayed, filterable). |
 | **Group** | Name and colour. A card belongs to zero or one group **(builder's call)**. |
 | **Next up** | The top card of the first non-done column, in rank order. You set the order by dragging; priority never reorders cards automatically **(builder's call)**. |
 | **Blocked** | A card with at least one `depends` id that is not in a done column (or archived). Unknown ids count as blocking and are flagged as "missing". |
@@ -75,7 +75,10 @@ arbitrary markdown formats.
 - Both rules are enforced in the domain layer, so the UI, CLI and MCP all behave the same.
 - Reordering within a column is always allowed.
 - Exceeding a WIP limit through an external file edit is shown as a warning, not an error.
-- Entering a done column sets `done` to today, and leaving one clears it **(builder's call)**.
+- Entering a done column sets `done` to now, and leaving one clears it **(builder's call)**.
+- **Dates (owner's decision):** `created` and `done` are stored as UTC timestamps
+  (`2026-11-04T23:52:10Z`) and displayed as the local date. A hand-written date-only value stays
+  valid and is displayed exactly as written.
 - Auto-archive runs when a project opens and after each write. It moves cards whose `done` is older
   than `after_days` **(builder's call)**.
 - Priority is an ordered list per project, defaulting to `P0, P1, P2` and editable in settings. Its
@@ -371,8 +374,10 @@ primary interface.**
   - `waypoint project add|ls|rm|convert`
   
   Every command accepts `--json` for machine-readable output and `--project NAME`. Without
-  `--project`, the CLI picks the registered project whose storage path lies under the current
-  directory. The CLI uses the same lock and rules as the server, and the server sees CLI changes
+  `--project`, the CLI uses `$WAYPOINT_PROJECT`, then the nearest registered board in the current
+  folder or a parent. A project is a registry entry (a name and a board file path); git plays no
+  part. An unregistered Waypoint `BOARD.md` in the current folder is an error, not a reason to
+  write to another board, and there's no fallback to a sole registered project. The CLI uses the same lock and rules as the server, and the server sees CLI changes
   through its file watcher.
 - **MCP:** `waypoint mcp` runs an MCP server over stdio for agents configured that way. Its tools are
   `list_cards`, `get_card`, `create_card`, `move_card`, `update_card`, `next_up` and
