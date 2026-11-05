@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,6 +39,17 @@ const (
 	// leafDays stays under the 398 days browsers accept for a server certificate.
 	leafDays      = 397
 	leafRenewWhen = 30 * 24 * time.Hour
+)
+
+// caScope is what the CA may vouch for: this machine and nothing else, so that
+// trusting it cannot be used against any other site even if its key leaks.
+var (
+	caDNSDomains = []string{"localhost"}
+	caIPRanges   = []*net.IPNet{
+		{IP: net.IPv4(127, 0, 0, 0).To4(), Mask: net.CIDRMask(8, 32)},
+		{IP: net.IPv6loopback, Mask: net.CIDRMask(128, 128)},
+	}
+	caExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
 )
 
 // Certs is the local certificate authority and the certificate it issues for
@@ -71,7 +83,9 @@ func (c Certs) Trusted() bool {
 }
 
 // Ensure returns the server certificate, creating what is missing. The CA
-// (ECDSA P-256, 10 years) is made once and never replaced. The leaf, valid for
+// (ECDSA P-256, 10 years, limited to localhost and loopback addresses) is made
+// once and kept. One from before that limit is replaced, and the trust recorded
+// for it dropped, so "waypoint trust" has to be run again. The leaf, valid for
 // localhost, 127.0.0.1 and ::1, is issued for 397 days and re-issued when fewer
 // than 30 remain. All files are 0600 in a 0700 directory. A key file that other
 // users can read is an error and nothing is rewritten.
@@ -145,10 +159,22 @@ func (c Certs) loadOrCreateCA(now time.Time) (*x509.Certificate, *ecdsa.PrivateK
 	if !ok || !pub.Equal(&key.PublicKey) || !ca.IsCA {
 		return nil, nil, fmt.Errorf("%s and %s do not belong together; delete %s to start over", caCertFile, caKeyFile, c.Dir)
 	}
+	if !contained(ca) {
+		return c.createCA(now)
+	}
 	if now.After(ca.NotAfter) {
 		return nil, nil, fmt.Errorf("the Waypoint local CA expired on %s; delete %s and run waypoint trust again", ca.NotAfter.Format("2006-01-02"), c.Dir)
 	}
 	return ca, key, nil
+}
+
+// contained reports whether ca carries the limits of caScope.
+func contained(ca *x509.Certificate) bool {
+	sameRange := func(a, b *net.IPNet) bool { return a.String() == b.String() }
+	return ca.PermittedDNSDomainsCritical &&
+		slices.Equal(ca.PermittedDNSDomains, caDNSDomains) &&
+		slices.EqualFunc(ca.PermittedIPRanges, caIPRanges, sameRange) &&
+		slices.Equal(ca.ExtKeyUsage, caExtKeyUsage)
 }
 
 func (c Certs) createCA(now time.Time) (*x509.Certificate, *ecdsa.PrivateKey, error) {
@@ -170,6 +196,11 @@ func (c Certs) createCA(now time.Time) (*x509.Certificate, *ecdsa.PrivateKey, er
 		IsCA:                  true,
 		MaxPathLen:            0,
 		MaxPathLenZero:        true,
+		ExtKeyUsage:           caExtKeyUsage,
+
+		PermittedDNSDomainsCritical: true,
+		PermittedDNSDomains:         caDNSDomains,
+		PermittedIPRanges:           caIPRanges,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
@@ -278,7 +309,7 @@ func (c Certs) Install() error {
 			}
 		}
 		keychain := filepath.Join(home, "Library", "Keychains", "login.keychain-db")
-		if err := runCommand("security", "add-trusted-cert", "-r", "trustRoot", "-k", keychain, ca); err != nil {
+		if err := runCommand("security", "add-trusted-cert", "-r", "trustRoot", "-p", "ssl", "-k", keychain, ca); err != nil {
 			return fmt.Errorf("trust the CA: %w", err)
 		}
 	case "linux":

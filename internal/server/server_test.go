@@ -314,3 +314,18 @@ func TestShutdownIsGracefulForInFlightRequests(t *testing.T) {
 		t.Fatalf("in-flight request got %q", v)
 	}
 }
+
+// A CA made before constraints is regenerated, which drops the trust recorded
+// for the old one. Auto must not serve HTTPS on a CA nothing trusts yet.
+func TestAutoFallsBackToHTTPWhenTheCAWasRegenerated(t *testing.T) {
+	certs := newCerts(t)
+	oldCA(t, certs)
+	var tips []string
+	s := start(t, Options{TLS: "auto", Certs: certs, Now: func() time.Time { return t0 }, Tip: func(m string) { tips = append(tips, m) }})
+	if !strings.HasPrefix(s.url, "http://") {
+		t.Fatalf("url = %q, want plain HTTP", s.url)
+	}
+	if len(tips) != 1 || tips[0] != TrustTip {
+		t.Fatalf("tips = %q", tips)
+	}
+}

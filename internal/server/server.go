@@ -92,9 +92,7 @@ func Run(ctx context.Context, o Options) error {
 		ln.Close()
 		return fmt.Errorf("tls %q must be one of auto, on, off", o.TLS)
 	}
-	scheme := "http"
 	if useTLS {
-		scheme = "https"
 		now := time.Now
 		if o.Now != nil {
 			now = o.Now
@@ -105,6 +103,17 @@ func Run(ctx context.Context, o Options) error {
 			return err
 		}
 		srv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+		// Ensure can replace an old CA, and then nothing trusts the new one yet.
+		if o.TLS == "auto" && !o.Certs.Trusted() {
+			useTLS = false
+			if o.Tip != nil {
+				o.Tip(TrustTip)
+			}
+		}
+	}
+	scheme := "http"
+	if useTLS {
+		scheme = "https"
 	}
 
 	served := make(chan error, 1)

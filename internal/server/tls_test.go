@@ -2,8 +2,14 @@ package server
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
+	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -245,7 +251,7 @@ func TestInstallDarwinRunsSecurityAndWritesMarker(t *testing.T) {
 	if err := c.Install(); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{{"security", "add-trusted-cert", "-r", "trustRoot",
+	want := [][]string{{"security", "add-trusted-cert", "-r", "trustRoot", "-p", "ssl",
 		"-k", "/Users/someone/Library/Keychains/login.keychain-db", filepath.Join(c.Dir, "ca.pem")}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("argv = %q, want %q", got, want)
@@ -270,8 +276,8 @@ func TestInstallUsesTheHomeInCerts(t *testing.T) {
 	if err := c.Install(); err != nil {
 		t.Fatal(err)
 	}
-	if got[4] != "/elsewhere/Library/Keychains/login.keychain-db" {
-		t.Fatalf("keychain = %q", got[4])
+	if got[6] != "/elsewhere/Library/Keychains/login.keychain-db" {
+		t.Fatalf("keychain = %q", got[6])
 	}
 }
 
@@ -326,4 +332,148 @@ func swap[T any](p *T, v T) func() {
 	old := *p
 	*p = v
 	return func() { *p = old }
+}
+
+func caFiles(t *testing.T, c Certs) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	ca, err := parseCert(mustRead(t, c.path(caCertFile)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := parseKey(mustRead(t, c.path(caKeyFile)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ca, key
+}
+
+// leafFor issues what an attacker holding the CA's key could issue.
+func leafFor(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, dns []string, ips []net.IP) *x509.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(99),
+		Subject:      pkix.Name{CommonName: "leaf"},
+		NotBefore:    t0.Add(-time.Hour),
+		NotAfter:     t0.Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     dns,
+		IPAddresses:  ips,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return leaf
+}
+
+func verify(leaf, ca *x509.Certificate, name string) error {
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	_, err := leaf.Verify(x509.VerifyOptions{
+		Roots: roots, DNSName: name, CurrentTime: t0, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	})
+	return err
+}
+
+func TestCACannotVouchForAnythingButLocalhost(t *testing.T) {
+	c := newCerts(t)
+	if _, err := c.Ensure(t0); err != nil {
+		t.Fatal(err)
+	}
+	ca, key := caFiles(t, c)
+
+	if !ca.PermittedDNSDomainsCritical {
+		t.Fatal("the name constraints are not critical")
+	}
+	if err := verify(leafFor(t, ca, key, []string{"www.bank.example"}, nil), ca, "www.bank.example"); err == nil {
+		t.Fatal("a leaf for www.bank.example verified")
+	}
+	if err := verify(leafFor(t, ca, key, nil, []net.IP{net.ParseIP("8.8.8.8")}), ca, "8.8.8.8"); err == nil {
+		t.Fatal("a leaf for 8.8.8.8 verified")
+	}
+
+	leaf := readPEMCert(t, c.path(leafCert))
+	for _, name := range []string{"localhost", "127.0.0.1", "::1"} {
+		if err := verify(leaf, ca, name); err != nil {
+			t.Fatalf("the server's own leaf for %s: %v", name, err)
+		}
+	}
+}
+
+// oldCA writes a CA as earlier versions made it, with no name constraints, and
+// the marker that says it was trusted.
+func oldCA(t *testing.T, c Certs) {
+	t.Helper()
+	if err := os.MkdirAll(c.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: caCommonName},
+		NotBefore: t0.Add(-time.Hour), NotAfter: t0.Add(caLifetime),
+		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign, BasicConstraintsValid: true, IsCA: true,
+		MaxPathLen: 0, MaxPathLenZero: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := encodeKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string][]byte{caKeyFile: keyPEM, caCertFile: encodeCert(der), trustedFile: nil} {
+		if err := writeFileAtomic(c.path(name), data); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestEnsureRegeneratesACAWithoutConstraints(t *testing.T) {
+	c := newCerts(t)
+	oldCA(t, c)
+	before := mustRead(t, c.path(caKeyFile))
+
+	if _, err := c.Ensure(t0); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(before, mustRead(t, c.path(caKeyFile))) {
+		t.Fatal("the unconstrained CA's key is still in use")
+	}
+	ca, _ := caFiles(t, c)
+	if !ca.PermittedDNSDomainsCritical {
+		t.Fatal("the new CA has no constraints")
+	}
+	if c.Trusted() {
+		t.Fatal("the trusted marker survived a new CA")
+	}
+	if err := verify(readPEMCert(t, c.path(leafCert)), ca, "localhost"); err != nil {
+		t.Fatalf("the leaf was not reissued: %v", err)
+	}
+}
+
+func TestEnsureKeepsAConstrainedCA(t *testing.T) {
+	c := newCerts(t)
+	if _, err := c.Ensure(t0); err != nil {
+		t.Fatal(err)
+	}
+	before := mustRead(t, c.path(caKeyFile))
+	if _, err := c.Ensure(t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, mustRead(t, c.path(caKeyFile))) {
+		t.Fatal("a good CA was replaced")
+	}
 }
