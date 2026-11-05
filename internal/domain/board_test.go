@@ -25,20 +25,22 @@ func TestNewBoardDefaults(t *testing.T) {
 
 func TestValidateRejects(t *testing.T) {
 	cases := map[string]func(*Settings){
-		"no columns":            func(s *Settings) { s.Columns = nil },
-		"duplicate column":      func(s *Settings) { s.Columns = append(s.Columns, s.Columns[0]) },
-		"moves_to unknown":      func(s *Settings) { s.Columns[0].MovesTo = []string{"Nope"} },
-		"negative wip":          func(s *Settings) { s.Columns[0].WIP = -1 },
-		"bad prefix":            func(s *Settings) { s.Prefix = "T-1" },
-		"next_id zero":          func(s *Settings) { s.NextID = 0 },
-		"bad archive mode":      func(s *Settings) { s.Archive.Mode = "sometimes" },
-		"duplicate group":       func(s *Settings) { s.Groups = []Group{{Name: "A"}, {Name: "a"}} },
-		"column leading space":  func(s *Settings) { s.Columns[0].Name = " Todo" },
-		"column trailing space": func(s *Settings) { s.Columns[0].Name = "Todo\t" },
-		"column line break":     func(s *Settings) { s.Columns[0].Name = "To\ndo" },
-		"name line break":       func(s *Settings) { s.Name = "a\nb" },
-		"group line break":      func(s *Settings) { s.Groups = []Group{{Name: "A\r\nB"}} },
-		"priority line break":   func(s *Settings) { s.Priorities = []string{"P0", "P\n1"} },
+		"no columns":             func(s *Settings) { s.Columns = nil },
+		"duplicate column":       func(s *Settings) { s.Columns = append(s.Columns, s.Columns[0]) },
+		"moves_to unknown":       func(s *Settings) { s.Columns[0].MovesTo = []string{"Nope"} },
+		"negative wip":           func(s *Settings) { s.Columns[0].WIP = -1 },
+		"bad prefix":             func(s *Settings) { s.Prefix = "T-1" },
+		"next_id zero":           func(s *Settings) { s.NextID = 0 },
+		"bad archive mode":       func(s *Settings) { s.Archive.Mode = "sometimes" },
+		"duplicate group":        func(s *Settings) { s.Groups = []Group{{Name: "A"}, {Name: "a"}} },
+		"column leading space":   func(s *Settings) { s.Columns[0].Name = " Todo" },
+		"column trailing space":  func(s *Settings) { s.Columns[0].Name = "Todo\t" },
+		"column line break":      func(s *Settings) { s.Columns[0].Name = "To\ndo" },
+		"group trailing space":   func(s *Settings) { s.Groups = []Group{{Name: "Team "}} },
+		"priority leading space": func(s *Settings) { s.Priorities = []string{" P0"} },
+		"name line break":        func(s *Settings) { s.Name = "a\nb" },
+		"group line break":       func(s *Settings) { s.Groups = []Group{{Name: "A\r\nB"}} },
+		"priority line break":    func(s *Settings) { s.Priorities = []string{"P0", "P\n1"} },
 	}
 	for name, mutate := range cases {
 		s := NewBoard("x", "T").Settings

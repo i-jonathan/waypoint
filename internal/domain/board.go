@@ -165,8 +165,8 @@ func (s Settings) Validate() error {
 		if strings.TrimSpace(g.Name) == "" {
 			return fmt.Errorf("%w: group name is empty", ErrInvalid)
 		}
-		if !singleLine(g.Name) {
-			return fmt.Errorf("%w: group name %q must be a single line", ErrInvalid, g.Name)
+		if g.Name != strings.TrimSpace(g.Name) || !singleLine(g.Name) {
+			return fmt.Errorf("%w: group name %q must be a single line without leading or trailing spaces", ErrInvalid, g.Name)
 		}
 		key := strings.ToLower(g.Name)
 		if groups[key] {
@@ -179,8 +179,8 @@ func (s Settings) Validate() error {
 		if strings.TrimSpace(p) == "" {
 			return fmt.Errorf("%w: priority name is empty", ErrInvalid)
 		}
-		if !singleLine(p) {
-			return fmt.Errorf("%w: priority name %q must be a single line", ErrInvalid, p)
+		if p != strings.TrimSpace(p) || !singleLine(p) {
+			return fmt.Errorf("%w: priority name %q must be a single line without leading or trailing spaces", ErrInvalid, p)
 		}
 		key := strings.ToLower(p)
 		if priorities[key] {

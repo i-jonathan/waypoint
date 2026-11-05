@@ -45,6 +45,31 @@ func TestAddCreatesBoardAndRegisters(t *testing.T) {
 	}
 }
 
+func TestAddRefusesASharedArchive(t *testing.T) {
+	cfgPath, env := sandbox(t)
+	dir := t.TempDir()
+	ctx := context.Background()
+	if _, err := Add(ctx, cfgPath, env, AddOptions{Name: "A", Path: filepath.Join(dir, "x.md"), Prefix: "T"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// x.markdown would use x.archive.md too, so one project's archive would hold the other's cards.
+	twin := filepath.Join(dir, "x.markdown")
+	_, err := Add(ctx, cfgPath, env, AddOptions{Name: "B", Path: twin, Prefix: "T"})
+	if !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), `shares an archive with "A"`) {
+		t.Fatalf("twin: %v", err)
+	}
+	if _, statErr := os.Stat(twin); statErr == nil {
+		t.Fatal("the refused board was created")
+	}
+
+	// An archive is not a board, even one that isn't registered yet.
+	_, err = Add(ctx, cfgPath, env, AddOptions{Name: "C", Path: filepath.Join(dir, "x.archive.md"), Prefix: "T"})
+	if !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "is an archive") {
+		t.Fatalf("archive as board: %v", err)
+	}
+}
+
 func TestAddRefusals(t *testing.T) {
 	cfgPath, env := sandbox(t)
 	dir := t.TempDir()

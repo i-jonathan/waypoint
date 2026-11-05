@@ -44,6 +44,8 @@ type Repo struct {
 
 var _ app.Repository = (*Repo)(nil)
 
+const archiveSuffix = ".archive.md"
+
 // New returns a repository for the board file at path. It resolves symlinks in
 // path and writes nothing. A path that cannot be resolved, such as a dangling
 // symlink, makes every later Load, Save and Lock fail, rather than replace the
@@ -53,8 +55,18 @@ func New(path string) *Repo {
 	if r.real, r.err = canonical(path); r.err != nil {
 		return r
 	}
-	r.archive, r.err = canonical(strings.TrimSuffix(r.real, filepath.Ext(r.real)) + ".archive.md")
+	r.archive, r.err = canonical(ArchiveFile(r.real))
 	return r
+}
+
+// ArchiveFile returns the archive path that goes with a board path.
+func ArchiveFile(board string) string {
+	return strings.TrimSuffix(board, filepath.Ext(board)) + archiveSuffix
+}
+
+// IsArchiveFile says whether path is named like an archive rather than a board.
+func IsArchiveFile(path string) bool {
+	return strings.HasSuffix(strings.ToLower(path), archiveSuffix)
 }
 
 // canonical returns path with every symlink resolved, the way the kernel

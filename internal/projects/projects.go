@@ -13,6 +13,7 @@ import (
 	"waypoint/internal/config"
 	"waypoint/internal/domain"
 	"waypoint/internal/storage"
+	"waypoint/internal/storage/markdown"
 )
 
 // DefaultPrefix is the card id prefix a caller uses for a new project when the
@@ -70,6 +71,9 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 		}
 		if config.StorageFor(path) == "sqlite" {
 			return storage.ErrSQLite
+		}
+		if err := checkArchive(cfg, path); err != nil {
+			return err
 		}
 		if err := cfg.Add(config.ProjectRef{Name: name, Path: path}); err != nil {
 			return err
@@ -144,6 +148,22 @@ func slug(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// checkArchive refuses a board that would collide with an archive: one project's archive file
+// holding another's cards loses them across projects. Names compare without case, since most
+// Mac disks ignore it; a false refusal is only a rename away.
+func checkArchive(cfg *config.Config, path string) error {
+	if markdown.IsArchiveFile(path) {
+		return fmt.Errorf("%w: %s is an archive, not a board", domain.ErrInvalid, path)
+	}
+	mine := filepath.Clean(markdown.ArchiveFile(path))
+	for _, q := range cfg.Projects {
+		if strings.EqualFold(mine, filepath.Clean(markdown.ArchiveFile(q.Path))) {
+			return fmt.Errorf("%w: %s shares an archive with %q; rename the file", domain.ErrInvalid, path, q.Name)
+		}
+	}
+	return nil
 }
 
 // RegisteredAt finds the project whose board file is path, comparing cleaned
