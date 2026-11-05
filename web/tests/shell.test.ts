@@ -524,6 +524,53 @@ describe('store and stream lifetime', () => {
   });
 });
 
+describe('list views', () => {
+  it('hides the filter and the swimlane toggle on Next up, Blocked and Archive, and keeps New card', async () => {
+    for (const view of ['next', 'blocked', 'archive']) {
+      const { unmount } = mountApp([reno, garden], `/p/Home%20reno/${view}`);
+      await screen.findByRole('button', { name: /New card/ });
+      expect(screen.queryByPlaceholderText('Filter')).toBeNull();
+      expect(screen.queryByRole('group', { name: 'View' })).toBeNull();
+      await fireEvent.keyDown(document.body, { key: '/' }); // nothing to focus, and nothing swallowed
+      unmount();
+    }
+  });
+
+  it('lights the view in the sidebar and puts focus on its heading', async () => {
+    mountApp([reno, garden], '/p/Home%20reno/blocked');
+    const nav = await screen.findByRole('navigation', { name: 'Project' });
+    expect(within(nav).getByRole('link', { name: /Blocked/ })).toHaveAttribute('aria-current', 'page');
+    await waitFor(() => expect(screen.getByRole('heading', { level: 2, name: 'Blocked' })).toHaveFocus());
+  });
+
+  it('opens a card over the view it came from, and closing returns to that view', async () => {
+    mountApp([reno, garden], '/p/Home%20reno/blocked');
+    const open = await screen.findByRole('button', { name: 'Open H-4' });
+    await fireEvent.click(open);
+    expect(window.location.pathname).toBe('/p/Home%20reno/card/H-4');
+    const nav = screen.getByRole('navigation', { name: 'Project' });
+    expect(within(nav).getByRole('link', { name: /Blocked/ })).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByRole('group', { name: 'Board' })).toBeNull();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Close' }));
+    expect(window.location.pathname).toBe('/p/Home%20reno/blocked');
+    expect(screen.getByRole('heading', { level: 2, name: 'Blocked' })).toBeInTheDocument();
+  });
+
+  it('shows the board under a card opened by its own link', async () => {
+    mountApp([reno, garden], '/p/Home%20reno/card/H-4');
+    expect(await screen.findByRole('group', { name: 'Board' })).toBeInTheDocument();
+  });
+
+  it('takes New card to the board with quick add open', async () => {
+    mountApp([reno, garden], '/p/Home%20reno/next');
+    await screen.findByRole('heading', { level: 2, name: 'Next up' });
+    await fireEvent.click(await screen.findByRole('button', { name: /New card/ }));
+    expect(window.location.pathname).toBe('/p/Home%20reno');
+    expect(await screen.findByRole('group', { name: 'Board' })).toBeInTheDocument();
+    expect(await screen.findByRole('textbox', { name: /title/i })).toBeInTheDocument();
+  });
+});
+
 describe('copy', () => {
   it('uses no em or en dash in the shell components', () => {
     const dirs = ['../src/components', '../src'];

@@ -15,7 +15,7 @@ import type {
 /** The routes the store calls. A test passes a fake. */
 export type BoardApi = Pick<
   typeof api,
-  'board' | 'createCard' | 'patch' | 'move' | 'check' | 'deleteCard' | 'archiveDone' | 'putProjectSettings'
+  'board' | 'createCard' | 'patch' | 'move' | 'check' | 'deleteCard' | 'archiveDone' | 'restore' | 'putProjectSettings'
 >;
 
 export interface ParseError {
@@ -53,6 +53,10 @@ export interface BoardStore {
   /** Sent against the card's hash. A 409 is thrown for the caller to handle, and the board refreshes. */
   remove(id: string): Promise<void>;
   archiveDone(): Promise<string[]>;
+  /** Brings an archived card back to a column (the first when none is given). A refusal is toasted and thrown; nothing is shown early. */
+  restore(id: string, column?: string): Promise<CardView>;
+  /** Counts the server's `changed` events for this project, so a view with its own data can reload on a change. */
+  readonly changes: number;
   /** Saves the settings against settingsHash. On a 409 it refreshes, then throws. */
   updateSettings(change: Omit<ProjectSettingsChange, 'if_match'>): Promise<void>;
   /** Feeds a server event in: a change to this project refreshes it. */
@@ -100,6 +104,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
   let parseError = $state.raw<ParseError | null>(null);
   let offline = $state(false);
   let query = $state('');
+  let changes = $state(0);
   let destroyed = false;
 
   // Bumped whenever a write starts, so a board fetched before it can be told apart.
@@ -446,6 +451,16 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
     });
   }
 
+  function restore(id: string, column?: string): Promise<CardView> {
+    const refused = refuseIfReadonly();
+    if (refused) return Promise.reject(refused);
+    return write(async () => {
+      const card = await client.restore(project, id, column);
+      if (!destroyed) setCards((cards) => (cards.some((c) => c.id === card.id) ? cards.map((c) => (c.id === card.id ? card : c)) : [...cards, card]));
+      return card;
+    });
+  }
+
   async function updateSettings(change: Omit<ProjectSettingsChange, 'if_match'>): Promise<void> {
     const refused = refuseIfReadonly();
     if (refused) throw refused;
@@ -478,6 +493,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
   function handleEvent(e: { type: string; project: string }) {
     if (e.type !== 'changed') return;
     if (e.project !== project && e.project !== '*') return;
+    changes++;
     void refresh();
   }
 
@@ -524,6 +540,10 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
     check,
     remove,
     archiveDone,
+    restore,
+    get changes() {
+      return changes;
+    },
     updateSettings,
     handleEvent,
     destroy,

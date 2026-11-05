@@ -4,8 +4,10 @@
   import MapPin from 'phosphor-svelte/lib/MapPin';
   import PlugsConnected from 'phosphor-svelte/lib/PlugsConnected';
   import Question from 'phosphor-svelte/lib/Question';
+  import ArchiveView from './components/ArchiveView.svelte';
   import Board from './components/Board.svelte';
   import CardPanel from './components/CardPanel.svelte';
+  import ListView from './components/ListView.svelte';
   import Notice from './components/Notice.svelte';
   import ParseBanner from './components/ParseBanner.svelte';
   import Sidebar from './components/Sidebar.svelte';
@@ -177,19 +179,39 @@
     adding = column;
   }
 
-  /** New card: quick add in the first column. */
+  /** New card: quick add in the first column. Quick add lives on the board, so a list view goes there first. */
   function newCard() {
     const first = store?.view?.settings.columns[0]?.name;
-    if (first !== undefined) addCard(first);
+    if (first === undefined) return;
+    addCard(first);
+    if (shown !== 'board' && shown !== 'home' && route.project !== undefined) {
+      navigate(href({ name: 'board', project: route.project, search: '' }));
+    }
   }
+
+  // ----- Which view is on screen -----
+  // The card route is a panel over a view. It remembers the list view it was opened from, so
+  // closing the panel goes back there; a card opened by its own link sits over the board.
+  type ListName = 'next' | 'blocked' | 'archive';
+  let lastView = $state<ListName | null>(null);
+
+  $effect(() => {
+    const n = route.name;
+    if (n === 'next' || n === 'blocked' || n === 'archive') lastView = n;
+    else if (n !== 'card') lastView = null;
+  });
+
+  const shown = $derived(route.name === 'card' ? (lastView ?? 'board') : route.name);
 
   // ----- The card panel -----
   function closeCard() {
     if (route.project === undefined) return;
-    navigate(href({ name: 'board', project: route.project, search: route.search }));
+    navigate(
+      lastView
+        ? href({ name: lastView, project: route.project, search: '' })
+        : href({ name: 'board', project: route.project, search: route.search }),
+    );
   }
-
-  const viewTitle: Partial<Record<string, string>> = { next: 'Next up', blocked: 'Blocked', archive: 'Archive' };
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -200,7 +222,7 @@
   <Sidebar
     projects={projects ?? []}
     {current}
-    routeName={route.name}
+    routeName={shown}
     groups={store?.view?.settings.groups ?? []}
     {stats}
     {query}
@@ -217,6 +239,7 @@
   <div class="stage">
     <TopBar
       active={store !== null}
+      filterable={shown === 'board' || shown === 'home'}
       {query}
       {lane}
       readonly={store?.readonly ?? true}
@@ -259,10 +282,16 @@
       {:else if current && store}
         <h1 class="sr-only">{current.name}</h1>
         {#if store.parseError}<ParseBanner error={store.parseError} />{/if}
-        {#if route.name === 'home' || route.name === 'board' || route.name === 'card'}
-          <Board {store} project={current.name} {lane} onAddCard={addCard} {adding} onCloseAdd={() => (adding = null)} />
+        {#if shown === 'next' || shown === 'blocked'}
+          {#key current.name}
+            <ListView {store} project={current.name} kind={shown} onNewCard={newCard} />
+          {/key}
+        {:else if shown === 'archive'}
+          {#key current.name}
+            <ArchiveView {store} project={current.name} />
+          {/key}
         {:else}
-          <h1 class="page">{viewTitle[route.name] ?? ''}</h1>
+          <Board {store} project={current.name} {lane} onAddCard={addCard} {adding} onCloseAdd={() => (adding = null)} />
         {/if}
       {/if}
     </main>

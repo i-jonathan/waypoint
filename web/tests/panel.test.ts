@@ -78,6 +78,7 @@ function server(initial: CardView[]) {
       state.cards = state.cards.filter((x) => x.id !== id);
     }),
     archiveDone: vi.fn<BoardApi['archiveDone']>(),
+    restore: vi.fn<BoardApi['restore']>(),
     putProjectSettings: vi.fn<BoardApi['putProjectSettings']>(),
   };
   return { state, api, response };

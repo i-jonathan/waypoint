@@ -9,6 +9,8 @@
   interface Props {
     /** False when no board is on screen: only the menu button shows. */
     active: boolean;
+    /** False on Next up, Blocked and Archive: the filter and the swimlane toggle belong to the board. */
+    filterable?: boolean;
     query: string;
     lane: Swimlane;
     /** While true, New card is disabled. */
@@ -20,7 +22,7 @@
     onMenu: () => void;
   }
 
-  let { active, query, lane, readonly, menuOpen, onQuery, onLane, onNewCard, onMenu }: Props = $props();
+  let { active, filterable = true, query, lane, readonly, menuOpen, onQuery, onLane, onNewCard, onMenu }: Props = $props();
 
   let input: HTMLInputElement | undefined = $state();
 
@@ -32,6 +34,7 @@
   function onKey(e: KeyboardEvent) {
     if (!active || e.metaKey || e.ctrlKey || e.altKey || typing(e.target)) return;
     if (e.key === '/') {
+      if (!filterable) return;
       e.preventDefault();
       input?.focus();
     } else if (e.key === 'n' || e.key === 'N') {
@@ -64,51 +67,55 @@
   </button>
 
   {#if active}
-    <div class="q-wrap" role="search">
-      <label class="q" class:filled={query !== ''}>
-        <MagnifyingGlass size={15} aria-hidden="true" />
-        <input
-          bind:this={input}
-          type="text"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="Filter"
-          aria-label="Filter cards"
-          aria-describedby="filter-hint"
-          aria-keyshortcuts="/"
-          value={query}
-          oninput={(e) => onQuery(e.currentTarget.value)}
-          onkeydown={onInputKey}
-        />
-        <code id="filter-hint" class="hint">p0 blocked group:security</code>
-      </label>
-    </div>
+    {#if filterable}
+      <div class="q-wrap" role="search">
+        <label class="q" class:filled={query !== ''}>
+          <MagnifyingGlass size={15} aria-hidden="true" />
+          <input
+            bind:this={input}
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Filter"
+            aria-label="Filter cards"
+            aria-describedby="filter-hint"
+            aria-keyshortcuts="/"
+            value={query}
+            oninput={(e) => onQuery(e.currentTarget.value)}
+            onkeydown={onInputKey}
+          />
+          <code id="filter-hint" class="hint">p0 blocked group:security</code>
+        </label>
+      </div>
 
-    <div class="seg" role="group" aria-label="View">
-      <button class:on={lane === 'none'} aria-pressed={lane === 'none'} aria-label="Board" title="Board" onclick={() => onLane('none')}>
-        <Columns size={15} aria-hidden="true" />
-      </button>
-      <button
-        class:on={lane !== 'none'}
-        aria-pressed={lane !== 'none'}
-        aria-label="Swimlanes"
-        title="Swimlanes"
-        onclick={() => lane === 'none' && onLane('group')}
-      >
-        <Rows size={15} aria-hidden="true" />
-      </button>
-    </div>
+      <div class="seg" role="group" aria-label="View">
+        <button class:on={lane === 'none'} aria-pressed={lane === 'none'} aria-label="Board" title="Board" onclick={() => onLane('none')}>
+          <Columns size={15} aria-hidden="true" />
+        </button>
+        <button
+          class:on={lane !== 'none'}
+          aria-pressed={lane !== 'none'}
+          aria-label="Swimlanes"
+          title="Swimlanes"
+          onclick={() => lane === 'none' && onLane('group')}
+        >
+          <Rows size={15} aria-hidden="true" />
+        </button>
+      </div>
 
-    {#if lane !== 'none'}
-      <select
-        class="lane"
-        aria-label="Swimlanes by"
-        value={lane}
-        onchange={(e) => onLane(e.currentTarget.value as Swimlane)}
-      >
-        <option value="group">Group</option>
-        <option value="priority">Priority</option>
-      </select>
+      {#if lane !== 'none'}
+        <select
+          class="lane"
+          aria-label="Swimlanes by"
+          value={lane}
+          onchange={(e) => onLane(e.currentTarget.value as Swimlane)}
+        >
+          <option value="group">Group</option>
+          <option value="priority">Priority</option>
+        </select>
+      {/if}
+    {:else}
+      <div class="grow"></div>
     {/if}
 
     <button
@@ -131,6 +138,10 @@
     flex-wrap: wrap;
     gap: 10px;
     align-items: center;
+  }
+
+  .grow {
+    flex: 1;
   }
 
   .q-wrap {

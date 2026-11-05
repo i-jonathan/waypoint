@@ -69,6 +69,7 @@ function fakeApi(whole: CardView[], filtered?: (q: string) => CardView[], settin
     check: vi.fn<BoardApi['check']>(),
     deleteCard: vi.fn<BoardApi['deleteCard']>(),
     archiveDone: vi.fn<BoardApi['archiveDone']>(),
+    restore: vi.fn<BoardApi['restore']>(),
     putProjectSettings: vi.fn<BoardApi['putProjectSettings']>(),
   };
 }

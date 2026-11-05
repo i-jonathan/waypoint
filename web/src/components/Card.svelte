@@ -18,11 +18,13 @@
     tabbable: boolean;
     /** This card is being dragged: its place stays, faded. */
     dragging: boolean;
+    /** False in a list that cannot be dragged: no grab cursor and no grip. */
+    drag?: boolean;
     onOpen: (id: string) => void;
-    onPointerDown: (e: PointerEvent, id: string, el: HTMLElement) => void;
+    onPointerDown?: (e: PointerEvent, id: string, el: HTMLElement) => void;
   }
 
-  let { card, done, top, color, tabbable, dragging, onOpen, onPointerDown }: Props = $props();
+  let { card, done, top, color, tabbable, dragging, drag = true, onOpen, onPointerDown }: Props = $props();
 
   const blockers = $derived(card.blockers.map((b) => (b.missing ? `${b.id} (missing)` : b.id)));
 
@@ -42,12 +44,13 @@
   class:next={card.next}
   class:done
   class:ghost={dragging}
+  class:still={!drag}
   role="button"
   tabindex={tabbable ? 0 : -1}
   data-card-id={card.id}
   aria-label={label}
-  aria-keyshortcuts="M"
-  onpointerdown={(e) => onPointerDown(e, card.id, e.currentTarget)}
+  aria-keyshortcuts={drag ? 'M' : undefined}
+  onpointerdown={(e) => onPointerDown?.(e, card.id, e.currentTarget)}
   onclick={() => onOpen(card.id)}
 >
   {#if card.next}
@@ -58,7 +61,7 @@
     {#if done}<Check size={12} weight="bold" aria-hidden="true" />{/if}
     <span>{card.id}</span>
     {#if card.priority !== ''}<span class={top ? 'p0' : 'p1'}>{card.priority}</span>{/if}
-    <span class="grip" data-drag-handle aria-hidden="true"><DotsSixVertical size={16} weight="bold" /></span>
+    {#if drag}<span class="grip" data-drag-handle aria-hidden="true"><DotsSixVertical size={16} weight="bold" /></span>{/if}
   </div>
 
   <div class="t" class:struck={done}>{card.title}</div>
@@ -99,6 +102,10 @@
     /* Scrolling still works by touch: a long press (or the grip) is what picks a card up. */
     touch-action: pan-x pan-y;
     transition: box-shadow 150ms ease-out, transform 150ms ease-out;
+  }
+
+  .card.still {
+    cursor: pointer;
   }
 
   .card:focus-visible {

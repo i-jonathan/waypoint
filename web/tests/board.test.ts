@@ -67,6 +67,7 @@ function fakeApi() {
     check: vi.fn<BoardApi['check']>(),
     deleteCard: vi.fn<BoardApi['deleteCard']>(),
     archiveDone: vi.fn<BoardApi['archiveDone']>(),
+    restore: vi.fn<BoardApi['restore']>(),
     putProjectSettings: vi.fn<BoardApi['putProjectSettings']>(),
   };
 }
@@ -742,8 +743,9 @@ describe('a board file that does not parse', () => {
     await expect(store.patch('A', { title: 'x' })).rejects.toMatchObject(refused);
     await expect(store.remove('A')).rejects.toMatchObject(refused);
     await expect(store.archiveDone()).rejects.toMatchObject(refused);
+    await expect(store.restore('A')).rejects.toMatchObject(refused);
     await expect(store.updateSettings({ settings })).rejects.toMatchObject(refused);
-    for (const fn of [api.move, api.check, api.createCard, api.patch, api.deleteCard, api.archiveDone, api.putProjectSettings]) {
+    for (const fn of [api.move, api.check, api.createCard, api.patch, api.deleteCard, api.archiveDone, api.restore, api.putProjectSettings]) {
       expect(fn).not.toHaveBeenCalled();
     }
     expect(order(store)).toEqual(before);
@@ -830,6 +832,66 @@ describe('other writes', () => {
     api.archiveDone.mockResolvedValue({ archived: ['D'] });
     expect(await store.archiveDone()).toEqual(['D']);
     expect(order(store)).toEqual(['A', 'B', 'C']);
+  });
+
+  it('restores an archived card through the queue, into the board', async () => {
+    const { api, store } = await loaded();
+    const back = { ...card('Z', 'todo'), archived: false };
+    api.restore.mockResolvedValue(back);
+    expect(await store.restore('Z', 'todo')).toEqual(back);
+    expect(api.restore).toHaveBeenCalledWith('Home', 'Z', 'todo');
+    expect(order(store, 'todo')).toEqual(['A', 'B', 'C', 'Z']);
+  });
+
+  it('restores without a column when none is chosen', async () => {
+    const { api, store } = await loaded();
+    api.restore.mockResolvedValue(card('Z', 'todo'));
+    await store.restore('Z');
+    expect(api.restore).toHaveBeenCalledWith('Home', 'Z', undefined);
+  });
+
+  it('runs a restore after the writes queued before it', async () => {
+    const { api, store } = await loaded();
+    const first = deferred<CardView>();
+    api.move.mockReturnValue(first.promise);
+    api.restore.mockResolvedValue(card('Z', 'todo'));
+    void store.move('C', 'todo', 0);
+    const done = store.restore('Z');
+    await settle();
+    expect(api.restore).not.toHaveBeenCalled();
+    first.resolve(card('C', 'todo'));
+    await done;
+    expect(api.restore).toHaveBeenCalledTimes(1);
+  });
+
+  it('toasts the server message of a refused restore and rejects', async () => {
+    const { api, store } = await loaded();
+    api.restore.mockRejectedValue(new ApiError(422, 'move_not_allowed', 'Todo is at its WIP limit (2/2)'));
+    api.board.mockResolvedValue(response(start));
+    await expect(store.restore('Z', 'todo')).rejects.toMatchObject({ status: 422 });
+    expect(toasts.items.map((t) => t.msg)).toEqual(['Todo is at its WIP limit (2/2)']);
+    expect(order(store)).toEqual(['A', 'B', 'C', 'D']);
+  });
+
+  it('refuses a restore while the board is read-only', async () => {
+    const { api, store } = await loaded();
+    api.board.mockRejectedValue(new ApiError(423, 'parse', 'bad', { line: 3 }));
+    await store.refresh();
+    await expect(store.restore('Z')).rejects.toMatchObject({ status: 423 });
+    expect(api.restore).not.toHaveBeenCalled();
+  });
+
+  it('counts the changed events of its own project, so a view can reload', async () => {
+    const { store } = await loaded();
+    const before = store.changes;
+    store.handleEvent({ type: 'changed', project: 'Other' });
+    expect(store.changes).toBe(before);
+    store.handleEvent({ type: 'projects', project: 'Home' });
+    expect(store.changes).toBe(before);
+    store.handleEvent({ type: 'changed', project: 'Home' });
+    expect(store.changes).toBe(before + 1);
+    store.handleEvent({ type: 'changed', project: '*' });
+    expect(store.changes).toBe(before + 2);
   });
 
   it('throws a patch conflict for the panel without a toast', async () => {

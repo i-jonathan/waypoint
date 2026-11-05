@@ -151,6 +151,7 @@ async function mountBoard(props: { adding: string | null; lane?: 'none' | 'group
     check: vi.fn<BoardApi['check']>(),
     deleteCard: vi.fn<BoardApi['deleteCard']>(),
     archiveDone: vi.fn<BoardApi['archiveDone']>(),
+    restore: vi.fn<BoardApi['restore']>(),
     putProjectSettings: vi.fn<BoardApi['putProjectSettings']>(),
   };
   store = createBoardStore(api, 'Home');
