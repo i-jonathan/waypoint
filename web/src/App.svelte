@@ -7,9 +7,12 @@
   import ArchiveView from './components/ArchiveView.svelte';
   import Board from './components/Board.svelte';
   import CardPanel from './components/CardPanel.svelte';
+  import GlobalSettings from './components/GlobalSettings.svelte';
   import ListView from './components/ListView.svelte';
+  import NewProjectDialog from './components/NewProjectDialog.svelte';
   import Notice from './components/Notice.svelte';
   import ParseBanner from './components/ParseBanner.svelte';
+  import ProjectSettings from './components/ProjectSettings.svelte';
   import Sidebar from './components/Sidebar.svelte';
   import Toast from './components/Toast.svelte';
   import TopBar from './components/TopBar.svelte';
@@ -18,6 +21,7 @@
   import { summarize, type BoardStats } from './lib/boardStats';
   import { connectEvents, toasts } from './lib/events.svelte';
   import { toggleGroupTerm } from './lib/filter';
+  import { preview } from './lib/preview.svelte';
   import { href, navigate, route } from './lib/router.svelte';
   import { applyLook, DEFAULT_LOOK, loadLook, saveLook, systemPrefersLight, watchSystemTheme, type Look } from './lib/theme';
   import type { ProjectInfo, Swimlane } from './lib/types';
@@ -75,6 +79,8 @@
     const stream = connectEvents((e) => {
       // A stream that came back may have missed anything, which it reports as project '*'.
       if (e.type === 'projects' || e.project === '*') void loadProjects();
+      // The app settings changed, and every board's resolved look may have moved with them.
+      if (e.type === 'projects') void store?.refresh();
       store?.handleEvent(e);
     });
     events = stream;
@@ -99,11 +105,17 @@
   });
 
   // The project's accent is known from the project list before its board has loaded.
-  const look = $derived<Look>({ ...base, accent: store?.appearance?.accent ?? current?.accent ?? base.accent });
+  const saved = $derived<Look>({ ...base, accent: store?.appearance?.accent ?? current?.accent ?? base.accent });
+
+  // A settings form can try a look on; it shows over the saved one, and is never kept.
+  const look = $derived(preview.look ?? saved);
 
   $effect(() => {
     applyLook(look, systemLight);
-    saveLook(look);
+  });
+
+  $effect(() => {
+    saveLook(saved);
   });
 
   $effect(() => {
@@ -158,12 +170,21 @@
     document.getElementById('board')?.focus();
   }
 
-  // The dialogs for these two arrive with the settings screens; until then they open Settings.
+  // ----- New project and Open existing file: one dialog, two tabs -----
+  let dialog = $state<'create' | 'open' | null>(null);
+
   function newProject() {
-    navigate('/settings');
+    dialog = 'create';
   }
   function openExisting() {
-    navigate('/settings');
+    dialog = 'open';
+  }
+
+  async function created(name: string) {
+    // The list has to know the project before the route can name it.
+    await loadProjects();
+    dialog = null;
+    navigate(href({ name: 'board', project: name, search: '' }));
   }
 
   // ----- Quick add: open in one column at a time -----
@@ -260,6 +281,13 @@
             {/snippet}
           </Notice>
         {/if}
+      {:else if route.name === 'settings'}
+        <GlobalSettings
+          onSaved={() => {
+            void loadProjects();
+            void store?.refresh();
+          }}
+        />
       {:else if projects.length === 0}
         <Notice icon={MapPin} title="Start your first board">
           A project is one Markdown file. Make a new one, or open a board file you already have.
@@ -277,8 +305,13 @@
           <p class="why">{current.error}</p>
           {#if !current.error.includes(current.path)}<p class="where mono">{current.path}</p>{/if}
         </Notice>
-      {:else if route.name === 'settings' || route.name === 'projectSettings'}
-        <h1 class="page">Settings</h1>
+      {:else if route.name === 'projectSettings'}
+        {#if current && store}
+          {#if store.parseError}<ParseBanner error={store.parseError} />{/if}
+          {#key current.name}
+            <ProjectSettings {store} project={current.name} info={current} />
+          {/key}
+        {/if}
       {:else if current && store}
         <h1 class="sr-only">{current.name}</h1>
         {#if store.parseError}<ParseBanner error={store.parseError} />{/if}
@@ -303,6 +336,10 @@
     {/key}
   {/if}
 </div>
+
+{#if dialog}
+  <NewProjectDialog initialTab={dialog} onClose={() => (dialog = null)} onCreated={created} />
+{/if}
 
 <Toast />
 
@@ -365,13 +402,6 @@
     inset: 0;
     border: 0;
     background: color-mix(in srgb, var(--bg) 70%, transparent);
-  }
-
-  .page {
-    margin: 0;
-    font-size: 22px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
   }
 
   .why,

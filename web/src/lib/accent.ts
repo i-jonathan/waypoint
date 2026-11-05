@@ -40,3 +40,22 @@ export function contrast(a: string, b: string): number {
 export function accentInk(hex: string): typeof DARK_INK | typeof LIGHT_INK {
   return contrast(DARK_INK, hex) >= contrast(LIGHT_INK, hex) ? DARK_INK : LIGHT_INK;
 }
+
+/** The canvas colour behind the board in each theme (the `bg` token). */
+const CANVAS: Record<Theme, string> = { dark: '#0f1714', light: '#e9eee8' };
+
+const MIN_EDGE = 3;
+const MIN_TEXT = 4.5;
+
+/** The accent as a custom #rrggbb colour is used for both themes: what is wrong with it in `theme`, if anything. */
+export function accentWarnings(hex: string, theme: Theme): string[] {
+  if (!HEX.test(hex)) return [];
+  const out: string[] = [];
+  if (contrast(hex, CANVAS[theme]) < MIN_EDGE) {
+    out.push(`This colour is hard to see on the ${theme} background: it does not reach 3:1 contrast.`);
+  }
+  if (contrast(accentInk(hex), hex) < MIN_TEXT) {
+    out.push('Text on this colour does not reach 4.5:1 contrast.');
+  }
+  return out;
+}

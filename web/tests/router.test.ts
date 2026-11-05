@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
-import { href, navigate, parsePath, route, type Route } from '../src/lib/router.svelte';
+import { guardNavigation, href, navigate, parsePath, route, type Route } from '../src/lib/router.svelte';
 
 const cases: [string, Route][] = [
   ['/', { name: 'home', search: '' }],
@@ -114,5 +114,46 @@ describe('parsePath with names that are also Object properties', () => {
     for (const view of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
       expect(parsePath(`/p/X/${view}`), view).toEqual({ name: 'home', search: '' });
     }
+  });
+
+  describe('a navigation guard', () => {
+    it('can refuse a move, and is asked where to', () => {
+      navigate('/settings');
+      const asked: string[] = [];
+      const off = guardNavigation((to) => {
+        asked.push(to);
+        return false;
+      });
+      navigate('/p/Home');
+      off();
+      expect(asked).toEqual(['/p/Home']);
+      expect(route.name).toBe('settings');
+      expect(window.location.pathname).toBe('/settings');
+      navigate('/p/Home'); // removed: moves again
+      expect(route.name).toBe('board');
+    });
+
+    it('puts the page back when a refused Back has already moved the address', () => {
+      navigate('/settings');
+      navigate('/p/Home');
+      const off = guardNavigation(() => false);
+      window.history.pushState(null, '', '/settings'); // what the browser did on Back
+      window.dispatchEvent(new PopStateEvent('popstate'));
+      off();
+      expect(window.location.pathname).toBe('/p/Home');
+      expect(route.name).toBe('board');
+    });
+
+    it('lets the newest guard win and only the owner remove it', () => {
+      navigate('/p/Home');
+      const a = guardNavigation(() => true);
+      const b = guardNavigation(() => false);
+      a(); // an old owner's cleanup does not remove the newer guard
+      navigate('/settings');
+      expect(route.name).toBe('board');
+      b();
+      navigate('/settings');
+      expect(route.name).toBe('settings');
+    });
   });
 });

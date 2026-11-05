@@ -7,6 +7,7 @@
   import MapPin from 'phosphor-svelte/lib/MapPin';
   import NavigationArrow from 'phosphor-svelte/lib/NavigationArrow';
   import Prohibit from 'phosphor-svelte/lib/Prohibit';
+  import SlidersHorizontal from 'phosphor-svelte/lib/SlidersHorizontal';
   import type { BoardStats } from '../lib/boardStats';
   import { groupColor } from '../lib/colors';
   import { hasGroupTerm } from '../lib/filter';
@@ -64,12 +65,8 @@
     { route: 'archive', label: 'Archive', icon: Archive },
   ]);
 
-  const settingsHref = $derived(
-    current
-      ? href({ name: 'projectSettings', project: current.name, search: '' })
-      : href({ name: 'settings', search: '' }),
-  );
-  const settingsActive = $derived(routeName === 'settings' || routeName === 'projectSettings');
+  const projectSettingsHref = $derived(current ? href({ name: 'projectSettings', project: current.name, search: '' }) : '');
+  const appSettingsHref = href({ name: 'settings', search: '' });
 </script>
 
 <aside id="sidebar" class="rail" class:open aria-label="Sidebar">
@@ -123,14 +120,25 @@
     {/if}
   </div>
 
+  {#if current}
+    <a
+      class="rl"
+      class:on={routeName === 'projectSettings'}
+      aria-current={routeName === 'projectSettings' ? 'page' : undefined}
+      href={projectSettingsHref}
+      onclick={go}
+    >
+      <SlidersHorizontal size={16} aria-hidden="true" /><span>Project settings</span>
+    </a>
+  {/if}
   <a
     class="rl"
-    class:on={settingsActive}
-    aria-current={settingsActive ? 'page' : undefined}
-    href={settingsHref}
+    class:on={routeName === 'settings'}
+    aria-current={routeName === 'settings' ? 'page' : undefined}
+    href={appSettingsHref}
     onclick={go}
   >
-    <GearSix size={16} aria-hidden="true" /><span>Settings</span>
+    <GearSix size={16} aria-hidden="true" /><span>App settings</span>
   </a>
 </aside>
 

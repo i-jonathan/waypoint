@@ -86,13 +86,47 @@ function current(): string {
   return window.location.pathname + window.location.search + window.location.hash;
 }
 
-/** Goes to a path, which may carry a query string. */
-export function navigate(path: string) {
-  if (path !== current()) window.history.pushState(null, '', path);
-  apply(parsePath(current()));
+/**
+ * Asks before the route changes. A guard returns true to let the move happen, or
+ * false to stop it; it may then offer the move again itself once the owner agrees.
+ */
+export type NavigationGuard = (to: string) => boolean;
+
+let guard: NavigationGuard | null = null;
+
+/** Installs a guard, and returns the function that removes it. One guard at a time: the newest wins. */
+export function guardNavigation(fn: NavigationGuard): () => void {
+  guard = fn;
+  return () => {
+    if (guard === fn) guard = null;
+  };
 }
+
+/** Goes to a path, which may carry a query string. A guard may refuse. */
+export function navigate(path: string) {
+  if (path === current()) {
+    apply(parsePath(path));
+    return;
+  }
+  if (guard && !guard(path)) return;
+  window.history.pushState(null, '', path);
+  shown = current();
+  apply(parsePath(shown));
+}
+
+/** The path on screen, which a refused Back or Forward puts back. */
+let shown = typeof window === 'undefined' ? '/' : current();
 
 if (typeof window !== 'undefined') {
   apply(parsePath(current()));
-  window.addEventListener('popstate', () => apply(parsePath(current())));
+  window.addEventListener('popstate', () => {
+    const to = current();
+    if (guard && !guard(to)) {
+      // The browser has already moved; push the page it left back on top, so the form stays where it was.
+      window.history.pushState(null, '', shown);
+      return;
+    }
+    shown = to;
+    apply(parsePath(to));
+  });
 }
