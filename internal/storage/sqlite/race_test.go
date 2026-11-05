@@ -2,6 +2,7 @@ package sqlite_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -166,5 +167,34 @@ func TestSaveUnderLockIsAllOrNothing(t *testing.T) {
 	}
 	if len(got.Cards) != 0 {
 		t.Fatalf("after the failed save the board holds %d cards, want the 0 it had", len(got.Cards))
+	}
+}
+
+func TestLockGivesUpWhenSomeoneHoldsTheDatabaseForGood(t *testing.T) {
+	r, path := newDB(t)
+	old := sqlite.SetLockWaitLimit(300 * time.Millisecond)
+	defer sqlite.SetLockWaitLimit(old)
+
+	holder, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	conn, err := holder.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	_, err = r.Lock(context.Background()) // no deadline of its own
+	if err == nil || !strings.Contains(err.Error(), "database is busy") {
+		t.Fatalf("Lock = %v, want the busy message", err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("Lock took %v to give up", took)
 	}
 }

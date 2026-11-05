@@ -13,6 +13,10 @@ import (
 // lockPoll is how often a waiting Lock tries again.
 const lockPoll = 10 * time.Millisecond
 
+// lockWaitLimit is how long Lock waits when its caller set no deadline, so a
+// program that holds the database for good makes a command fail instead of hang.
+var lockWaitLimit = 30 * time.Second
+
 // heldLock is the connection whose open write transaction is the lock. While it
 // is held every other writer, in any process, waits; readers do not (WAL).
 type heldLock struct {
@@ -24,6 +28,11 @@ type heldLock struct {
 // pinned connection and keeping it open until unlock. It waits until ctx is done.
 // Load and Save on this Repo then run inside that transaction.
 func (r *Repo) Lock(ctx context.Context) (func() error, error) {
+	if _, has := ctx.Deadline(); !has {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, lockWaitLimit)
+		defer cancel()
+	}
 	db, err := r.open(ctx)
 	if err != nil {
 		return nil, r.plain(err)
@@ -56,6 +65,16 @@ func (r *Repo) Lock(ctx context.Context) (func() error, error) {
 		}
 		release()
 		return nil, fmt.Errorf("the project database is busy: another program has it locked: %w", ctx.Err())
+	}
+	// The file may have been retired while this call waited for the lock.
+	var version int
+	if err := conn.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version < 0 {
+		conn.ExecContext(context.Background(), `ROLLBACK`)
+		release()
+		if err != nil {
+			return nil, r.plain(err)
+		}
+		return nil, fmt.Errorf("%s: %w", r.path, errRetired(latest()))
 	}
 	h := &heldLock{db: db, conn: conn}
 	r.mu.Lock()
@@ -109,5 +128,20 @@ func (h *heldLock) run(ctx context.Context, write bool, fn func(execer) error) (
 		return err
 	}
 	_, err = h.conn.ExecContext(ctx, `RELEASE op`)
+	return err
+}
+
+// Retire marks the database as converted away, inside the transaction the lock
+// holds. A writer that was already waiting for the lock gets it only to find
+// the mark and fail, instead of saving a card into a file the project has left.
+// Call it after the project's new home is registered and before unlock.
+func (r *Repo) Retire(ctx context.Context) error {
+	r.mu.Lock()
+	h := r.held
+	r.mu.Unlock()
+	if h == nil {
+		return errors.New("a database can be retired only while its lock is held")
+	}
+	_, err := h.conn.ExecContext(ctx, `PRAGMA user_version = -1`)
 	return err
 }

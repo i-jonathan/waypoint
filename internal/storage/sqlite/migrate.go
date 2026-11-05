@@ -80,6 +80,12 @@ func latest() int {
 	return ms[len(ms)-1].version
 }
 
+// errRetired is the error for a database that a conversion has retired (see
+// Retire): its project now lives in another file.
+func errRetired(restore int) error {
+	return fmt.Errorf("%w: this database was converted to another storage and retired, and the project now lives elsewhere; run the command again. To use this file as a board again, run: sqlite3 FILE \"PRAGMA user_version = %d\"", domain.ErrInvalid, restore)
+}
+
 // validate proves db is a Waypoint database this build can use, reading only.
 func validate(ctx context.Context, db *sql.DB) error {
 	var version int
@@ -91,6 +97,8 @@ func validate(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("%w: not a readable SQLite database: %v", domain.ErrInvalid, err)
 	}
 	switch {
+	case version < 0:
+		return errRetired(latest())
 	case version == 0 || tables == 0:
 		return fmt.Errorf("%w: this file is not a Waypoint database", domain.ErrInvalid)
 	case version > latest():

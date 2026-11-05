@@ -560,3 +560,36 @@ func TestProjectConvertRefusals(t *testing.T) {
 	}
 	mustExist(t, filepath.Join(dir, "waypoint.db"))
 }
+
+func TestInitAdoptsAnExistingBoardMd(t *testing.T) {
+	dir := t.TempDir()
+	board := filepath.Join(dir, "BOARD.md")
+	writeFile(t, board, boardFile)
+
+	stdout, stderr, code := runCLI(t, dir, "init", "Adopted")
+	assertEq(t, code, 0)
+	assertEq(t, stderr, "")
+	assertContains(t, stdout, "(markdown)")
+	assertEq(t, readFile(t, board), boardFile)
+	mustNotExist(t, filepath.Join(dir, "waypoint.db"))
+	// And the folder works straight away.
+	_, _, code = runCLI(t, dir, "ls")
+	assertEq(t, code, 0)
+}
+
+func TestInitDoesNotAdoptNotesCalledBoardMd(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "BOARD.md"), "# my notes\n")
+	_, _, code := runCLI(t, dir, "init", "Fresh")
+	assertEq(t, code, 0)
+	mustExist(t, filepath.Join(dir, "waypoint.db"))
+	assertEq(t, readFile(t, filepath.Join(dir, "BOARD.md")), "# my notes\n")
+}
+
+func TestInitStorageSQLiteBesideABoardMdIsHonoured(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "BOARD.md"), boardFile)
+	_, _, code := runCLI(t, dir, "init", "--storage", "sqlite", "Both")
+	assertEq(t, code, 0)
+	mustExist(t, filepath.Join(dir, "waypoint.db"))
+}

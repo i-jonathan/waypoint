@@ -1301,3 +1301,13 @@ func TestConvertProjectAPIMismatchSaysWhichCard(t *testing.T) {
 	assertContains(t, e.Error, "T-1")
 	assertContains(t, e.Error, "#### or deeper")
 }
+
+func TestConvertProjectAPIChecksTheExtensionAndMakesNoFolders(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	deep := filepath.Join(f.dir, "new", "deep")
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "sqlite", "path": filepath.Join(deep, "notes.txt")}).wantCode(422, "invalid")
+	if _, err := os.Stat(filepath.Join(f.dir, "new")); err == nil {
+		t.Fatal("a refused conversion created folders")
+	}
+	assertEq(t, f.config().Projects[0].Storage, "markdown")
+}

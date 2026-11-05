@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -90,8 +91,16 @@ func (r *runner) cmdInit(args []string) int {
 		name = pos[0]
 	}
 	file := initSQLiteFile
-	if storageFlag == "markdown" {
+	switch storageFlag {
+	case "markdown":
 		file = initMarkdownFile
+	case "":
+		// A Waypoint BOARD.md already here is the board the user means, as it was
+		// before SQLite became the default: register it rather than start another.
+		md := filepath.Join(r.env.Cwd, initMarkdownFile)
+		if _, err := os.Lstat(filepath.Join(r.env.Cwd, initSQLiteFile)); err != nil && isWaypointBoard(r.ctx, md) {
+			file = initMarkdownFile
+		}
 	}
 	return r.addProject(name, filepath.Join(r.env.Cwd, file), prefix, storageFlag, file)
 }

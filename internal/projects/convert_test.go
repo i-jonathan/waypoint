@@ -2,13 +2,17 @@ package projects
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"waypoint/internal/app"
 	"waypoint/internal/config"
 	"waypoint/internal/domain"
 	"waypoint/internal/storage"
@@ -318,32 +322,6 @@ func (d dropsACard) Load(ctx context.Context) (*domain.Board, []domain.CardID, e
 	return b, assigned, err
 }
 
-func TestConvertRegistrySaveFailureRestoresTheOldFiles(t *testing.T) {
-	fixedDay(t)
-	cfgPath, env := sandbox(t)
-	dir := t.TempDir()
-	richProject(t, cfgPath, env, dir)
-	cfgBefore, _ := os.ReadFile(cfgPath)
-	filesBefore := listing(t, dir)
-
-	afterBackup = func() error { return errors.New("disk on fire") }
-	t.Cleanup(func() { afterBackup = func() error { return nil } })
-
-	_, err := Convert(context.Background(), cfgPath, env, "Rich", "sqlite", "")
-	if err == nil || !strings.Contains(err.Error(), "disk on fire") {
-		t.Fatalf("Convert = %v", err)
-	}
-	cfgAfter, _ := os.ReadFile(cfgPath)
-	if string(cfgBefore) != string(cfgAfter) {
-		t.Error("the registry changed")
-	}
-	if got := listing(t, dir); strings.Join(got, ",") != strings.Join(filesBefore, ",") {
-		t.Errorf("the old files were not put back: %v -> %v", filesBefore, got)
-	}
-	// And the board still opens where the registry says.
-	loadRef(t, registered(t, cfgPath, env, "Rich"))
-}
-
 func TestConvertAcrossDirectories(t *testing.T) {
 	fixedDay(t)
 	cfgPath, env := sandbox(t)
@@ -398,5 +376,206 @@ func TestConvertSQLiteToMarkdownLosslessnessRefusal(t *testing.T) {
 	cfgAfter, _ := os.ReadFile(cfgPath)
 	if string(cfgBefore) != string(cfgAfter) || exists(filepath.Join(dir, "lite.md")) {
 		t.Fatal("a refused conversion left changes behind")
+	}
+}
+
+// writers run Services against whatever the registry says, the way separate CLI
+// runs do, and remember every card Waypoint said it saved.
+type writers struct {
+	mu    sync.Mutex
+	acked []string
+	wg    sync.WaitGroup
+	stop  chan struct{}
+}
+
+func startWriters(t *testing.T, cfgPath string, env func(string) string, project string, n int) *writers {
+	t.Helper()
+	w := &writers{stop: make(chan struct{})}
+	for i := 0; i < n; i++ {
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			for j := 0; ; j++ {
+				select {
+				case <-w.stop:
+					return
+				default:
+				}
+				cfg, err := config.Load(cfgPath, env)
+				if err != nil {
+					continue
+				}
+				ref, ok := cfg.Find(project)
+				if !ok {
+					continue
+				}
+				repo, err := storage.Open(ref)
+				if err != nil {
+					continue
+				}
+				title := fmt.Sprintf("w%d-%d", i, j)
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				_, err = app.NewService(repo, time.Now).CreateCard(ctx, domain.NewCard{Title: title})
+				cancel()
+				if err == nil {
+					w.mu.Lock()
+					w.acked = append(w.acked, title)
+					w.mu.Unlock()
+				}
+			}
+		}()
+	}
+	return w
+}
+
+func (w *writers) finish() []string {
+	close(w.stop)
+	w.wg.Wait()
+	return w.acked
+}
+
+func TestConvertWhileWritersAreWritingLosesNothing(t *testing.T) {
+	cfgPath, env := sandbox(t)
+	dir := t.TempDir()
+	if _, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "Busy", Path: filepath.Join(dir, "busy.db"), Prefix: "T"}); err != nil {
+		t.Fatal(err)
+	}
+	w := startWriters(t, cfgPath, env, "Busy", 4)
+	time.Sleep(150 * time.Millisecond)
+	for round := 0; round < 4; round++ {
+		to, path := "markdown", filepath.Join(dir, fmt.Sprintf("r%d.md", round))
+		if round%2 == 1 {
+			to, path = "sqlite", filepath.Join(dir, fmt.Sprintf("r%d.db", round))
+		}
+		if _, err := Convert(context.Background(), cfgPath, env, "Busy", to, path); err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	acked := w.finish()
+	if len(acked) < 20 {
+		t.Fatalf("only %d writes were acknowledged; the test did not exercise anything", len(acked))
+	}
+	board := loadRef(t, registered(t, cfgPath, env, "Busy"))
+	have := map[string]bool{}
+	for _, c := range board.Cards {
+		have[c.Title] = true
+	}
+	var lost []string
+	for _, title := range acked {
+		if !have[title] {
+			lost = append(lost, title)
+		}
+	}
+	if len(lost) > 0 {
+		t.Fatalf("%d of %d acknowledged cards are not on the board, for example %v", len(lost), len(acked), lost[:min(5, len(lost))])
+	}
+}
+
+func TestConvertSQLiteBackupIsCompleteOnItsOwn(t *testing.T) {
+	fixedDay(t)
+	cfgPath, env := sandbox(t)
+	dir := t.TempDir()
+	ref, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "Lite", Path: filepath.Join(dir, "lite.db"), Prefix: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another program keeps the database open, so saves stay in the -wal file.
+	other, err := sql.Open("sqlite", ref.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	if err := other.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	repo, _ := storage.Open(ref)
+	svc := app.NewService(repo, time.Now)
+	for i := 0; i < 5; i++ {
+		if _, err := svc.CreateCard(context.Background(), domain.NewCard{Title: fmt.Sprintf("card %d", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Convert(context.Background(), cfgPath, env, "Lite", "markdown", ""); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := sql.Open("sqlite", filepath.Join(dir, "lite.db.bak-20261105"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backup.Close()
+	var n int
+	if err := backup.QueryRow(`SELECT count(*) FROM cards`).Scan(&n); err != nil || n != 5 {
+		t.Fatalf("the backup holds %d cards, %v; want 5 (its write-ahead log must travel with it under the name SQLite looks for)", n, err)
+	}
+}
+
+func TestConvertRetiresTheOldDatabase(t *testing.T) {
+	fixedDay(t)
+	cfgPath, env := sandbox(t)
+	dir := t.TempDir()
+	ref, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "Lite", Path: filepath.Join(dir, "lite.db"), Prefix: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Convert(context.Background(), cfgPath, env, "Lite", "markdown", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Anything still pointed at the old file is told so, and cannot write to it.
+	old := ref
+	old.Path = filepath.Join(dir, "lite.db.bak-20261105")
+	repo, _ := storage.Open(old)
+	if _, _, err := repo.Load(context.Background()); !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "converted") {
+		t.Fatalf("Load of a retired database = %v, want an ErrInvalid that says it was converted", err)
+	}
+	if _, err := repo.Lock(context.Background()); err == nil || !strings.Contains(err.Error(), "converted") {
+		t.Fatalf("Lock of a retired database = %v, want it refused", err)
+	}
+}
+
+func TestConvertRegistryAlwaysPointsAtABoardThatExists(t *testing.T) {
+	for name, seam := range map[string]*func() error{"after the copy": &afterCopy, "after the registry": &afterRegistry} {
+		t.Run(name, func(t *testing.T) {
+			fixedDay(t)
+			cfgPath, env := sandbox(t)
+			dir := t.TempDir()
+			_, original := richProject(t, cfgPath, env, dir)
+			old := *seam
+			*seam = func() error { return errors.New("power cut") }
+			t.Cleanup(func() { *seam = old })
+
+			if _, err := Convert(context.Background(), cfgPath, env, "Rich", "sqlite", ""); err == nil {
+				t.Fatal("Convert hid the failure")
+			}
+			ref := registered(t, cfgPath, env, "Rich")
+			if !exists(ref.Path) {
+				t.Fatalf("the registry points at %s, which does not exist: %v", ref.Path, listing(t, dir))
+			}
+			if got := loadRef(t, ref); !got.Equal(original) {
+				t.Fatal("the registered board is not the original")
+			}
+			for _, f := range listing(t, dir) {
+				if strings.HasPrefix(f, ".waypoint-convert") {
+					t.Errorf("a temporary copy was left behind: %s", f)
+				}
+			}
+		})
+	}
+}
+
+func TestHasShallowHeading(t *testing.T) {
+	for body, want := range map[string]bool{
+		"plain text":                   false,
+		"#### deep enough":             false,
+		"# one":                        true,
+		"text\n## two\nmore":           true,
+		"### three":                    true,
+		"#hashtag is not a heading":    false,
+		"```\n### inside a fence\n```": true, // conservative: the hint is advice, not a verdict
+	} {
+		b := &domain.Board{Cards: []domain.Card{{Body: body}}}
+		if got := hasShallowHeading(b); got != want {
+			t.Errorf("hasShallowHeading(%q) = %v, want %v", body, got, want)
+		}
 	}
 }

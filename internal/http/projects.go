@@ -124,6 +124,9 @@ func (a *api) convertProject(w http.ResponseWriter, r *http.Request) error {
 	if in.Path != "" && !filepath.IsAbs(in.Path) {
 		return invalidRequest("path must be an absolute path")
 	}
+	if in.Path != "" && !isBoardFile(in.Path) {
+		return invalidRequest("path must end in .md, .markdown, .db, .sqlite or .sqlite3")
+	}
 	res, err := projects.Convert(r.Context(), a.d.ConfigPath, a.d.Getenv, r.PathValue("p"), in.To, in.Path)
 	if err != nil {
 		return err

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,14 +22,21 @@ var (
 	now = time.Now
 	// openTarget opens the converted copy for the check that it matches.
 	openTarget = func(ref config.ProjectRef) (boardReader, error) { return storage.Open(ref) }
-	// afterBackup runs once the old files have been renamed and before the
-	// registry is saved.
-	afterBackup = func() error { return nil }
+	// afterCopy runs once the verified copy is in place, before the registry is saved.
+	afterCopy = func() error { return nil }
+	// afterRegistry runs once the registry points at the copy, before the old files move.
+	afterRegistry = func() error { return nil }
 )
 
 // boardReader is what the check of the converted copy needs.
 type boardReader interface {
 	Load(ctx context.Context) (*domain.Board, []domain.CardID, error)
+}
+
+// retirer is implemented by a repository that can mark its storage as left
+// behind (SQLite).
+type retirer interface {
+	Retire(ctx context.Context) error
 }
 
 // ConvertResult says what Convert did.
@@ -41,81 +49,111 @@ type ConvertResult struct {
 // and newPath an absolute path that must not exist yet; empty keeps the old
 // board's folder and name with the new extension.
 //
-// It takes the project's lock and the config lock, then:
-//  1. loads the whole project (settings, cards, archive);
-//  2. writes it to newPath through the target storage;
-//  3. loads the copy again and requires it to equal the original, and otherwise
-//     removes the copy and stops;
-//  4. renames the old files to <name>.bak-YYYYMMDD (-2, -3, ... if taken);
-//  5. points the registry at the new path.
+// It takes the project's lock and keeps it until the old files are out of the
+// way, so no write can land in a file that is about to become a backup. Then:
+//  1. load the whole project (settings, cards, archive);
+//  2. write it under a temporary name beside the target, load it again and
+//     require it to equal the original, and only then give it its real name;
+//  3. point the registry at it;
+//  4. mark a SQLite original as retired (so a writer that was waiting for it
+//     fails instead of saving into it) and rename the old files to
+//     <name>.bak-YYYYMMDD (-2, -3, ... if taken).
 //
-// The old files are never deleted. If any step fails, the registry is left as
-// it was, the copy is removed and any renamed files are put back.
+// The registry changes before the old files move, so a crash at any point
+// leaves it pointing at a board that exists. The old files are never deleted.
+// If a step before 3 fails, the copy is removed and nothing else has changed.
+// If step 4 fails, the project is already converted: Convert returns the
+// result with an error saying the old files stayed where they were.
 func Convert(ctx context.Context, cfgPath string, env func(string) string, name, to, newPath string) (ConvertResult, error) {
 	if to != "sqlite" && to != "markdown" {
 		return ConvertResult{}, fmt.Errorf("%w: storage %q must be sqlite or markdown", domain.ErrInvalid, to)
 	}
+	cfg0, err := config.Load(cfgPath, env)
+	if err != nil {
+		return ConvertResult{}, err
+	}
+	ref, ok := cfg0.Find(name)
+	if !ok {
+		return ConvertResult{}, fmt.Errorf("%w: no project named %q", domain.ErrNotFound, name)
+	}
+	if ref.Storage == to {
+		return ConvertResult{}, fmt.Errorf("%w: project %q is already stored as %s", domain.ErrInvalid, ref.Name, to)
+	}
+	src, err := storage.Open(ref)
+	if err != nil {
+		return ConvertResult{}, err
+	}
+	unlock, err := src.Lock(ctx)
+	if err != nil {
+		return ConvertResult{}, err
+	}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			_ = unlock() // the conversion is done or abandoned by now
+		}
+	}
+	defer release()
+
+	board, _, err := src.Load(ctx)
+	if err != nil {
+		return ConvertResult{}, err
+	}
+
 	var res ConvertResult
-	var undo func()
-	err := config.Update(cfgPath, env, func(cfg *config.Config) error {
-		ref, ok := cfg.Find(name)
-		if !ok {
-			return fmt.Errorf("%w: no project named %q", domain.ErrNotFound, name)
+	var removeCopy func()
+	err = config.Update(cfgPath, env, func(cfg *config.Config) error {
+		cur, ok := cfg.Find(name)
+		if !ok || cur.Path != ref.Path || cur.Storage != ref.Storage {
+			return fmt.Errorf("%w: project %q changed while it was being converted; try again", domain.ErrInvalid, name)
 		}
-		if ref.Storage == to {
-			return fmt.Errorf("%w: project %q is already stored as %s", domain.ErrInvalid, ref.Name, to)
-		}
-		target, err := convertTarget(cfg, ref, to, newPath)
+		target, err := convertTarget(cfg, cur, to, newPath)
 		if err != nil {
 			return err
 		}
-		dstRef := config.ProjectRef{Name: ref.Name, Storage: to, Path: target}
-
-		src, err := storage.Open(ref)
-		if err != nil {
-			return err
-		}
-		unlock, err := src.Lock(ctx)
-		if err != nil {
-			return err
-		}
-		// The lock is held through the renames, so no write can land in files
-		// that are about to become backups. Releasing it is best effort: the
-		// conversion is done by then.
-		defer func() { _ = unlock() }()
-
-		board, _, err := src.Load(ctx)
-		if err != nil {
-			return err
-		}
+		dstRef := config.ProjectRef{Name: cur.Name, Storage: to, Path: target}
 		if err := writeCopy(ctx, dstRef, board); err != nil {
 			return err
 		}
-		moved, restore, err := backUp(ref)
-		if err != nil {
-			removeBoardFiles(dstRef)
-			return err
-		}
-		undo = func() {
-			restore()
-			removeBoardFiles(dstRef)
-		}
-		if err := afterBackup(); err != nil {
+		removeCopy = func() { removeBoardFiles(dstRef) }
+		if err := afterCopy(); err != nil {
 			return err
 		}
 		for i := range cfg.Projects {
-			if cfg.Projects[i].Name == ref.Name {
+			if cfg.Projects[i].Name == cur.Name {
 				cfg.Projects[i].Path, cfg.Projects[i].Storage = target, to
-				res = ConvertResult{Ref: cfg.Projects[i], Backups: moved}
+				res.Ref = cfg.Projects[i]
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		if undo != nil {
-			undo()
+		if removeCopy != nil { // the copy was made but the registry was not saved
+			removeCopy()
 		}
 		return ConvertResult{}, err
+	}
+
+	// The registry now points at the copy. From here the project is converted.
+	if err := afterRegistry(); err != nil {
+		return res, err
+	}
+	var problems []string
+	if r, ok := src.(retirer); ok { // SQLite: retire, let go, then move the files
+		if err := r.Retire(ctx); err != nil {
+			problems = append(problems, "could not mark the old database as retired: "+err.Error())
+		}
+		release()
+	}
+	moved, err := backUp(ref)
+	release() // markdown: the files moved while the lock was held
+	res.Backups = moved
+	if err != nil {
+		problems = append(problems, err.Error())
+	}
+	if len(problems) > 0 {
+		return res, fmt.Errorf("project %q now uses %s, but %s; the old files stayed where they were", ref.Name, res.Ref.Path, strings.Join(problems, " and "))
 	}
 	return res, nil
 }
@@ -162,34 +200,80 @@ func exists(path string) bool {
 	return err == nil
 }
 
-// writeCopy creates the new board, saves board into it and checks that reading
-// it back gives the same board. On any failure the copy is removed.
+// writeCopy writes board to dst by way of a temporary name beside it, checks that
+// reading the copy back gives the same board, and only then gives it its real
+// name. A crash leaves at worst a .waypoint-convert-* file to delete by hand;
+// any failure removes the copy. Nothing at dst is ever overwritten.
 func writeCopy(ctx context.Context, dst config.ProjectRef, board *domain.Board) error {
-	repo, err := storage.Create(dst, board.Settings)
+	tmp := dst
+	tmp.Path = filepath.Join(filepath.Dir(dst.Path), fmt.Sprintf(".waypoint-convert-%d-%d%s", os.Getpid(), time.Now().UnixNano(), filepath.Ext(dst.Path)))
+	defer removeBoardFiles(tmp) // whatever is left under the temporary name
+
+	repo, err := storage.Create(tmp, board.Settings)
 	if err != nil {
-		removeBoardFiles(dst)
 		return err
 	}
 	if err := repo.Save(ctx, board); err != nil {
-		removeBoardFiles(dst)
 		return err
 	}
-	r, err := openTarget(dst)
-	if err == nil {
-		var got *domain.Board
-		if got, _, err = r.Load(ctx); err == nil {
-			if d := difference(board, got); d != "" {
-				hint := ""
-				if dst.Storage == "markdown" {
-					hint = ". A Markdown board keeps only headings of #### or deeper inside a card, so edit that card's body and convert again"
-				}
-				err = fmt.Errorf("%w: the converted copy did not match the original (%s); nothing was changed%s", domain.ErrInvalid, d, hint)
+	r, err := openTarget(tmp)
+	if err != nil {
+		return err
+	}
+	got, _, err := r.Load(ctx)
+	if err != nil {
+		return err
+	}
+	if d := difference(board, got); d != "" {
+		hint := ""
+		if dst.Storage == "markdown" && hasShallowHeading(board) {
+			hint = ". A Markdown board keeps only headings of #### or deeper inside a card, so edit that card's body and convert again"
+		}
+		return fmt.Errorf("%w: the converted copy did not match the original (%s); nothing was changed%s", domain.ErrInvalid, d, hint)
+	}
+	return install(tmp, dst)
+}
+
+var shallowHeading = regexp.MustCompile(`(?m)^#{1,3}[ \t]`)
+
+// hasShallowHeading reports whether any card body has a heading a Markdown
+// board would read as structure.
+func hasShallowHeading(b *domain.Board) bool {
+	for _, list := range [][]domain.Card{b.Cards, b.Archived} {
+		for _, c := range list {
+			if shallowHeading.MatchString(c.Body) {
+				return true
 			}
 		}
 	}
-	if err != nil {
-		removeBoardFiles(dst)
-		return err
+	return false
+}
+
+// install gives the copy at from its real name at to, without overwriting
+// anything: a hard link fails if the name is taken, and the temporary name is
+// removed after. A markdown archive follows its board.
+func install(from, to config.ProjectRef) error {
+	pairs := [][2]string{{from.Path, to.Path}}
+	if to.Storage == "markdown" {
+		if exists(markdown.ArchiveFile(from.Path)) {
+			pairs = append(pairs, [2]string{markdown.ArchiveFile(from.Path), markdown.ArchiveFile(to.Path)})
+		}
+	} else {
+		for _, side := range []string{"-wal", "-shm"} {
+			if exists(from.Path + side) {
+				pairs = append(pairs, [2]string{from.Path + side, to.Path + side})
+			}
+		}
+	}
+	var linked []string
+	for _, p := range pairs {
+		if err := os.Link(p[0], p[1]); err != nil {
+			for _, l := range linked {
+				os.Remove(l)
+			}
+			return fmt.Errorf("give the converted copy its name %s: %w", p[1], err)
+		}
+		linked = append(linked, p[1])
 	}
 	return nil
 }
@@ -231,62 +315,80 @@ func removeBoardFiles(ref config.ProjectRef) {
 	}
 }
 
+// oldFile is one file of the project being left, and where its backup goes.
+type oldFile struct {
+	path string
+	side string // "-wal" or "-shm" for a SQLite side file, else ""
+}
+
 // boardFilesOf lists the files that hold a project now, as they really are on
-// disk (symlinks resolved), keeping the ones that exist.
-func boardFilesOf(ref config.ProjectRef) []string {
-	var paths []string
+// disk (symlinks resolved), keeping the ones that exist. The main file comes first.
+func boardFilesOf(ref config.ProjectRef) []oldFile {
+	var files []oldFile
 	if ref.Storage == "markdown" {
 		board, archive := markdown.New(ref.Path).Files()
-		paths = []string{board, archive}
+		files = []oldFile{{path: board}, {path: archive}}
 	} else {
 		real := ref.Path
 		if r, err := filepath.EvalSymlinks(ref.Path); err == nil {
 			real = r
 		}
-		paths = []string{real, real + "-wal", real + "-shm"}
+		files = []oldFile{{path: real}, {path: real + "-wal", side: "-wal"}, {path: real + "-shm", side: "-shm"}}
 	}
-	var out []string
-	for _, p := range paths {
-		if p != "" && exists(p) {
-			out = append(out, p)
+	var out []oldFile
+	for _, f := range files {
+		if f.path != "" && exists(f.path) {
+			out = append(out, f)
 		}
 	}
 	return out
 }
 
 // backUp renames the old project's files to <name>.bak-YYYYMMDD, using -2, -3,
-// ... for the whole set when any of those names is taken. It returns the new
-// names, and a function that puts everything back. If a rename fails, the ones
-// done are undone before the error returns.
-func backUp(ref config.ProjectRef) (moved []string, restore func(), err error) {
+// ... for the whole set when any of those names is taken. A SQLite database's
+// -wal and -shm files are named after its backup (X.db.bak-DATE-wal), which is
+// where SQLite looks for them, so the backup opens on its own. It returns the
+// new names. If a rename fails, the ones done are undone first.
+func backUp(ref config.ProjectRef) (moved []string, err error) {
 	files := boardFilesOf(ref)
+	if len(files) == 0 {
+		return nil, nil
+	}
 	stamp := ".bak-" + now().Format("20060102")
+	dest := func(suffix string) []string {
+		main := files[0].path + stamp + suffix
+		out := make([]string, len(files))
+		for i, f := range files {
+			if f.side != "" {
+				out[i] = main + f.side
+			} else if i == 0 {
+				out[i] = main
+			} else {
+				out[i] = f.path + stamp + suffix
+			}
+		}
+		return out
+	}
 	suffix := ""
 	for n := 2; ; n++ {
 		taken := false
-		for _, f := range files {
-			if exists(f + stamp + suffix) {
-				taken = true
-			}
+		for _, d := range dest(suffix) {
+			taken = taken || exists(d)
 		}
 		if !taken {
 			break
 		}
 		suffix = fmt.Sprintf("-%d", n)
 	}
-	var from []string
-	restore = func() {
-		for i := len(from) - 1; i >= 0; i-- {
-			os.Rename(moved[i], from[i])
+	to := dest(suffix)
+	for i, f := range files {
+		if err := os.Rename(f.path, to[i]); err != nil {
+			for j := i - 1; j >= 0; j-- {
+				os.Rename(to[j], files[j].path)
+			}
+			return nil, fmt.Errorf("could not keep the old file %s as %s: %v", f.path, to[i], err)
 		}
+		moved = append(moved, to[i])
 	}
-	for _, f := range files {
-		to := f + stamp + suffix
-		if err := os.Rename(f, to); err != nil {
-			restore()
-			return nil, func() {}, fmt.Errorf("keep the old file %s as %s: %w", f, to, err)
-		}
-		from, moved = append(from, f), append(moved, to)
-	}
-	return moved, restore, nil
+	return moved, nil
 }
