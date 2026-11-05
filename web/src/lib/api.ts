@@ -115,9 +115,13 @@ export const api = {
   /** Without `index` the card goes to the bottom of the column. */
   move: (p: string, id: string, column: string, index?: number) =>
     request<CardView>('POST', `${cardPath(p, id)}/move`, index === undefined ? { column } : { column, index }),
-  check: (p: string, id: string, n: number) => request<CardView>('POST', `${cardPath(p, id)}/check`, { n }),
+  /** `ifMatch` as for `patch`: item numbers only mean something on the card they were read from. */
+  check: (p: string, id: string, n: number, ifMatch?: string) =>
+    request<CardView>('POST', `${cardPath(p, id)}/check`, ifMatch === undefined ? { n } : { n, if_match: ifMatch }),
   restore: (p: string, id: string, column?: string) =>
     request<CardView>('POST', `${cardPath(p, id)}/restore`, column === undefined ? {} : { column }),
-  deleteCard: (p: string, id: string) => request<void>('DELETE', cardPath(p, id)),
+  /** `ifMatch` as for `patch`. */
+  deleteCard: (p: string, id: string, ifMatch?: string) =>
+    request<void>('DELETE', cardPath(p, id), ifMatch === undefined ? undefined : { if_match: ifMatch }),
   archiveDone: (p: string) => request<{ archived: string[] }>('POST', `${projectPath(p)}/archive`),
 };

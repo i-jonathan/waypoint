@@ -72,6 +72,11 @@ describe('requests', () => {
     await api.patch('P', 'P-1', { body: 'x' });
     expect(lastCall().body).toEqual({ body: 'x' });
 
+    await api.check('P', 'P-1', 3, 'h');
+    expect(lastCall().init.body).toBe(JSON.stringify({ n: 3, if_match: 'h' }));
+    await api.deleteCard('P', 'P-1', 'h');
+    expect(lastCall().init.method).toBe('DELETE');
+    expect(lastCall().init.body).toBe(JSON.stringify({ if_match: 'h' }));
     await api.check('P', 'P-1', 3);
     expect(lastCall().url).toBe('/api/projects/P/cards/P-1/check');
     expect(lastCall().body).toEqual({ n: 3 });

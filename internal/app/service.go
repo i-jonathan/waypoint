@@ -357,29 +357,53 @@ func (s *Service) Done(ctx context.Context, id domain.CardID) (CardView, error) 
 	})
 }
 
+// checkHash returns a *ConflictError if ifMatch is not empty and is not the hash
+// of card id as it is now. An unknown id is left for the operation to report.
+func checkHash(b *domain.Board, id domain.CardID, ifMatch string) error {
+	if ifMatch == "" {
+		return nil
+	}
+	c, archived, ok := b.Find(id)
+	if !ok || domain.CardHash(c) == ifMatch {
+		return nil
+	}
+	return &ConflictError{Current: newViewer(b).view(c, archived)}
+}
+
 // UpdateCard applies a patch. If ifMatch is not empty and is not the hash of
 // the card as it is now, it returns a *ConflictError and changes nothing.
 func (s *Service) UpdateCard(ctx context.Context, id domain.CardID, p domain.CardPatch, ifMatch string) (CardView, error) {
 	return s.change(ctx, id, func(b *domain.Board) error {
-		c, archived, ok := b.Find(id)
-		if !ok {
-			return fmt.Errorf("%w: card %s", domain.ErrNotFound, id)
-		}
-		if ifMatch != "" && domain.CardHash(c) != ifMatch {
-			return &ConflictError{Current: newViewer(b).view(c, archived)}
+		if err := checkHash(b, id, ifMatch); err != nil {
+			return err
 		}
 		return b.UpdateCard(id, p)
 	})
 }
 
-// CheckItem toggles the nth (1-based) checklist item of a card.
-func (s *Service) CheckItem(ctx context.Context, id domain.CardID, n int) (CardView, error) {
-	return s.change(ctx, id, func(b *domain.Board) error { return b.ToggleCheck(id, n) })
+// CheckItem toggles the nth (1-based) checklist item of a card. Numbers count
+// items in the card as it is now, so a caller that read the card earlier should
+// pass its hash as ifMatch: on a mismatch it returns a *ConflictError and changes
+// nothing.
+func (s *Service) CheckItem(ctx context.Context, id domain.CardID, n int, ifMatch string) (CardView, error) {
+	return s.change(ctx, id, func(b *domain.Board) error {
+		if err := checkHash(b, id, ifMatch); err != nil {
+			return err
+		}
+		return b.ToggleCheck(id, n)
+	})
 }
 
-// DeleteCard removes a card from the board or the archive.
-func (s *Service) DeleteCard(ctx context.Context, id domain.CardID) error {
-	_, err := s.apply(ctx, func(b *domain.Board) error { return b.DeleteCard(id) })
+// DeleteCard removes a card from the board or the archive. If ifMatch is not
+// empty and is not the hash of the card as it is now, it returns a
+// *ConflictError and changes nothing.
+func (s *Service) DeleteCard(ctx context.Context, id domain.CardID, ifMatch string) error {
+	_, err := s.apply(ctx, func(b *domain.Board) error {
+		if err := checkHash(b, id, ifMatch); err != nil {
+			return err
+		}
+		return b.DeleteCard(id)
+	})
 	return err
 }
 

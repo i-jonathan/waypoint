@@ -19,11 +19,11 @@ const (
 	usageNew     = `waypoint add TITLE [--column X] [--group G] [--priority P] [--depends T-1,T-2] [--body TEXT|-] [--json]`
 	usageMove    = "waypoint move ID COLUMN [--top | --index N] [--json]"
 	usageSet     = "waypoint set ID key=value... [--if-match HASH] [--json]"
-	usageCheck   = "waypoint check ID N [--json]"
+	usageCheck   = "waypoint check ID N [--if-match HASH] [--json]"
 	usageDone    = "waypoint done ID [--json]"
 	usageArchive = "waypoint archive [--json]"
 	usageRestore = "waypoint restore ID [--column X] [--json]"
-	usageDelete  = "waypoint rm ID [--json]"
+	usageDelete  = "waypoint rm ID [--if-match HASH] [--json]"
 )
 
 // usageErr is a mistake in how a command was called, found while building its
@@ -371,7 +371,10 @@ func (r *runner) buildPatch(assignments []string) (domain.CardPatch, error) {
 }
 
 func (r *runner) cmdCheck(args []string) int {
-	pos, code, done := r.parse(usageCheck, args, nil)
+	var ifMatch string
+	pos, code, done := r.parse(usageCheck, args, func(fs *flag.FlagSet) {
+		fs.StringVar(&ifMatch, "if-match", "", "")
+	})
 	if done {
 		return code
 	}
@@ -386,7 +389,7 @@ func (r *runner) cmdCheck(args []string) int {
 	if err != nil {
 		return r.fail(err)
 	}
-	cv, err := svc.CheckItem(r.ctx, domain.CardID(pos[0]), n)
+	cv, err := svc.CheckItem(r.ctx, domain.CardID(pos[0]), n, ifMatch)
 	if err != nil {
 		return r.fail(err)
 	}
@@ -483,7 +486,10 @@ func (r *runner) cmdRestore(args []string) int {
 }
 
 func (r *runner) cmdRm(args []string) int {
-	pos, code, done := r.parse(usageDelete, args, nil)
+	var ifMatch string
+	pos, code, done := r.parse(usageDelete, args, func(fs *flag.FlagSet) {
+		fs.StringVar(&ifMatch, "if-match", "", "")
+	})
 	if done {
 		return code
 	}
@@ -495,7 +501,7 @@ func (r *runner) cmdRm(args []string) int {
 	if err != nil {
 		return r.fail(err)
 	}
-	if err := svc.DeleteCard(r.ctx, id); err != nil {
+	if err := svc.DeleteCard(r.ctx, id, ifMatch); err != nil {
 		return r.fail(err)
 	}
 	if r.json {

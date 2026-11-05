@@ -419,11 +419,11 @@ func TestCheckItem(t *testing.T) {
 	e := newEnv(t)
 	a, err := e.svc.CreateCard(context.Background(), domain.NewCard{Title: "A", Body: "- [ ] one\n- [ ] two\n"})
 	noErr(t, err)
-	v, err := e.svc.CheckItem(context.Background(), a.ID, 2)
+	v, err := e.svc.CheckItem(context.Background(), a.ID, 2, "")
 	noErr(t, err)
 	equal(t, v.Checklist.Done, 1)
 	equal(t, v.Body, "- [ ] one\n- [x] two") // the file format trims the trailing newline
-	_, err = e.svc.CheckItem(context.Background(), a.ID, 3)
+	_, err = e.svc.CheckItem(context.Background(), a.ID, 3, "")
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("got %v, want ErrNotFound", err)
 	}
@@ -465,8 +465,8 @@ func TestListQueryAndArchive(t *testing.T) {
 func TestDeleteCard(t *testing.T) {
 	e := newEnv(t)
 	a := e.create("A", "")
-	noErr(t, e.svc.DeleteCard(context.Background(), a.ID))
-	if err := e.svc.DeleteCard(context.Background(), a.ID); !errors.Is(err, domain.ErrNotFound) {
+	noErr(t, e.svc.DeleteCard(context.Background(), a.ID, ""))
+	if err := e.svc.DeleteCard(context.Background(), a.ID, ""); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("got %v, want ErrNotFound", err)
 	}
 	equal(t, e.create("B", "").ID, domain.CardID("T-2"))

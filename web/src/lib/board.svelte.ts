@@ -43,8 +43,9 @@ export interface BoardStore {
   create(n: NewCard): Promise<CardView>;
   /** A 409 is thrown for the panel to handle; it is not toasted. */
   patch(id: string, body: CardPatch, ifMatch?: string): Promise<CardView>;
-  /** Shows the tick at once; a failure undoes just that tick. */
+  /** Shows the tick at once; a failure undoes just that tick. Sent against the card's hash, so a changed card refuses it. */
   check(id: string, n: number): Promise<void>;
+  /** Sent against the card's hash. A 409 is thrown for the caller to handle, and the board refreshes. */
   remove(id: string): Promise<void>;
   archiveDone(): Promise<string[]>;
   /** Saves the settings against settingsHash. On a 409 it refreshes, then throws. */
@@ -162,6 +163,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
     parseError = null;
     view = res.board;
     appearance = res.appearance;
+    for (const id of answered.keys()) if (!busy.has(id)) answered.delete(id);
     return false;
   }
 
@@ -181,6 +183,14 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
   // ----- Pending work per card, so a late answer never undoes a newer change. -----
   const busy = new Map<string, number>();
   const moves: PendingMove[] = [];
+  // The hash in an answer that could not be shown because more work on the card
+  // was waiting. That work has to send this hash, not the one on screen.
+  const answered = new Map<string, string>();
+
+  /** The hash of the server's latest version of a card, as far as this tab knows. */
+  function hashOf(id: string): string | undefined {
+    return answered.get(id) ?? view?.cards.find((c) => c.id === id)?.hash;
+  }
 
   function hold(id: string) {
     busy.set(id, (busy.get(id) ?? 0) + 1);
@@ -203,7 +213,11 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
 
   /** Swaps the server's version of a card in, where it stands, unless more work on it is waiting. */
   function adopt(card: CardView, stillBusy: boolean) {
-    if (stillBusy) return;
+    if (stillBusy) {
+      answered.set(card.id, card.hash);
+      return;
+    }
+    answered.delete(card.id);
     setCards((cards) => cards.map((c) => (c.id === card.id ? card : c)));
   }
 
@@ -290,11 +304,14 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
 
     return write(
       async () => {
-        const updated = await client.check(project, id, n);
+        const updated = await client.check(project, id, n, hashOf(id));
         if (destroyed) return;
         adopt(updated, release(id));
       },
-      () => {
+      (e) => {
+        if (e instanceof ApiError && e.status === 409) {
+          toasts.push('This card changed elsewhere, so that tick was not saved.');
+        }
         if (!applied) return;
         // Tick it back on whatever the card is now, so other ticks are kept.
         setCards((cards) =>
@@ -341,7 +358,8 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
     const refused = refuseIfReadonly();
     if (refused) return Promise.reject(refused);
     return write(async () => {
-      await client.deleteCard(project, id);
+      await client.deleteCard(project, id, hashOf(id));
+      answered.delete(id);
       if (!destroyed) setCards((cards) => cards.filter((c) => c.id !== id));
     });
   }

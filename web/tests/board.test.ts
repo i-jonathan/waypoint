@@ -272,7 +272,7 @@ describe('check', () => {
     void store.check('A', 3);
     expect(store.view!.cards[0]!.checklist).toEqual({ done: 2, total: 3 });
     await settle();
-    expect(api.check).toHaveBeenCalledWith('Home', 'A', 3);
+    expect(api.check).toHaveBeenCalledWith('Home', 'A', 3, 'hash-A');
   });
 
   it('unticks a ticked item', async () => {
@@ -300,6 +300,89 @@ describe('check', () => {
     await Promise.all([p1, p2]);
     expect(store.view!.cards[0]!.checklist.done).toBe(1);
     expect(toasts.items.map((t) => t.msg)).toEqual(['could not save', 'could not save either']);
+  });
+});
+
+describe('stale cards', () => {
+  const conflict = (current: CardView) => new ApiError(409, 'conflict', 'conflict: card A changed since it was read', { current });
+
+  it('sends the hash of the card with a delete', async () => {
+    const { api, store } = await loaded();
+    api.deleteCard.mockResolvedValue(undefined);
+    await store.remove('A');
+    expect(api.deleteCard).toHaveBeenCalledWith('Home', 'A', 'hash-A');
+  });
+
+  it('sends the hash the first tick got back with the second, which was queued behind it', async () => {
+    const { api, store } = await loaded();
+    api.board.mockResolvedValue(response([card('A', 'todo', '- [ ] one\n- [ ] two')]));
+    await store.refresh();
+    const first = deferred<CardView>();
+    api.check.mockReturnValueOnce(first.promise).mockResolvedValueOnce({ ...card('A', 'todo'), hash: 'after-two' });
+
+    const p1 = store.check('A', 1);
+    const p2 = store.check('A', 2);
+    await settle();
+    first.resolve({ ...card('A', 'todo', '- [x] one\n- [ ] two'), hash: 'after-one' });
+    await Promise.all([p1, p2]);
+
+    expect(api.check.mock.calls.map((c) => c[3])).toEqual(['hash-A', 'after-one']);
+  });
+
+  it('sends the hash a queued move got back', async () => {
+    const { api, store } = await loaded();
+    api.move.mockResolvedValue({ ...card('A', 'doing'), hash: 'after-move' });
+    api.deleteCard.mockResolvedValue(undefined);
+    const moved = store.move('A', 'doing', 0);
+    const removed = store.remove('A');
+    await Promise.all([moved, removed]);
+    expect(api.deleteCard).toHaveBeenCalledWith('Home', 'A', 'after-move');
+  });
+
+  it('forgets an answer it could not show once a board has landed', async () => {
+    const { api, store } = await loaded();
+    api.board.mockResolvedValue(response([card('A', 'todo', '- [ ] one\n- [ ] two')]));
+    await store.refresh();
+    api.check
+      .mockResolvedValueOnce({ ...card('A', 'todo'), hash: 'after-one' })
+      .mockRejectedValueOnce(new ApiError(500, 'error', 'internal error'));
+    api.board.mockResolvedValue(response([{ ...card('A', 'todo', '- [ ] one\n- [ ] two'), hash: 'from-board' }]));
+    await Promise.all([store.check('A', 1), store.check('A', 2)]);
+    await settle();
+    api.check.mockResolvedValueOnce(card('A', 'todo'));
+    await store.check('A', 1);
+    expect(api.check.mock.calls[2]![3]).toBe('from-board');
+  });
+
+  it('undoes a refused tick, says so, and refreshes', async () => {
+    const { api, store } = await loaded();
+    api.board.mockResolvedValue(response([card('A', 'todo', '- [ ] one')]));
+    await store.refresh();
+    api.board.mockClear();
+    const theirs = { ...card('A', 'todo', '- [ ] new\n- [ ] one'), hash: 'theirs' };
+    api.check.mockRejectedValue(conflict(theirs));
+    api.board.mockResolvedValue(response([theirs]));
+
+    await store.check('A', 1);
+    await settle();
+
+    expect(api.board).toHaveBeenCalledTimes(1);
+    expect(store.view!.cards[0]!.body).toBe('- [ ] new\n- [ ] one');
+    expect(store.view!.cards[0]!.checklist.done).toBe(0);
+    expect(toasts.items.map((t) => t.msg)).toEqual([expect.stringContaining('was not saved')]);
+  });
+
+  it('keeps a card whose delete was refused, and refreshes', async () => {
+    const { api, store } = await loaded();
+    const theirs = { ...card('A', 'todo', 'edited'), hash: 'theirs' };
+    api.deleteCard.mockRejectedValue(conflict(theirs));
+    api.board.mockResolvedValue(response([theirs]));
+
+    await expect(store.remove('A')).rejects.toMatchObject({ status: 409 });
+    await settle();
+
+    expect(api.board).toHaveBeenCalledTimes(1);
+    expect(store.view!.cards[0]!.body).toBe('edited');
   });
 });
 

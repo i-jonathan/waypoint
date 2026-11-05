@@ -997,3 +997,74 @@ func TestNosniffOnEveryResponse(t *testing.T) {
 	check("421", f.send(req))
 	check("403", f.send(f.request("POST", "/api/projects", `{}`)))
 }
+
+// staleCard makes a card with a checklist, then edits the file behind the API,
+// and returns the hash the caller is left holding.
+func staleCard(t *testing.T, f *fixture) (hash, path string) {
+	t.Helper()
+	c := f.newCard("Alpha", map[string]any{"title": "Card", "column": "Todo", "body": "- [ ] one\n- [ ] two"})
+	path = f.boardPath("Alpha")
+	edited := strings.Replace(readFile(t, path), "- [ ] one", "- [ ] renamed elsewhere\n- [ ] one", 1)
+	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return c.Hash, path
+}
+
+func TestCheckRefusesAStaleHash(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	hash, path := staleCard(t, f)
+	before := readFile(t, path)
+
+	r := f.do("POST", "/api/projects/Alpha/cards/T-1/check", map[string]any{"n": 1, "if_match": hash})
+	r.wantCode(409, "conflict")
+	var body struct {
+		Current cardJSON `json:"current"`
+	}
+	r.decode(&body)
+	assertContains(t, body.Current.Body, "renamed elsewhere")
+	assertEq(t, readFile(t, path), before)
+
+	f.do("POST", "/api/projects/Alpha/cards/T-1/check", map[string]any{"n": 1, "if_match": body.Current.Hash}).want(200)
+	assertContains(t, readFile(t, path), "- [x] renamed elsewhere")
+}
+
+func TestCheckWithNoHashStillWorks(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	staleCard(t, f)
+	f.do("POST", "/api/projects/Alpha/cards/T-1/check", map[string]any{"n": 2}).want(200)
+}
+
+func TestDeleteRefusesAStaleHash(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	hash, path := staleCard(t, f)
+
+	r := f.do("DELETE", "/api/projects/Alpha/cards/T-1", map[string]any{"if_match": hash})
+	r.wantCode(409, "conflict")
+	var body struct {
+		Current cardJSON `json:"current"`
+	}
+	r.decode(&body)
+	assertContains(t, readFile(t, path), "renamed elsewhere")
+
+	f.do("DELETE", "/api/projects/Alpha/cards/T-1", map[string]any{"if_match": body.Current.Hash}).want(204)
+	assertNotContains(t, readFile(t, path), "renamed elsewhere")
+}
+
+func TestDeleteWithNoBodyStillWorks(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	staleCard(t, f)
+	f.do("DELETE", "/api/projects/Alpha/cards/T-1", nil).want(204)
+}
+
+func TestDeleteAnArchivedCardWithAStaleHash(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	c := f.newCard("Alpha", map[string]any{"title": "Card", "column": "Done", "body": "note"})
+	f.do("POST", "/api/projects/Alpha/archive", nil).want(200)
+	path := strings.TrimSuffix(f.boardPath("Alpha"), ".md") + ".archive.md"
+	if err := os.WriteFile(path, []byte(strings.Replace(readFile(t, path), "note", "edited", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.do("DELETE", "/api/projects/Alpha/cards/T-1", map[string]any{"if_match": c.Hash}).wantCode(409, "conflict")
+	assertContains(t, readFile(t, path), "edited")
+}

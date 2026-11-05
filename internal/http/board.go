@@ -169,12 +169,13 @@ func (a *api) checkItem(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var in struct {
-		N int `json:"n"`
+		N       int    `json:"n"`
+		IfMatch string `json:"if_match"`
 	}
 	if err := decodeBody(w, r, &in, false); err != nil {
 		return err
 	}
-	cv, err := p.svc.CheckItem(r.Context(), id, in.N)
+	cv, err := p.svc.CheckItem(r.Context(), id, in.N, in.IfMatch)
 	if err != nil {
 		return err
 	}
@@ -216,7 +217,13 @@ func (a *api) deleteCard(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := p.svc.DeleteCard(r.Context(), id); err != nil {
+	var in struct {
+		IfMatch string `json:"if_match"`
+	}
+	if err := decodeBody(w, r, &in, true); err != nil {
+		return err
+	}
+	if err := p.svc.DeleteCard(r.Context(), id, in.IfMatch); err != nil {
 		return err
 	}
 	a.changed(p)
