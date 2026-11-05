@@ -52,9 +52,11 @@ export interface BoardStore {
    */
   patch(id: string, body: CardPatch, ifMatch?: string, opts?: WriteOptions): Promise<CardView>;
   /** Shows the tick at once; a failure undoes just that tick. Sent against the card's hash, so a changed card refuses it. */
-  check(id: string, n: number): Promise<void>;
+  /** `ifMatch` is for a card this store doesn't hold, such as an archived one. */
+  check(id: string, n: number, ifMatch?: string): Promise<void>;
   /** Sent against the card's hash. A 409 is thrown for the caller to handle, and the board refreshes. `quiet` as for patch. */
-  remove(id: string, opts?: WriteOptions): Promise<void>;
+  /** `ifMatch` is for a card this store doesn't hold, such as an archived one. */
+  remove(id: string, opts?: WriteOptions & { ifMatch?: string }): Promise<void>;
   archiveDone(): Promise<string[]>;
   /** Brings an archived card back to a column (the first when none is given). A refusal is toasted and thrown; nothing is shown early. */
   restore(id: string, column?: string): Promise<CardView>;
@@ -264,7 +266,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
 
   /** The hash of the server's latest version of a card, as far as this tab knows. */
   function hashOf(id: string): string | undefined {
-    return answered.get(id) ?? view?.cards.find((c) => c.id === id)?.hash;
+    return answered.get(id) ?? (baseline ?? view)?.cards.find((c) => c.id === id)?.hash;
   }
 
   function hold(id: string) {
@@ -371,7 +373,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
     });
   }
 
-  function check(id: string, n: number): Promise<void> {
+  function check(id: string, n: number, ifMatch?: string): Promise<void> {
     const refused = refuseIfReadonly();
     if (refused) return Promise.reject(refused);
 
@@ -390,7 +392,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
 
     return write(
       async () => {
-        const updated = await client.check(project, id, n, hashOf(id));
+        const updated = await client.check(project, id, n, hashOf(id) ?? ifMatch);
         if (destroyed) return;
         adopt(updated, release(id));
       },
@@ -440,11 +442,11 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
     }, undefined, opts.quiet);
   }
 
-  function remove(id: string, opts: WriteOptions = {}): Promise<void> {
+  function remove(id: string, opts: WriteOptions & { ifMatch?: string } = {}): Promise<void> {
     const refused = refuseIfReadonly();
     if (refused) return Promise.reject(refused);
     return write(async () => {
-      await client.deleteCard(project, id, hashOf(id));
+      await client.deleteCard(project, id, hashOf(id) ?? opts.ifMatch);
       answered.delete(id);
       if (!destroyed) setCards((cards) => cards.filter((c) => c.id !== id));
     }, undefined, opts.quiet);

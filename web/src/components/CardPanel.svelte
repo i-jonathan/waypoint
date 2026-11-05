@@ -81,6 +81,7 @@
 
   $effect(() => {
     void lookAgain;
+    void store.changes; // an archived card can change on disk too
     if (!missing) {
       untrack(() => {
         archived = null;
@@ -89,7 +90,10 @@
       return;
     }
     const seq = ++lookSeq;
-    untrack(() => (lookup = 'busy'));
+    // A card already found stays on screen while it is looked up again.
+    untrack(() => {
+      if (archived === null) lookup = 'busy';
+    });
     void fetchArchive().then((list) => {
       if (seq !== lookSeq) return;
       if (list === null) {
@@ -307,7 +311,7 @@
     }
     const t = toggleItem(ownBody ?? st.base.body, n);
     if (t) ownBody = t.body;
-    void own(() => store.check(id, n)).catch(() => {});
+    void own(() => store.check(id, n, shown?.hash)).catch(() => {});
   }
 
   // ----- Closing -----
@@ -338,7 +342,7 @@
   async function remove() {
     confirmDelete = false;
     try {
-      await store.remove(ownId, { quiet: true });
+      await store.remove(ownId, { quiet: true, ifMatch: shown?.hash });
       await finish();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) error = 'This card changed outside Waypoint. Look at it again, then delete it.';

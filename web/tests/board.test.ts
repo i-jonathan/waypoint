@@ -393,6 +393,26 @@ describe('stale cards', () => {
     expect(toasts.items.map((t) => t.msg)).toEqual([expect.stringContaining('was not saved')]);
   });
 
+  it('sends the hash of a card the filter hides', async () => {
+    const whole = [{ ...card('A', 'todo'), hash: 'ha' }, { ...card('X', 'todo'), hash: 'hx' }];
+    const api = fakeApi();
+    api.board.mockImplementation(async (_p, q) => response(q ? whole.filter((c) => c.id !== 'X') : whole));
+    const store = createBoardStore(api, 'Home');
+    await store.refresh();
+    store.setQuery('hide x');
+    await vi.advanceTimersByTimeAsync(200);
+    expect(order(store, 'todo')).toEqual(['A']);
+
+    await store.remove('X');
+    expect(api.deleteCard).toHaveBeenCalledWith('Home', 'X', 'hx');
+  });
+
+  it('uses the hash it is given for a card that is not on the board', async () => {
+    const { api, store } = await loaded();
+    await store.remove('archived-1', { ifMatch: 'seen' });
+    expect(api.deleteCard).toHaveBeenCalledWith('Home', 'archived-1', 'seen');
+  });
+
   it('keeps a card whose delete was refused, and refreshes', async () => {
     const { api, store } = await loaded();
     const theirs = { ...card('A', 'todo', 'edited'), hash: 'theirs' };

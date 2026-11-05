@@ -89,15 +89,48 @@ test('a foreign origin is refused and the page sends a CSP', async ({ wp }) => {
 });
 
 test('a hostile card body does not run', async ({ page, wp }) => {
-  const body = ['<script>window.pwned = 1</script>', '<img src=x onerror="window.pwned = 2">', '[link](javascript:window.pwned=3)'].join('\n\n');
+  const body = ['Plain text survives', '<script>window.pwned = 1</script>', '<img src=x onerror="window.pwned = 2">', '[link](javascript:window.pwned=3)'].join('\n\n');
   await wp.cli('add', 'Hostile', '--body', body);
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
 
   await page.goto(`${wp.boardURL}/card/T-1`);
-  await expect(page.getByRole('region', { name: 'Notes' })).toBeVisible();
-  await page.getByRole('region', { name: 'Notes' }).getByRole('link').first().click({ timeout: 1000 }).catch(() => {});
+  const notes = page.getByRole('region', { name: 'Notes' });
+  await expect(notes).toContainText('Plain text survives');
 
+  // The sanitiser did this, not just the CSP behind it.
+  await expect(notes.locator('script')).toHaveCount(0);
+  await expect(notes.locator('img[onerror], img[src="x"]')).toHaveCount(0);
+  await expect(notes.locator('a[href^="javascript:"]')).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as { pwned?: number }).pwned)).toBeUndefined();
   expect(errors).toEqual([]);
+});
+
+test('the panel of an archived card follows a hand edit', async ({ page, wp }) => {
+  await wp.cli('add', 'Old card', '--body', 'old');
+  await wp.cli('move', 'T-1', 'Done');
+  await wp.cli('archive');
+  const archive = wp.file.replace(/\.md$/, '.archive.md');
+  expect(readFileSync(archive, 'utf8')).toContain('old');
+
+  await page.goto(`${wp.boardURL}/card/T-1`);
+  await expect(page.getByRole('region', { name: 'Notes' })).toContainText('old');
+  writeFileSync(archive, readFileSync(archive, 'utf8').replace('old\n', 'IMPORTANT HAND EDIT\n'));
+
+  await expect(page.getByRole('region', { name: 'Notes' })).toContainText('IMPORTANT HAND EDIT', { timeout: 2000 });
+});
+
+test('five hidden tabs leave a connection free for writes', async ({ context, page, wp }) => {
+  await wp.cli('add', 'Many tabs');
+  const hidden = await Promise.all(Array.from({ length: 5 }, () => context.newPage()));
+  for (const tab of hidden) {
+    await tab.addInitScript(() => Object.defineProperty(document, 'hidden', { get: () => true }));
+    await tab.goto(wp.boardURL);
+    await expect(tab.locator('[data-card-id="T-1"]')).toBeVisible();
+  }
+
+  await page.goto(wp.boardURL);
+  await page.locator('[data-card-id="T-1"]').focus();
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect.poll(() => section(wp.read(), 'In progress'), { timeout: 3000 }).toContain('Many tabs');
 });
