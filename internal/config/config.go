@@ -41,6 +41,15 @@ type Config struct {
 	Projects    []ProjectRef      `yaml:"projects"`
 }
 
+// LoadError is a config file that exists but is wrong. Detail says how, without
+// the path, so it can be shown to whoever fixes it.
+type LoadError struct {
+	Path   string
+	Detail string
+}
+
+func (e *LoadError) Error() string { return fmt.Sprintf("config %s: %s", e.Path, e.Detail) }
+
 // DefaultPath returns the config file location: $WAYPOINT_CONFIG, else
 // $XDG_CONFIG_HOME/waypoint/config.yaml, else ~/.config/waypoint/config.yaml.
 func DefaultPath(env func(string) string) (string, error) {
@@ -75,26 +84,26 @@ func Load(path string, env func(string) string) (*Config, error) {
 		dec := yaml.NewDecoder(bytes.NewReader(data))
 		dec.KnownFields(true)
 		if err := dec.Decode(c); err != nil && !errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("parse config %s: %w", path, err)
+			return nil, &LoadError{path, err.Error()}
 		}
 	}
 
 	if !slices.Contains(tlsModes, c.TLS) {
-		return nil, fmt.Errorf("config %s: tls %q must be one of %s", path, c.TLS, strings.Join(tlsModes, ", "))
+		return nil, &LoadError{path, fmt.Sprintf("tls %q must be one of %s", c.TLS, strings.Join(tlsModes, ", "))}
 	}
 
 	if c.DataDir == "" {
 		if home == "" {
-			return nil, fmt.Errorf("config %s: HOME is not set and data_dir is not configured", path)
+			return nil, &LoadError{path, "HOME is not set and data_dir is not configured"}
 		}
 		c.DataDir = filepath.Join(home, ".local", "share", "waypoint")
 	}
 	if c.DataDir, err = expandHome(c.DataDir, home); err != nil {
-		return nil, fmt.Errorf("config %s: data_dir: %w", path, err)
+		return nil, &LoadError{path, fmt.Sprintf("data_dir: %v", err)}
 	}
 	for i := range c.Projects {
 		if c.Projects[i].Path, err = expandHome(c.Projects[i].Path, home); err != nil {
-			return nil, fmt.Errorf("config %s: project %q: %w", path, c.Projects[i].Name, err)
+			return nil, &LoadError{path, fmt.Sprintf("project %q: %v", c.Projects[i].Name, err)}
 		}
 	}
 	return c, nil
@@ -137,11 +146,16 @@ func Update(path string, env func(string) string, fn func(*Config) error) error 
 }
 
 // Save writes the config to path, creating parent directories. The write goes
-// to a temp file in the same directory and is renamed into place.
+// to a temp file beside the real file and is renamed into place, so a config
+// kept behind a symlink stays there. A dangling symlink is an error, rather than
+// be replaced by a new file. Comments in the file are not kept.
 func (c *Config) Save(path string) error {
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("encode config: %w", err)
+	}
+	if path, err = realPath(path); err != nil {
+		return fmt.Errorf("write config: %w", err)
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -171,4 +185,20 @@ func (c *Config) Save(path string) error {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil
+}
+
+// realPath resolves the symlinks in path. A file that does not exist yet is left
+// as it is, since the rename follows any symlinked directory by itself.
+func realPath(path string) (string, error) {
+	real, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return real, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return "", fmt.Errorf("%s is a symlink to a file that does not exist", path)
+	}
+	return path, nil
 }

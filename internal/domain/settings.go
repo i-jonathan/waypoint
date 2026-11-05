@@ -28,30 +28,47 @@ var accentHexRE = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
 var accentPresets = []string{"orange", "cobalt", "teal", "rose", "green", "amber", "sky", "violet"}
 
-// ValidateAppearance reports the first appearance value that is not one the
-// interface knows, wrapping ErrInvalid. An empty value is always fine: it
-// inherits the global setting. Settings.Validate does not call this, so a typo
-// in a hand-edited file cannot lock a board; ApplySettings does.
-func ValidateAppearance(a Appearance) error {
-	check := func(field, value string, allowed ...string) error {
-		if value == "" || slices.Contains(allowed, value) {
+// CheckAppearanceField reports whether value is one the interface knows for the
+// appearance field theme, accent, density, swimlane or textures, wrapping
+// ErrInvalid if not. An empty value is always fine: it inherits.
+func CheckAppearanceField(field, value string) error {
+	if value == "" {
+		return nil
+	}
+	var allowed []string
+	switch field {
+	case "theme":
+		allowed = []string{"system", "light", "dark"}
+	case "accent":
+		if slices.Contains(accentPresets, value) || accentHexRE.MatchString(value) {
 			return nil
 		}
-		return fmt.Errorf("%w: appearance %s %q must be one of %s", ErrInvalid, field, value, strings.Join(allowed, ", "))
+		return fmt.Errorf("%w: appearance accent %q must be one of %s or #rrggbb", ErrInvalid, value, strings.Join(accentPresets, ", "))
+	case "density":
+		allowed = []string{"comfortable", "compact"}
+	case "swimlane":
+		allowed = []string{"none", "group", "priority"}
+	case "textures":
+		allowed = []string{"on", "off"}
 	}
-	if err := check("theme", a.Theme, "system", "light", "dark"); err != nil {
-		return err
+	if slices.Contains(allowed, value) {
+		return nil
 	}
-	if a.Accent != "" && !slices.Contains(accentPresets, a.Accent) && !accentHexRE.MatchString(a.Accent) {
-		return fmt.Errorf("%w: appearance accent %q must be one of %s or #rrggbb", ErrInvalid, a.Accent, strings.Join(accentPresets, ", "))
+	return fmt.Errorf("%w: appearance %s %q must be one of %s", ErrInvalid, field, value, strings.Join(allowed, ", "))
+}
+
+// ValidateAppearance reports the first appearance value that is not one the
+// interface knows, wrapping ErrInvalid. Settings.Validate does not call this, so
+// a typo in a hand-edited file cannot lock a board; ApplySettings does.
+func ValidateAppearance(a Appearance) error {
+	for _, f := range []struct{ field, value string }{
+		{"theme", a.Theme}, {"accent", a.Accent}, {"density", a.Density}, {"swimlane", a.Swimlane}, {"textures", a.Textures},
+	} {
+		if err := CheckAppearanceField(f.field, f.value); err != nil {
+			return err
+		}
 	}
-	if err := check("density", a.Density, "comfortable", "compact"); err != nil {
-		return err
-	}
-	if err := check("swimlane", a.Swimlane, "none", "group", "priority"); err != nil {
-		return err
-	}
-	return check("textures", a.Textures, "on", "off")
+	return nil
 }
 
 // ApplySettings replaces the board's settings with ch.Settings and moves the

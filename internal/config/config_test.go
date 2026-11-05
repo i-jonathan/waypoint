@@ -419,3 +419,59 @@ func TestConcurrentUpdatesAllLand(t *testing.T) {
 	assertNoErr(t, err)
 	assertEqual(t, len(c.Projects), n)
 }
+
+func TestSaveThroughASymlinkKeepsTheLink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "dotfiles", "waypoint.yaml")
+	assertNoErr(t, os.MkdirAll(filepath.Dir(real), 0o755))
+	assertNoErr(t, os.WriteFile(real, []byte("port: 5000\n"), 0o644))
+	link := filepath.Join(dir, "config.yaml")
+	assertNoErr(t, os.Symlink(real, link))
+
+	env := envOf(map[string]string{"HOME": dir})
+	assertNoErr(t, Update(link, env, func(c *Config) error { c.Port = 5001; return nil }))
+
+	info, err := os.Lstat(link)
+	assertNoErr(t, err)
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the symlink was replaced by a regular file")
+	}
+	data, err := os.ReadFile(real)
+	assertNoErr(t, err)
+	if !strings.Contains(string(data), "port: 5001") {
+		t.Fatalf("the real file was not updated:\n%s", data)
+	}
+	left, err := os.ReadDir(filepath.Dir(real))
+	assertNoErr(t, err)
+	assertEqual(t, len(left), 1)
+}
+
+func TestSaveRefusesADanglingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "config.yaml")
+	assertNoErr(t, os.Symlink(filepath.Join(dir, "gone.yaml"), link))
+
+	if err := (&Config{Port: 1, TLS: "auto"}).Save(link); err == nil {
+		t.Fatal("Save replaced a dangling symlink")
+	}
+	info, err := os.Lstat(link)
+	assertNoErr(t, err)
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the symlink was replaced by a regular file")
+	}
+}
+
+func TestLoadErrorSaysWhatIsWrongWithoutThePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	for _, text := range []string{"port: [\n", "colour: red\n", "tls: sometimes\n"} {
+		assertNoErr(t, os.WriteFile(path, []byte(text), 0o644))
+		_, err := Load(path, envOf(map[string]string{"HOME": "/h"}))
+		var le *LoadError
+		if !errors.As(err, &le) {
+			t.Fatalf("%q: got %v, want a LoadError", text, err)
+		}
+		if !strings.Contains(err.Error(), path) || strings.Contains(le.Detail, path) || le.Detail == "" {
+			t.Fatalf("%q: error %q detail %q", text, err, le.Detail)
+		}
+	}
+}

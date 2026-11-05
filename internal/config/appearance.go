@@ -16,15 +16,17 @@ type ResolvedAppearance struct {
 }
 
 // Resolve picks each appearance field from the project, else the global
-// settings, else the built-in default. An empty value means "not set". Values
-// are not validated here: see domain.ValidateAppearance.
+// settings, else the built-in default. An empty value means "not set". So does a
+// value the interface does not know, such as a typo in a hand-edited file: that
+// field falls to the next level, and Source names the level that supplied it.
 func Resolve(global, project domain.Appearance) ResolvedAppearance {
 	r := ResolvedAppearance{Source: make(map[string]string, 5)}
 	pick := func(field string, out *string, g, p, def string) {
+		usable := func(v string) bool { return v != "" && domain.CheckAppearanceField(field, v) == nil }
 		switch {
-		case p != "":
+		case usable(p):
 			*out, r.Source[field] = p, "project"
-		case g != "":
+		case usable(g):
 			*out, r.Source[field] = g, "global"
 		default:
 			*out, r.Source[field] = def, "default"

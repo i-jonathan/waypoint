@@ -63,6 +63,8 @@ Waypoint keeps a registry of your projects in a small config file. It is found i
 2. `$XDG_CONFIG_HOME/waypoint/config.yaml`,
 3. `~/.config/waypoint/config.yaml`.
 
+Waypoint rewrites this file when you change a setting or register a project, so comments in it are not kept. If the file is a symlink, the link stays and the file it points to is updated.
+
 The file is created the first time something is saved and is never needed just to read a board. Boards created with `waypoint project add` and no `--path` are stored under `~/.local/share/waypoint`.
 
 ## Working with AI agents

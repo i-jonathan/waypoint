@@ -127,3 +127,20 @@ func TestSaveLoadKeepsTLS(t *testing.T) {
 	assertNoErr(t, err)
 	assertEqual(t, c.TLS, "off")
 }
+
+func TestResolveSkipsAnInvalidValue(t *testing.T) {
+	got := Resolve(
+		domain.Appearance{Theme: "blue", Accent: "teal", Density: "tiny", Swimlane: "group"},
+		domain.Appearance{Theme: "neon", Accent: "#xyz", Density: "compact", Textures: "furry"},
+	)
+	assertEqual(t, got, ResolvedAppearance{
+		Theme:    "system",
+		Accent:   "teal",
+		Density:  "compact",
+		Swimlane: "group",
+		Textures: "on",
+		Source: map[string]string{
+			"theme": "default", "accent": "global", "density": "project", "swimlane": "global", "textures": "default",
+		},
+	})
+}
