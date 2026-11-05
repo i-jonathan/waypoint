@@ -4,14 +4,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 	"text/tabwriter"
 
 	"waypoint/internal/config"
 	"waypoint/internal/domain"
-	"waypoint/internal/storage"
+	"waypoint/internal/projects"
 )
 
 const (
@@ -21,7 +19,7 @@ const (
 	usageRm      = "waypoint project rm NAME [--json]"
 	usageInit    = "waypoint init [NAME] [--prefix T] [--json]"
 
-	defaultPrefix = "T"
+	defaultPrefix = projects.DefaultPrefix
 	initBoardFile = "BOARD.md"
 )
 
@@ -88,52 +86,18 @@ func (r *runner) cmdInit(args []string) int {
 
 // addProject registers a project and prints the result. pathFlag is the
 // --path value ("" for the default under data_dir); with fromInit it is the
-// absolute path of ./BOARD.md instead.
-//
-// The order is: validate, then under the config lock check the registry, create
-// or open the board, and only then write the config. A failure before the last
-// step leaves the config as it was.
+// absolute path of ./BOARD.md instead. The work is shared with the web API
+// (projects.Add).
 func (r *runner) addProject(name, pathFlag, prefix string, fromInit bool) int {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return r.fail(fmt.Errorf("%w: project name is empty", domain.ErrInvalid))
-	}
-	settings := domain.NewBoard(name, prefix).Settings
-	if err := settings.Validate(); err != nil {
-		return r.fail(err)
-	}
 	cfgPath, err := config.DefaultPath(r.env.Getenv)
 	if err != nil {
 		return r.fail(err)
 	}
-
-	var ref config.ProjectRef
-	var created bool
-	err = config.Update(cfgPath, r.env.Getenv, func(cfg *config.Config) error {
-		path, err := r.boardPath(cfg, name, pathFlag)
-		if err != nil {
-			return err
-		}
-		if q, ok := registeredAt(cfg, path); ok {
-			if fromInit {
-				return fmt.Errorf("%w: %s here is already registered as project %q", domain.ErrInvalid, initBoardFile, q.Name)
-			}
-			return fmt.Errorf("%w: %s is already registered as %q", domain.ErrInvalid, path, q.Name)
-		}
-		if config.StorageFor(path) == "sqlite" {
-			return storage.ErrSQLite
-		}
-		if err := cfg.Add(config.ProjectRef{Name: name, Path: path}); err != nil {
-			return err
-		}
-		ref = cfg.Projects[len(cfg.Projects)-1]
-		created, err = openOrCreate(r, ref, settings)
-		return err
+	ref, err := projects.Add(r.ctx, cfgPath, r.env.Getenv, projects.AddOptions{
+		Name: name, Path: pathFlag, Prefix: prefix, Cwd: r.env.Cwd,
+		FromInit: fromInit, InitFile: initBoardFile,
 	})
 	if err != nil {
-		if created { // the board was made, so it was the save that failed
-			err = fmt.Errorf("%w (the new board file %s was left behind)", err, ref.Path)
-		}
 		return r.fail(err)
 	}
 
@@ -143,84 +107,6 @@ func (r *runner) addProject(name, pathFlag, prefix string, fromInit bool) int {
 		fmt.Fprintf(r.env.Stdout, "Added project %s (%s) at %s\n", ref.Name, ref.Storage, ref.Path)
 	}
 	return exitOK
-}
-
-// openOrCreate makes sure a board exists at ref. An existing file is loaded
-// through its repository to prove it is a Waypoint board, and is not written.
-// A missing file is created from settings. created reports which happened.
-func openOrCreate(r *runner, ref config.ProjectRef, settings domain.Settings) (created bool, err error) {
-	if info, statErr := os.Stat(ref.Path); statErr == nil {
-		if info.IsDir() {
-			return false, fmt.Errorf("%w: %s is a directory, not a board file", domain.ErrInvalid, ref.Path)
-		}
-		repo, err := storage.Open(ref)
-		if err != nil {
-			return false, err
-		}
-		_, _, err = repo.Load(r.ctx)
-		return false, err
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return false, statErr
-	}
-	_, err = storage.Create(ref, settings)
-	return err == nil, err
-}
-
-// boardPath is where a new project's board lives: pathFlag resolved against
-// the working directory, or <data_dir>/<slug of name>.md when pathFlag is
-// empty.
-func (r *runner) boardPath(cfg *config.Config, name, pathFlag string) (string, error) {
-	if pathFlag == "" {
-		s := slug(name)
-		if s == "" {
-			return "", fmt.Errorf("%w: cannot make a file name from %q; use --path", domain.ErrInvalid, name)
-		}
-		return filepath.Join(cfg.DataDir, s+".md"), nil
-	}
-	if filepath.IsAbs(pathFlag) {
-		return filepath.Clean(pathFlag), nil
-	}
-	if r.env.Cwd == "" {
-		return "", fmt.Errorf("%w: cannot resolve %q: the working directory is unknown", domain.ErrInvalid, pathFlag)
-	}
-	return filepath.Join(r.env.Cwd, pathFlag), nil
-}
-
-// slug lowercases s, turns each run of characters outside [a-z0-9] into one
-// "-" and trims "-" from both ends.
-func slug(s string) string {
-	var b strings.Builder
-	dash := false
-	for _, c := range strings.ToLower(s) {
-		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
-			if dash && b.Len() > 0 {
-				b.WriteByte('-')
-			}
-			dash = false
-			b.WriteRune(c)
-		} else {
-			dash = true
-		}
-	}
-	return b.String()
-}
-
-// registeredAt finds the project whose board file is path, comparing cleaned
-// paths and then the files themselves, so a symlinked path matches.
-func registeredAt(cfg *config.Config, path string) (config.ProjectRef, bool) {
-	want, statErr := os.Stat(path)
-	for _, q := range cfg.Projects {
-		if filepath.Clean(q.Path) == filepath.Clean(path) {
-			return q, true
-		}
-		if statErr != nil {
-			continue
-		}
-		if got, err := os.Stat(q.Path); err == nil && os.SameFile(want, got) {
-			return q, true
-		}
-	}
-	return config.ProjectRef{}, false
 }
 
 func (r *runner) cmdProjectLs(args []string) int {

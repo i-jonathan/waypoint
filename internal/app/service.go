@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math/rand/v2"
+	"strings"
 	"time"
 
 	"waypoint/internal/domain"
@@ -18,6 +21,10 @@ type Service struct {
 	repo Repository
 	now  Clock
 }
+
+// saveRetries is how many times apply starts again after the file changed under
+// a save.
+const saveRetries = 5
 
 // NewService returns a Service over r. A nil now means time.Now.
 func NewService(r Repository, now Clock) *Service {
@@ -44,9 +51,10 @@ type CardView struct {
 
 // BoardView is a board's settings, live cards and warnings.
 type BoardView struct {
-	Settings domain.Settings
-	Cards    []CardView
-	Warnings []string
+	Settings     domain.Settings `json:"settings"`
+	Cards        []CardView      `json:"cards"`
+	Warnings     []string        `json:"warnings"`
+	SettingsHash string          `json:"settings_hash"` // SettingsHash, to pass back as ifMatch
 }
 
 // ConflictError reports that a card changed since the caller read it. Current
@@ -106,6 +114,11 @@ func (v viewer) find(id domain.CardID) (CardView, error) {
 // normalise what fn wrote, and every view and hash a caller gets must match
 // the file, so after saving it loads again while still holding the lock. An
 // unlock failure is reported only when nothing else failed.
+//
+// If something outside Waypoint writes the file during the save, apply starts
+// again from the load, still under the lock, so the operation lands on top of
+// that edit. fn can therefore run more than once: it must set what it reports,
+// never add to it.
 func (s *Service) apply(ctx context.Context, fn func(*domain.Board) error) (b *domain.Board, err error) {
 	unlock, err := s.repo.Lock(ctx)
 	if err != nil {
@@ -117,6 +130,40 @@ func (s *Service) apply(ctx context.Context, fn func(*domain.Board) error) (b *d
 		}
 	}()
 
+	for retry := 0; ; retry++ {
+		b, err = s.applyOnce(ctx, fn)
+		if !errors.Is(err, ErrChangedDuringWrite) {
+			return b, err
+		}
+		if retry == saveRetries {
+			return nil, fmt.Errorf("%w: it is being written too often to save this change, which was not made; try again", ErrChangedDuringWrite)
+		}
+		if err := sleep(ctx, retryDelay(retry)); err != nil {
+			return nil, err
+		}
+	}
+}
+
+// retryDelay grows with each retry and is jittered, so that a save does not fall
+// into step with whatever keeps writing the file.
+func retryDelay(retry int) time.Duration {
+	step := 10 * time.Millisecond
+	return time.Duration(retry+1)*step + rand.N(step)
+}
+
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// applyOnce is one attempt of apply, with the lock held.
+func (s *Service) applyOnce(ctx context.Context, fn func(*domain.Board) error) (*domain.Board, error) {
 	b, assigned, err := s.repo.Load(ctx)
 	if err != nil {
 		return nil, err
@@ -160,16 +207,76 @@ func (s *Service) read(ctx context.Context) (*domain.Board, error) {
 
 // Board returns the live cards and settings.
 func (s *Service) Board(ctx context.Context) (BoardView, error) {
+	return s.BoardMatching(ctx, "")
+}
+
+// BoardMatching is Board with only the cards that match query (see
+// domain.ParseFilter). The settings, warnings and each card's Next flag are
+// those of the whole board.
+func (s *Service) BoardMatching(ctx context.Context, query string) (BoardView, error) {
 	b, err := s.read(ctx)
 	if err != nil {
 		return BoardView{}, err
 	}
+	v := boardView(b)
+	if strings.TrimSpace(query) == "" {
+		return v, nil
+	}
+	f := domain.ParseFilter(query)
+	kept := v.Cards[:0]
+	for i, c := range b.Cards {
+		if f.Match(b, c) {
+			kept = append(kept, v.Cards[i])
+		}
+	}
+	v.Cards = kept
+	return v, nil
+}
+
+func boardView(b *domain.Board) BoardView {
 	v := newViewer(b)
-	out := BoardView{Settings: b.Settings, Cards: make([]CardView, 0, len(b.Cards)), Warnings: b.Warnings()}
+	out := BoardView{
+		Settings:     normalizeSettings(b.Settings),
+		Cards:        make([]CardView, 0, len(b.Cards)),
+		Warnings:     append([]string{}, b.Warnings()...),
+		SettingsHash: SettingsHash(b.Settings),
+	}
 	for _, c := range b.Cards {
 		out.Cards = append(out.Cards, v.view(c, false))
 	}
-	return out, nil
+	return out
+}
+
+// UpdateSettings replaces the board's settings (see Board.ApplySettings) and
+// returns the board as the file now holds it. If ifMatch is not empty and is not
+// the SettingsHash of the settings as they are now, it returns a
+// *SettingsConflictError and changes nothing.
+func (s *Service) UpdateSettings(ctx context.Context, ch domain.SettingsChange, ifMatch string) (BoardView, error) {
+	b, err := s.apply(ctx, func(b *domain.Board) error {
+		if ifMatch != "" && SettingsHash(b.Settings) != ifMatch {
+			return &SettingsConflictError{Current: boardView(b)}
+		}
+		return b.ApplySettings(ch)
+	})
+	if err != nil {
+		return BoardView{}, err
+	}
+	return boardView(b), nil
+}
+
+// AutoArchive archives the cards that are due when the archive mode is auto,
+// and returns their ids. Reads do not archive, so an interface calls this when
+// it opens a board. It saves nothing when nothing is due.
+func (s *Service) AutoArchive(ctx context.Context) ([]domain.CardID, error) {
+	var ids []domain.CardID
+	_, err := s.apply(ctx, func(b *domain.Board) error {
+		ids = append([]domain.CardID{}, b.DueForArchive(s.now())...)
+		return nil // apply archives what is due after fn returns
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // List returns the cards matching query (see domain.ParseFilter), board cards
@@ -250,41 +357,65 @@ func (s *Service) Done(ctx context.Context, id domain.CardID) (CardView, error) 
 	})
 }
 
+// checkHash returns a *ConflictError if ifMatch is not empty and is not the hash
+// of card id as it is now. An unknown id is left for the operation to report.
+func checkHash(b *domain.Board, id domain.CardID, ifMatch string) error {
+	if ifMatch == "" {
+		return nil
+	}
+	c, archived, ok := b.Find(id)
+	if !ok || domain.CardHash(c) == ifMatch {
+		return nil
+	}
+	return &ConflictError{Current: newViewer(b).view(c, archived)}
+}
+
 // UpdateCard applies a patch. If ifMatch is not empty and is not the hash of
 // the card as it is now, it returns a *ConflictError and changes nothing.
 func (s *Service) UpdateCard(ctx context.Context, id domain.CardID, p domain.CardPatch, ifMatch string) (CardView, error) {
 	return s.change(ctx, id, func(b *domain.Board) error {
-		c, archived, ok := b.Find(id)
-		if !ok {
-			return fmt.Errorf("%w: card %s", domain.ErrNotFound, id)
-		}
-		if ifMatch != "" && domain.CardHash(c) != ifMatch {
-			return &ConflictError{Current: newViewer(b).view(c, archived)}
+		if err := checkHash(b, id, ifMatch); err != nil {
+			return err
 		}
 		return b.UpdateCard(id, p)
 	})
 }
 
-// CheckItem toggles the nth (1-based) checklist item of a card.
-func (s *Service) CheckItem(ctx context.Context, id domain.CardID, n int) (CardView, error) {
-	return s.change(ctx, id, func(b *domain.Board) error { return b.ToggleCheck(id, n) })
+// CheckItem toggles the nth (1-based) checklist item of a card. Numbers count
+// items in the card as it is now, so a caller that read the card earlier should
+// pass its hash as ifMatch: on a mismatch it returns a *ConflictError and changes
+// nothing.
+func (s *Service) CheckItem(ctx context.Context, id domain.CardID, n int, ifMatch string) (CardView, error) {
+	return s.change(ctx, id, func(b *domain.Board) error {
+		if err := checkHash(b, id, ifMatch); err != nil {
+			return err
+		}
+		return b.ToggleCheck(id, n)
+	})
 }
 
-// DeleteCard removes a card from the board or the archive.
-func (s *Service) DeleteCard(ctx context.Context, id domain.CardID) error {
-	_, err := s.apply(ctx, func(b *domain.Board) error { return b.DeleteCard(id) })
+// DeleteCard removes a card from the board or the archive. If ifMatch is not
+// empty and is not the hash of the card as it is now, it returns a
+// *ConflictError and changes nothing.
+func (s *Service) DeleteCard(ctx context.Context, id domain.CardID, ifMatch string) error {
+	_, err := s.apply(ctx, func(b *domain.Board) error {
+		if err := checkHash(b, id, ifMatch); err != nil {
+			return err
+		}
+		return b.DeleteCard(id)
+	})
 	return err
 }
 
 // ArchiveDone archives every card in a done column. It is refused when the
 // archive mode is off.
 func (s *Service) ArchiveDone(ctx context.Context) ([]domain.CardID, error) {
-	ids := []domain.CardID{}
+	var ids []domain.CardID
 	_, err := s.apply(ctx, func(b *domain.Board) error {
 		if b.Settings.Archive.Mode == domain.ArchiveOff {
 			return fmt.Errorf("%w: archiving is off for this board", domain.ErrInvalid)
 		}
-		ids = append(ids, b.DoneCards()...)
+		ids = append([]domain.CardID{}, b.DoneCards()...)
 		return b.Archive(ids, s.now())
 	})
 	if err != nil {

@@ -2,5 +2,8 @@
 /bin/
 /web/node_modules/
 /web/dist/
-/internal/http/dist/
+/internal/http/dist/*
+!/internal/http/dist/placeholder.html
 .DS_Store
+/web/test-results/
+/web/playwright-report/

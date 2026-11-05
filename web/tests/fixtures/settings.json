@@ -1,0 +1,13 @@
+{
+  "port": 4747,
+  "open_browser": true,
+  "tls": "auto",
+  "appearance": {
+    "theme": "",
+    "accent": "",
+    "density": "",
+    "swimlane": "",
+    "textures": ""
+  },
+  "restart_required": false
+}

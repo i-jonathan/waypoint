@@ -4,15 +4,12 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"waypoint/internal/app"
 	"waypoint/internal/domain"
-	"waypoint/internal/storage/markdown"
 )
 
 func newTestRunner(t *testing.T, cwd string, extra map[string]string) *runner {
@@ -21,17 +18,19 @@ func newTestRunner(t *testing.T, cwd string, extra map[string]string) *runner {
 	return &runner{ctx: context.Background(), env: env}
 }
 
-func TestNoArgsPrintsUsageAndExitsZero(t *testing.T) {
-	stdout, stderr, code := runCLI(t, t.TempDir())
+func TestHelpPrintsUsageListingServeAndTrust(t *testing.T) {
+	stdout, stderr, code := runCLI(t, t.TempDir(), "--help")
 	assertEq(t, code, 0)
 	assertEq(t, stderr, "")
 	assertContains(t, stdout, "Usage: waypoint")
 	assertContains(t, stdout, "project add")
 	assertContains(t, stdout, "init")
+	assertContains(t, stdout, "serve")
+	assertContains(t, stdout, "trust")
 }
 
 func TestHelpFlagsPrintUsage(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}, {"project", "--help"}, {"project", "add", "--help"}, {"init", "-h"}} {
+	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}, {"serve", "--help"}, {"trust", "-h"}, {"project", "--help"}, {"project", "add", "--help"}, {"init", "-h"}} {
 		stdout, stderr, code := runCLI(t, t.TempDir(), args...)
 		assertEq(t, code, 0)
 		assertEq(t, stderr, "")
@@ -68,7 +67,7 @@ func TestNoDashesInOutput(t *testing.T) {
 	dir := t.TempDir()
 	var all strings.Builder
 	for _, args := range [][]string{
-		{}, {"--help"}, {"project", "--help"}, {"project", "add", "--help"}, {"project", "ls", "--help"},
+		{"serve", "--help"}, {"trust", "--help"}, {"--help"}, {"project", "--help"}, {"project", "add", "--help"}, {"project", "ls", "--help"},
 		{"project", "rm", "--help"}, {"init", "--help"}, {"bogus"}, {"project", "ls"}, {"project", "rm", "x"},
 		{"project", "add", "!!!"}, {"project", "add", "A", "--bogus"},
 	} {
@@ -149,29 +148,6 @@ func TestUndefinedFlagHintsAtDoubleDash(t *testing.T) {
 	// Other flag errors carry no hint.
 	_, stderr, _ = runCLI(t, t.TempDir(), "project", "add", "A", "--path")
 	assertNotContains(t, stderr, "put --")
-}
-
-func TestErrorCode(t *testing.T) {
-	cases := []struct {
-		err  error
-		want string
-	}{
-		{fmt.Errorf("%w: x", domain.ErrNotFound), "not_found"},
-		{fmt.Errorf("%w: x", domain.ErrUnknownColumn), "unknown_column"},
-		{fmt.Errorf("%w: x", domain.ErrMoveNotAllowed), "move_not_allowed"},
-		{fmt.Errorf("%w: x", domain.ErrWIPLimit), "wip_limit"},
-		{fmt.Errorf("%w: x", domain.ErrConflict), "conflict"},
-		{&app.ConflictError{}, "conflict"},
-		{fmt.Errorf("%w: x", domain.ErrInvalid), "invalid"},
-		{fmt.Errorf("%w: x", domain.ErrUnknownGroup), "invalid"},
-		{fmt.Errorf("%w: x", domain.ErrUnknownPriority), "invalid"},
-		{fmt.Errorf("file: %w", &markdown.ParseError{Line: 4, Msg: "bad"}), "parse"},
-		{fmt.Errorf("file: %w", markdown.ErrNotABoard), "parse"},
-		{errors.New("disk on fire"), "error"},
-	}
-	for _, c := range cases {
-		assertEq(t, errorCode(c.err), c.want)
-	}
 }
 
 func TestServiceResolutionOrder(t *testing.T) {

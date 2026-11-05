@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Home reno",
+    "storage": "markdown",
+    "path": "/tmp/waypoint-fixture/reno.md",
+    "accent": "orange"
+  },
+  {
+    "name": "Garden",
+    "storage": "markdown",
+    "path": "/tmp/waypoint-fixture/garden.md",
+    "accent": "orange"
+  }
+]

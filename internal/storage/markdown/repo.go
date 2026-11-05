@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -32,9 +33,18 @@ type Repo struct {
 	real    string // the board file, with every symlink resolved
 	archive string // the archive file, resolved the same way
 	err     error  // why those paths could not be worked out
+
+	mu   sync.Mutex
+	seen *versions // the files as the last Load found them; nil before any Load
+
+	// beforeRename, when set, runs just before each file is renamed into place,
+	// with the temp file already synced. It is a test seam.
+	beforeRename func(path string)
 }
 
 var _ app.Repository = (*Repo)(nil)
+
+const archiveSuffix = ".archive.md"
 
 // New returns a repository for the board file at path. It resolves symlinks in
 // path and writes nothing. A path that cannot be resolved, such as a dangling
@@ -45,8 +55,27 @@ func New(path string) *Repo {
 	if r.real, r.err = canonical(path); r.err != nil {
 		return r
 	}
-	r.archive, r.err = canonical(strings.TrimSuffix(r.real, filepath.Ext(r.real)) + ".archive.md")
+	r.archive, r.err = canonical(ArchiveFile(r.real))
 	return r
+}
+
+// Files returns the board and archive paths with symlinks resolved, the paths this repository
+// really reads and writes. They are empty when the board path can't be resolved.
+func (r *Repo) Files() (board, archive string) {
+	if r.err != nil {
+		return "", ""
+	}
+	return r.real, r.archive
+}
+
+// ArchiveFile returns the archive path that goes with a board path.
+func ArchiveFile(board string) string {
+	return strings.TrimSuffix(board, filepath.Ext(board)) + archiveSuffix
+}
+
+// IsArchiveFile says whether path is named like an archive rather than a board.
+func IsArchiveFile(path string) bool {
+	return strings.HasSuffix(strings.ToLower(path), archiveSuffix)
 }
 
 // canonical returns path with every symlink resolved, the way the kernel
@@ -117,6 +146,10 @@ func (r *Repo) Load(ctx context.Context) (*domain.Board, []domain.CardID, error)
 	if r.err != nil {
 		return nil, nil, r.err
 	}
+	seen, err := r.current()
+	if err != nil {
+		return nil, nil, err
+	}
 	archived, err := r.readArchive()
 	if err != nil {
 		return nil, nil, err
@@ -144,6 +177,7 @@ func (r *Repo) Load(ctx context.Context) (*domain.Board, []domain.CardID, error)
 		}
 		b.Notices = append(b.Notices, fmt.Sprintf("%s is on the board and in the archive; keeping the board copy", c.ID))
 	}
+	r.remember(seen)
 	return b, assigned, nil
 }
 
@@ -191,12 +225,22 @@ func cardIDs(cards []domain.Card) []domain.CardID {
 // reverses that, so the archive written first still holds the card: Save
 // writes an archive that keeps the restored cards, then the board, then the
 // final archive. A card in both files is resolved by Load.
+//
+// Every temp file is written and synced first, so the renames follow each other
+// at once. Just before each rename Save compares both files with what Load
+// found, and on any difference it returns app.ErrChangedDuringWrite and writes
+// nothing further. That leaves the file someone else wrote in place. If the
+// archive was already replaced, the card it took is in both files, which Load
+// resolves as above.
 func (r *Repo) Save(ctx context.Context, b *domain.Board) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if r.err != nil {
 		return r.err
+	}
+	if err := r.checkUnchanged(); err != nil {
+		return err
 	}
 	boardData := Format(b)
 	if err := checkBoardOutput(boardData, b); err != nil {
@@ -206,8 +250,9 @@ func (r *Repo) Save(ctx context.Context, b *domain.Board) error {
 	if err := checkWritable(r.real, r.path); err != nil {
 		return err
 	}
+	board := fileWrite{r.real, "board", boardData}
 	if !writesArchive {
-		return r.writeBoard(boardData)
+		return r.commit(board)
 	}
 	if err := checkWritable(r.archive, r.archive); err != nil {
 		return err
@@ -239,36 +284,59 @@ func (r *Repo) Save(ctx context.Context, b *domain.Board) error {
 			union = append(union, c)
 		}
 	}
+	final := fileWrite{r.archive, "archive", finalData}
 	if len(union) == len(finalCards) {
-		if err := r.writeArchive(finalData); err != nil {
-			return err
-		}
-		return r.writeBoard(boardData)
+		return r.commit(final, board)
 	}
 
 	unionData := FormatArchive(union)
 	if err := checkArchiveOutput(unionData, union, b.Settings); err != nil {
 		return err
 	}
-	if err := r.writeArchive(unionData); err != nil {
-		return err
-	}
-	if err := r.writeBoard(boardData); err != nil {
-		return err
-	}
-	return r.writeArchive(finalData)
+	return r.commit(fileWrite{r.archive, "archive", unionData}, board, final)
 }
 
-func (r *Repo) writeArchive(data []byte) error {
-	if err := writeFileAtomic(r.archive, data); err != nil {
-		return fmt.Errorf("write archive: %w", err)
-	}
-	return nil
+// fileWrite is one file for commit to replace. name is how an error refers to it.
+type fileWrite struct {
+	path, name string
+	data       []byte
 }
 
-func (r *Repo) writeBoard(data []byte) error {
-	if err := writeFileAtomic(r.real, data); err != nil {
-		return fmt.Errorf("write board: %w", err)
+// commit replaces the files in order. Nothing is renamed until every temp file
+// is on disk, and each rename is preceded by checkUnchanged, as close to it as
+// the file system allows.
+func (r *Repo) commit(writes ...fileWrite) error {
+	files := make([]*stagedFile, 0, len(writes))
+	defer func() {
+		for _, f := range files {
+			f.discard()
+		}
+	}()
+	for _, w := range writes {
+		f, err := stage(w.path, w.data)
+		if err != nil {
+			return fmt.Errorf("write %s: %w", w.name, err)
+		}
+		files = append(files, f)
+	}
+	for i, f := range files {
+		if r.beforeRename != nil {
+			r.beforeRename(f.path)
+		}
+		// A file with nothing to rename is not at risk of losing a write, and a
+		// change to it must not fail an operation whose other files are done.
+		if f.tmp != "" {
+			if err := r.checkUnchanged(); err != nil {
+				return err
+			}
+		}
+		if err := f.install(); err != nil {
+			return fmt.Errorf("write %s: %w", writes[i].name, err)
+		}
+		if f.tmp != "" {
+			r.recordWrite(f.path, f.version)
+			f.tmp = ""
+		}
 	}
 	return nil
 }
@@ -363,25 +431,42 @@ func sameCards(want, got []domain.Card) error {
 	return nil
 }
 
-// writeFileAtomic replaces path, which must already be resolved (see
-// canonical), with data: it writes a temp file in the same directory, syncs it,
-// gives it the old file's permissions (0644 for a new file) and renames it into
-// place. The temp file is removed on any error. A file that already holds
-// exactly data is left alone.
+// writeFileAtomic replaces path, which must already be resolved (see canonical),
+// with data.
 func writeFileAtomic(path string, data []byte) error {
+	f, err := stage(path, data)
+	if err != nil {
+		return err
+	}
+	defer f.discard()
+	return f.install()
+}
+
+// stagedFile is a synced temp file waiting to replace path. An empty tmp means
+// path already holds the data, so there is nothing to do.
+type stagedFile struct {
+	path, tmp string
+	version   version // the temp file's, which a rename keeps
+}
+
+// stage writes data to a temp file in path's directory, syncs it and gives it the
+// old file's permissions (0644 for a new file). A file that already holds exactly
+// data is left alone. An archive written twice in one Save cannot be caught out
+// by that: the second write always drops a card the file on disk still has.
+func stage(path string, data []byte) (*stagedFile, error) {
 	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
-		return nil
+		return &stagedFile{path: path}, nil
 	}
 	mode := fs.FileMode(0o644)
 	if fi, err := os.Stat(path); err == nil {
 		mode = fi.Mode().Perm()
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
+		return nil, err
 	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".waypoint-*")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, err = tmp.Write(data)
 	if err == nil {
@@ -393,12 +478,28 @@ func writeFileAtomic(path string, data []byte) error {
 	if err == nil {
 		err = os.Chmod(tmp.Name(), mode)
 	}
+	var v version
 	if err == nil {
-		err = os.Rename(tmp.Name(), path)
+		v, err = versionOf(tmp.Name())
 	}
 	if err != nil {
 		os.Remove(tmp.Name())
-		return err
+		return nil, err
 	}
-	return nil
+	return &stagedFile{path: path, tmp: tmp.Name(), version: v}, nil
+}
+
+// install renames the temp file over path.
+func (f *stagedFile) install() error {
+	if f.tmp == "" {
+		return nil
+	}
+	return os.Rename(f.tmp, f.path)
+}
+
+// discard removes the temp file unless it was installed.
+func (f *stagedFile) discard() {
+	if f.tmp != "" {
+		os.Remove(f.tmp)
+	}
 }

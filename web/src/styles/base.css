@@ -1,0 +1,121 @@
+@import '@fontsource-variable/archivo/wdth.css';
+@import '@fontsource-variable/geist/wght.css';
+@import '@fontsource-variable/geist-mono/wght.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  min-height: 100%;
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--text);
+  background-color: var(--bg);
+  /* The canvas: a dot grid under faint contour rings. */
+  background-image:
+    radial-gradient(var(--dot) 1px, transparent 1.2px),
+    repeating-radial-gradient(circle at 82% 125%, transparent 0 46px, var(--contour) 46px 47px);
+  background-size: 18px 18px, auto;
+}
+
+:root[data-textures='off'] body {
+  background-image: none;
+}
+
+/* Signs: the logo, column headers and the NEXT tag. Nothing else uses Archivo. */
+.sign {
+  font-family: var(--font-sign);
+  font-stretch: 68%;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Focus is always visible. The ring has two tones: the project accent outside and
+   an inner ring in the text colour, which keeps 3:1 against the canvas and cards in
+   both themes (light orange alone is 2.92:1). tests/focus.test.ts checks the numbers. */
+:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--text);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Buttons: the primary one is filled with the accent, the plain one is a bordered control. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--card);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: var(--muted);
+}
+
+.btn.primary {
+  border-color: var(--acc);
+  background: var(--acc);
+  color: var(--acc-ink);
+}
+
+.btn.primary:hover {
+  filter: brightness(1.06);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

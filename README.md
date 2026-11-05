@@ -2,7 +2,7 @@
 
 Waypoint is a local kanban tracker for any kind of project: a home renovation, a thesis, a product launch, a software release. Your whole board is one Markdown file that you can read, edit by hand, and keep in version control. A command line tool lets you, or an AI agent working for you, add cards, move them between columns, and see what to work on next. Cards can depend on each other, so Waypoint can tell you which ones are ready and which are still blocked.
 
-This version is the command line and the Markdown board format. The web UI, SQLite storage and the MCP server are not in this version yet.
+Waypoint comes as one program with two faces: a command line for you and your agents, and a web UI that shows the same board in your browser and updates as the file changes. SQLite storage and the MCP server are not in this version yet.
 
 ## Install
 
@@ -49,11 +49,63 @@ Now the hallway is no longer blocked. Run `waypoint --help` for every command. A
 
 Every command accepts `--json` for scripts and `--project NAME` to act on a project other than the one in the current folder. Without either, Waypoint uses `$WAYPOINT_PROJECT` if it is set, then the project whose board is in the current folder or a folder above it, and otherwise stops with an error rather than guess. A Waypoint board named `BOARD.md` in the current folder that is not registered is an error, so run `waypoint init` there first. Any other file or folder called `BOARD.md` is ignored.
 
+## The web UI
+
+Run `waypoint` with no arguments (or `waypoint serve`) and the UI opens in your browser. It lists every registered project in the sidebar, shows the board with drag and drop, a filter, swimlanes, a card panel for editing, "Next up", "Blocked" and "Archive" views, and settings. It follows the files: if you or an agent change `BOARD.md` while the page is open, the board updates within a second or two with no reload.
+
+```
+waypoint serve [--port N] [--no-open]
+```
+
+- `--port N` sets the port for this run. Otherwise the `port` in the config is used, and that defaults to 4747. Ports 80 and 443 are refused.
+- `--no-open` keeps Waypoint from opening a browser. The `open_browser` key in the config turns the opening off for good.
+
+Waypoint listens on `127.0.0.1` only, so other machines cannot reach it. It also answers only to the host names `localhost` and `127.0.0.1`, and a change made through the API must carry a header that a web page on another site cannot send. Press Ctrl+C in the terminal to stop it.
+
+### A project is a registry entry
+
+A project is an entry in the config file that points to a board file. It is not a folder and it does not need a git repository. The file can be called anything and live anywhere. `waypoint project rm` drops the entry and keeps the file. In the UI, "New project" can either create a new board file or open an existing one, which registers it.
+
+### HTTPS, HTTP/2 and `waypoint trust`
+
+The `tls` key in the config sets how the server is reached:
+
+| Mode | What happens |
+| --- | --- |
+| `auto` (the default) | HTTPS if you have run `waypoint trust`, otherwise plain HTTP. |
+| `on` | Always HTTPS. Your browser warns until you have run `waypoint trust`. |
+| `off` | Always plain HTTP. |
+
+Browsers only use HTTP/2 over HTTPS, so "waypoint trust" installs a local certificate authority that only this machine trusts. The UI works without it, over plain HTTP, and `waypoint serve` says so once with a tip. HTTP/2 mostly helps with many small requests at once, so on a small board you will not notice a difference.
+
+Things to know about `waypoint trust`:
+
+- On macOS it adds the certificate authority to your login keychain, and macOS asks for your password to allow that. Waypoint never sees the password.
+- The certificate only works for `localhost` and `127.0.0.1`. It cannot vouch for any other site, even if its key were stolen.
+- The files live in the `tls` folder inside the data directory (`~/.local/share/waypoint` by default). Delete that folder to start over, and run `waypoint trust` again.
+- On Linux it prints the commands to run by hand, because they differ between systems. Run them, then create the marker file the last line of the output names.
+
+Restart `waypoint serve` after trusting, so that it starts serving HTTPS.
+
+### Keyboard
+
+You can do everything on the board without a mouse. The short version: arrows move between cards, Shift with an arrow moves the card, `m` opens a move menu, Enter opens the card, `n` adds a card and `/` goes to the filter. The full map is in [docs/keyboard.md](docs/keyboard.md).
+
+### Settings
+
+Appearance (theme, accent colour, density, swimlanes, textures) can be set in three places. For each field, the first of these that has a value wins:
+
+1. the project's own override, in the `appearance` key of the board file's header (or in the project's settings page),
+2. the global setting, in the `appearance` key of the config file (or in the UI's settings page),
+3. the built-in default: theme `system`, accent `orange`, density `comfortable`, swimlanes `none`, textures `on`.
+
+A field left empty, or with a value Waypoint does not know, falls through to the next level. In a project's settings, a field you have not overridden says whether it comes from the app settings or is built in.
+
 ## The board file
 
 `BOARD.md` is plain Markdown. The columns and settings sit in a short header, and each card is a heading with text under it. You can edit the file in any editor. A card heading without an id gets one the next time Waypoint reads the file. Dates are stored as UTC timestamps such as `2026-11-04T23:52:10Z` and shown in your local time; a plain date such as `2026-10-26` also works and stays as written. Run `waypoint help format` for the full description of the format.
 
-While it writes, Waypoint keeps a small `BOARD.md.lock` file beside the board. It is safe to ignore and safe to delete when nothing is running; add `*.lock` to your `.gitignore` to keep it out of version control, or `BOARD.md.lock` if the repository tracks other lock files such as `Cargo.lock`.
+While it writes, Waypoint keeps a small `.lock` file beside the board, for example `BOARD.md.lock`. It is safe to ignore and safe to delete when nothing is running; add `*.lock` to your `.gitignore` to keep it out of version control, or `BOARD.md.lock` if the repository tracks other lock files such as `Cargo.lock`.
 
 ## Configuration
 
@@ -63,6 +115,8 @@ Waypoint keeps a registry of your projects in a small config file. It is found i
 2. `$XDG_CONFIG_HOME/waypoint/config.yaml`,
 3. `~/.config/waypoint/config.yaml`.
 
+The keys are `port` (default 4747), `open_browser` (default true), `tls` (`auto`, `on` or `off`), `data_dir`, `appearance` and `projects`. Waypoint rewrites this file when you change a setting or register a project, whether from the command line or the UI, so comments in it are not kept. If the file is a symlink, the link stays and the file it points to is updated.
+
 The file is created the first time something is saved and is never needed just to read a board. Boards created with `waypoint project add` and no `--path` are stored under `~/.local/share/waypoint`.
 
 ## Working with AI agents
@@ -71,6 +125,5 @@ Run `waypoint agents` and paste the output into your project's `AGENTS.md` or `C
 
 ## What is coming
 
-- A web UI for viewing and arranging the board in a browser.
 - SQLite as a second storage option, with conversion between it and Markdown, and import and export.
 - An MCP server, so agents can use the board as a tool.

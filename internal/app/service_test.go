@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -418,11 +419,11 @@ func TestCheckItem(t *testing.T) {
 	e := newEnv(t)
 	a, err := e.svc.CreateCard(context.Background(), domain.NewCard{Title: "A", Body: "- [ ] one\n- [ ] two\n"})
 	noErr(t, err)
-	v, err := e.svc.CheckItem(context.Background(), a.ID, 2)
+	v, err := e.svc.CheckItem(context.Background(), a.ID, 2, "")
 	noErr(t, err)
 	equal(t, v.Checklist.Done, 1)
 	equal(t, v.Body, "- [ ] one\n- [x] two") // the file format trims the trailing newline
-	_, err = e.svc.CheckItem(context.Background(), a.ID, 3)
+	_, err = e.svc.CheckItem(context.Background(), a.ID, 3, "")
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("got %v, want ErrNotFound", err)
 	}
@@ -464,8 +465,8 @@ func TestListQueryAndArchive(t *testing.T) {
 func TestDeleteCard(t *testing.T) {
 	e := newEnv(t)
 	a := e.create("A", "")
-	noErr(t, e.svc.DeleteCard(context.Background(), a.ID))
-	if err := e.svc.DeleteCard(context.Background(), a.ID); !errors.Is(err, domain.ErrNotFound) {
+	noErr(t, e.svc.DeleteCard(context.Background(), a.ID, ""))
+	if err := e.svc.DeleteCard(context.Background(), a.ID, ""); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("got %v, want ErrNotFound", err)
 	}
 	equal(t, e.create("B", "").ID, domain.CardID("T-2"))
@@ -657,4 +658,297 @@ func TestWriteReturnsTheCardAsTheFileHoldsIt(t *testing.T) {
 	got, err := e.svc.Get(context.Background(), a.ID)
 	noErr(t, err)
 	equal(t, v.Hash, got.Hash)
+}
+
+func TestServiceUpdateSettingsPersists(t *testing.T) {
+	e := newEnv(t)
+	a := e.create("A", "In progress")
+	e.create("B", "Todo")
+
+	cur := e.board().Settings
+	cur.Name = "Renamed board"
+	cur.Prefix = "ZZ" // ignored
+	cur.Columns[1].Name = "Doing"
+	cur.Columns[0].MovesTo = []string{"Doing", "Done"}
+	cur.Columns[2].MovesTo = []string{"Doing"}
+	cur.Columns[1].WIP = 1
+	cur.Appearance.Accent = "teal"
+
+	view, err := e.svc.UpdateSettings(context.Background(), domain.SettingsChange{
+		Settings:      cur,
+		ColumnRenames: map[string]string{"In progress": "Doing"},
+	}, "")
+	noErr(t, err)
+
+	equal(t, view.Settings.Name, "Renamed board")
+	equal(t, view.Settings.Prefix, "T")
+	equal(t, view.Settings.Appearance.Accent, "teal")
+	equal(t, len(view.Cards), 2)
+	for _, c := range view.Cards {
+		if c.ID == a.ID {
+			equal(t, c.Column, "Doing")
+		}
+	}
+
+	got := e.board()
+	equal(t, got.Settings.Name, "Renamed board")
+	equal(t, got.Settings.Columns[1].Name, "Doing")
+	equal(t, got.Settings.Columns[1].WIP, 1)
+	equal(t, got.Settings.Appearance.Accent, "teal")
+	card, _, ok := got.Find(a.ID)
+	equal(t, ok, true)
+	equal(t, card.Column, "Doing")
+}
+
+func TestServiceUpdateSettingsRefusalAndNoOpSaveNothing(t *testing.T) {
+	e := newEnv(t)
+	e.create("A", "In progress")
+	repo := &countingRepo{Repository: e.repo}
+	svc := app.NewService(repo, func() time.Time { return e.now })
+	// Reformat by hand: any save would rewrite the file canonically.
+	e.write(e.file() + "\n\n\n")
+	before := e.file()
+
+	cur := e.board().Settings
+	_, err := svc.UpdateSettings(context.Background(), domain.SettingsChange{Settings: cur}, "")
+	noErr(t, err)
+
+	cur.Columns = []domain.Column{cur.Columns[0], cur.Columns[2]}
+	cur.Columns[0].MovesTo = []string{"Done"}
+	cur.Columns[1].MovesTo = []string{"Todo"}
+	_, err = svc.UpdateSettings(context.Background(), domain.SettingsChange{Settings: cur}, "")
+	if !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("got %v, want ErrInvalid", err)
+	}
+	equal(t, repo.saves, 0)
+	equal(t, e.file(), before)
+}
+
+func TestAutoArchiveOnOpen(t *testing.T) {
+	e := newEnv(t, withArchive(domain.ArchiveAuto, 14))
+	old := e.create("Old", "Done")
+	e.now = epoch.AddDate(0, 0, 20)
+
+	// A read does not archive; opening the board does, once.
+	b, err := e.svc.Board(context.Background())
+	noErr(t, err)
+	equal(t, len(b.Cards), 1)
+
+	ids, err := e.svc.AutoArchive(context.Background())
+	noErr(t, err)
+	equal(t, ids, []domain.CardID{old.ID})
+	b, err = e.svc.Board(context.Background())
+	noErr(t, err)
+	equal(t, len(b.Cards), 0)
+	v, err := e.svc.Get(context.Background(), old.ID)
+	noErr(t, err)
+	equal(t, v.Archived, true)
+
+	ids, err = e.svc.AutoArchive(context.Background())
+	noErr(t, err)
+	equal(t, len(ids), 0)
+}
+
+func TestAutoArchiveSavesNothingWhenNotDue(t *testing.T) {
+	for name, mutate := range map[string]func(*domain.Settings){
+		"manual":        withArchive(domain.ArchiveManual, 0),
+		"auto, not due": withArchive(domain.ArchiveAuto, 14),
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, mutate)
+			e.create("A", "Done")
+			repo := &countingRepo{Repository: e.repo}
+			svc := app.NewService(repo, func() time.Time { return e.now })
+			e.write(e.file() + "\n\n\n")
+			before := e.file()
+
+			ids, err := svc.AutoArchive(context.Background())
+			noErr(t, err)
+			equal(t, len(ids), 0)
+			equal(t, repo.saves, 0)
+			equal(t, e.file(), before)
+		})
+	}
+}
+
+func TestSettingsHashIgnoresNextIDOnly(t *testing.T) {
+	e := newEnv(t)
+	b0, err := e.svc.Board(context.Background())
+	noErr(t, err)
+	if len(b0.SettingsHash) != 64 {
+		t.Fatalf("settings hash %q is not a hex sha256", b0.SettingsHash)
+	}
+	equal(t, b0.SettingsHash, app.SettingsHash(b0.Settings))
+
+	e.create("A", "Todo") // moves next_id
+	b1, err := e.svc.Board(context.Background())
+	noErr(t, err)
+	if b1.Settings.NextID == b0.Settings.NextID {
+		t.Fatal("next_id did not move")
+	}
+	equal(t, b1.SettingsHash, b0.SettingsHash)
+
+	s := b1.Settings
+	s.Columns = append([]domain.Column{}, s.Columns...)
+	s.Columns[0].WIP = 3
+	if app.SettingsHash(s) == b0.SettingsHash {
+		t.Fatal("changing a column's wip did not change the hash")
+	}
+}
+
+func TestUpdateSettingsIfMatch(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	b, err := e.svc.Board(ctx)
+	noErr(t, err)
+	stale := b.SettingsHash
+
+	// Another writer edits the settings, so the first reader's hash is stale.
+	other := b.Settings
+	other.Name = "Edited elsewhere"
+	_, err = e.svc.UpdateSettings(ctx, domain.SettingsChange{Settings: other}, "")
+	noErr(t, err)
+	before := e.file()
+
+	mine := b.Settings
+	mine.Name = "Mine"
+	_, err = e.svc.UpdateSettings(ctx, domain.SettingsChange{Settings: mine}, stale)
+	var ce *app.SettingsConflictError
+	if !errors.As(err, &ce) || !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("got %v, want a *SettingsConflictError", err)
+	}
+	equal(t, ce.Current.Settings.Name, "Edited elsewhere")
+	equal(t, e.file(), before)
+
+	v, err := e.svc.UpdateSettings(ctx, domain.SettingsChange{Settings: mine}, ce.Current.SettingsHash)
+	noErr(t, err)
+	equal(t, v.Settings.Name, "Mine")
+}
+
+func TestBoardViewJSONShape(t *testing.T) {
+	e := newEnv(t)
+	b, err := e.svc.Board(context.Background())
+	noErr(t, err)
+	data, err := json.Marshal(b)
+	noErr(t, err)
+	var m map[string]json.RawMessage
+	noErr(t, json.Unmarshal(data, &m))
+	for _, k := range []string{"settings", "cards", "warnings", "settings_hash"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("no %q in %s", k, data)
+		}
+	}
+	equal(t, string(m["cards"]), "[]")
+	equal(t, string(m["warnings"]), "[]")
+	// Lists the UI iterates are arrays even when empty, never null.
+	if strings.Contains(string(m["settings"]), "null") {
+		t.Errorf("null in settings: %s", m["settings"])
+	}
+}
+
+func TestBoardMatchingFiltersCardsOnly(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, err := e.svc.CreateCard(ctx, domain.NewCard{Title: "urgent", Column: "Todo", Priority: "P0"})
+	noErr(t, err)
+	_, err = e.svc.CreateCard(ctx, domain.NewCard{Title: "later", Column: "Todo", Priority: "P2"})
+	noErr(t, err)
+
+	all, err := e.svc.Board(ctx)
+	noErr(t, err)
+	got, err := e.svc.BoardMatching(ctx, "p0")
+	noErr(t, err)
+	equal(t, len(all.Cards), 2)
+	equal(t, len(got.Cards), 1)
+	equal(t, got.Cards[0].Title, "urgent")
+	equal(t, got.Cards[0].Next, all.Cards[0].Next)
+	equal(t, got.Settings, all.Settings)
+	equal(t, got.SettingsHash, all.SettingsHash)
+}
+
+// changingRepo fails the next fails saves as if the file changed under them.
+type changingRepo struct {
+	app.Repository
+	fails, saves, locks int
+	onSave              func()
+}
+
+func (r *changingRepo) Save(ctx context.Context, b *domain.Board) error {
+	r.saves++
+	if r.onSave != nil {
+		r.onSave()
+	}
+	if r.fails > 0 {
+		r.fails--
+		return fmt.Errorf("%w: test", app.ErrChangedDuringWrite)
+	}
+	return r.Repository.Save(ctx, b)
+}
+
+func (r *changingRepo) Lock(ctx context.Context) (func() error, error) {
+	r.locks++
+	return r.Repository.Lock(ctx)
+}
+
+func TestSaveRetriesFiveTimesUnderOneLock(t *testing.T) {
+	e := newEnv(t)
+	repo := &changingRepo{Repository: e.repo, fails: 5}
+	svc := app.NewService(repo, func() time.Time { return e.now })
+
+	cv, err := svc.CreateCard(context.Background(), domain.NewCard{Title: "Lands"})
+	noErr(t, err)
+	if repo.saves != 6 || repo.locks != 1 {
+		t.Fatalf("saves %d locks %d, want 6 and 1", repo.saves, repo.locks)
+	}
+	if !strings.Contains(e.file(), "Lands") || cv.Title != "Lands" {
+		t.Fatalf("the card did not land:\n%s", e.file())
+	}
+}
+
+func TestSaveGivesUpWithAClearError(t *testing.T) {
+	e := newEnv(t)
+	repo := &changingRepo{Repository: e.repo, fails: 100}
+	svc := app.NewService(repo, func() time.Time { return e.now })
+
+	_, err := svc.CreateCard(context.Background(), domain.NewCard{Title: "Never"})
+	if !errors.Is(err, app.ErrChangedDuringWrite) || !strings.Contains(err.Error(), "try again") {
+		t.Fatalf("got %v", err)
+	}
+	if repo.saves != 6 {
+		t.Fatalf("saves %d, want 6", repo.saves)
+	}
+	if strings.Contains(e.file(), "Never") {
+		t.Fatalf("a failed change reached the file:\n%s", e.file())
+	}
+}
+
+func TestSaveRetryStopsWithTheContext(t *testing.T) {
+	e := newEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	repo := &changingRepo{Repository: e.repo, fails: 100, onSave: cancel}
+	svc := app.NewService(repo, func() time.Time { return e.now })
+
+	if _, err := svc.CreateCard(ctx, domain.NewCard{Title: "Never"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
+	}
+	if repo.saves != 1 {
+		t.Fatalf("saves %d, want 1", repo.saves)
+	}
+}
+
+func TestRetriedAutoArchiveReportsEachCardOnce(t *testing.T) {
+	e := newEnv(t, withArchive(domain.ArchiveAuto, 1))
+	a, err := e.svc.CreateCard(context.Background(), domain.NewCard{Title: "Old"})
+	noErr(t, err)
+	_, err = e.svc.Done(context.Background(), a.ID)
+	noErr(t, err)
+	e.now = e.now.Add(72 * time.Hour)
+	repo := &changingRepo{Repository: e.repo, fails: 2}
+	svc := app.NewService(repo, func() time.Time { return e.now })
+
+	ids, err := svc.AutoArchive(context.Background())
+	noErr(t, err)
+	if !reflect.DeepEqual(ids, []domain.CardID{a.ID}) {
+		t.Fatalf("got %v, want just %s", ids, a.ID)
+	}
 }

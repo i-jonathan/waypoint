@@ -1,0 +1,166 @@
+/* The settings forms and the new project dialog: labels above inputs, hints and
+   errors below them. Shared, so the four screens read as one. */
+.sf-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 0;
+}
+
+.sf-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sf-input {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--card);
+  font-size: 13px;
+}
+
+.sf-input[readonly] {
+  background: transparent;
+  color: var(--muted);
+}
+
+.sf-input[aria-invalid='true'] {
+  border-color: var(--red);
+}
+
+.sf-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.sf-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--red);
+  overflow-wrap: anywhere;
+}
+
+.sf-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sf-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--acc);
+}
+
+.sf-page {
+  max-width: 880px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.sf-page h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.sf-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.sf-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px 18px;
+  background: var(--card);
+  border: 1.5px solid var(--edge);
+  border-radius: var(--r-card);
+  box-shadow: 3px 3px 0 var(--edge);
+}
+
+.sf-section > h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.sf-note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.sf-note svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.sf-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1.5px solid var(--edge);
+  border-radius: var(--r-card);
+  box-shadow: 3px 3px 0 var(--edge);
+}
+
+.sf-bar .status {
+  margin-right: auto;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.sf-bar .status.dirty {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sf-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--card);
+  cursor: pointer;
+}
+
+.sf-icon-btn:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.sf-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

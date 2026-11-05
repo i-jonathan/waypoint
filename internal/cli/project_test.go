@@ -45,6 +45,16 @@ func TestProjectAddDefaultPathCreatesDataDir(t *testing.T) {
 	mustExist(t, want)
 }
 
+func TestProjectAddEmptyPrefixStaysRefused(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "p.md")
+	_, stderr, code := runCLI(t, dir, "project", "add", "P", "--path", path, "--prefix", "")
+	assertEq(t, code, 1)
+	assertContains(t, stderr, "prefix")
+	mustNotExist(t, path)
+	mustNotExist(t, sandboxFor(t).config)
+}
+
 func TestProjectAddEmptySlugAsksForPath(t *testing.T) {
 	dir := t.TempDir()
 	_, stderr, code := runCLI(t, dir, "project", "add", "!!!")

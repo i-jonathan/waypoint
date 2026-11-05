@@ -479,7 +479,7 @@ func TestUsageListsCardCommands(t *testing.T) {
 	var out bytes.Buffer
 	env, _, _ := testEnv(t, t.TempDir(), nil)
 	env.Stdout = &out
-	Run(context.Background(), nil, env)
+	Run(context.Background(), []string{"--help"}, env)
 	for _, c := range []string{"ls ", "show ", "add ", "move ", "set ", "check ", "done ", "archive", "restore ", "rm "} {
 		assertContains(t, out.String(), "\n  "+c)
 	}
@@ -490,4 +490,33 @@ func TestShowMissingCard(t *testing.T) {
 	out, _, code := runCLI(t, dir, "show", "T-9", "--json")
 	assertEq(t, code, 1)
 	assertContains(t, out, `"code":"not_found"`)
+}
+
+func TestCheckAndRmIfMatch(t *testing.T) {
+	dir := newProject(t)
+	runIn(t, dir, "add", "Card", "--body", "- [ ] one")
+	var cv struct {
+		Hash string `json:"hash"`
+	}
+	out := runIn(t, dir, "show", "T-1", "--json")
+	if err := json.Unmarshal([]byte(out), &cv); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		{"check", "T-1", "1", "--if-match", "deadbeef", "--json"},
+		{"rm", "T-1", "--if-match", "deadbeef", "--json"},
+	} {
+		stdout, _, code := runCLI(t, dir, args...)
+		assertEq(t, code, 1)
+		assertContains(t, stdout, `"code":"conflict"`)
+	}
+	assertContains(t, runIn(t, dir, "show", "T-1"), "- [ ] one")
+
+	assertEq(t, runIn(t, dir, "check", "T-1", "1", "--if-match", cv.Hash), "Checked item 1 of T-1\n")
+	out = runIn(t, dir, "show", "T-1", "--json")
+	if err := json.Unmarshal([]byte(out), &cv); err != nil {
+		t.Fatal(err)
+	}
+	assertEq(t, runIn(t, dir, "rm", "T-1", "--if-match", cv.Hash), "Deleted T-1\n")
 }

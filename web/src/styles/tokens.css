@@ -1,0 +1,58 @@
+/* Design tokens from docs/design/design-language.html. The accent pair is set
+   at runtime (App.svelte); the orange defaults keep the page styled before
+   that runs. */
+:root {
+  --acc: #ff7a3d;
+  --acc-ink: #0f1714;
+
+  --font-sans: 'Geist Variable', system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+  --font-sign: 'Archivo Variable', 'Arial Narrow', sans-serif;
+
+  --r-control: 10px;
+  --r-card: 12px;
+  --r-sign: 7px;
+  --r-chip: 4px;
+
+  --card-pad-y: 10px;
+  --card-pad-x: 12px;
+  --col-gap: 14px;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0f1714;
+  --rail: rgba(18, 28, 24, 0.88);
+  --card: #18241f;
+  --line: #2b3b34;
+  --text: #e9eee6;
+  --muted: #97a79e;
+  --dot: rgba(151, 167, 158, 0.1);
+  --contour: rgba(151, 167, 158, 0.08);
+  --head: #e9eee6;
+  --headtext: #0f1714;
+  --red: #ff6b5b;
+  --edge: #aebdb3;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #e9eee8;
+  --rail: rgba(243, 246, 241, 0.9);
+  --card: #fbfcfa;
+  --line: #cdd6cd;
+  --text: #16201b;
+  --muted: #56645c;
+  --dot: rgba(22, 32, 27, 0.12);
+  --contour: rgba(22, 32, 27, 0.07);
+  --head: #16201b;
+  --headtext: #e9eee8;
+  --red: #c8321e;
+  --edge: #16201b;
+}
+
+:root[data-density='compact'] {
+  --card-pad-y: 6px;
+  --card-pad-x: 10px;
+  --col-gap: 10px;
+}

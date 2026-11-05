@@ -374,7 +374,13 @@ func TestSaveWritesArchiveBeforeBoard(t *testing.T) {
 	if err := b.Archive([]domain.CardID{done.ID}, day); err != nil {
 		t.Fatal(err)
 	}
-	lock()
+	// Temp files are all written before the first rename, so it takes a failure
+	// at the board's own rename to stop a save between the two files.
+	markdown.SetBeforeRename(r, func(path string) {
+		if filepath.Base(path) == filepath.Base(realBoard) {
+			lock()
+		}
+	})
 	if err := r.Save(context.Background(), b); err == nil {
 		t.Fatal("Save succeeded although the board could not be written")
 	}
@@ -482,14 +488,37 @@ func TestSaveThatArchivesAndRestoresEndsWithFinalFiles(t *testing.T) {
 	}
 }
 
+func TestSaveChangesNothingWhenATempFileCannotBeWritten(t *testing.T) {
+	r, board, realBoard, lock := boardBehindLockedDir(t)
+	b := mustLoad(t, r)
+	done := addCard(t, b, "Finished", "Done")
+	mustSave(t, r, b)
+	boardBefore := readFile(t, realBoard)
+
+	if err := b.Archive([]domain.CardID{done.ID}, day); err != nil {
+		t.Fatal(err)
+	}
+	lock()
+	if err := r.Save(context.Background(), b); err == nil {
+		t.Fatal("Save succeeded although the board could not be written")
+	}
+	if strings.Contains(readFile(t, archivePathOf(board)), "### T-1 Finished") {
+		t.Fatal("the archive was replaced although the board's temp file failed")
+	}
+	if readFile(t, realBoard) != boardBefore {
+		t.Fatal("the board changed")
+	}
+}
+
 func TestSaveRefusesWhenOnDiskArchiveIsUnreadable(t *testing.T) {
-	r, b, board, archive := boardWithArchive(t)
+	_, b, board, archive := boardWithArchive(t)
 	bad := "# Archive\n\n## not a month\n"
 	if err := os.WriteFile(archive, []byte(bad), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	before := readFile(t, board)
-	if err := r.Save(context.Background(), b); err == nil || !strings.HasPrefix(err.Error(), "refusing to write") {
+	// A Repo that has not loaded: one that has would stop at the changed file.
+	if err := markdown.New(board).Save(context.Background(), b); err == nil || !strings.HasPrefix(err.Error(), "refusing to write") {
 		t.Fatalf("Save error = %v, want one starting %q", err, "refusing to write")
 	}
 	if readFile(t, archive) != bad || readFile(t, board) != before {
