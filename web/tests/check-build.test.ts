@@ -37,6 +37,13 @@ describe('check-build', () => {
     expect(r.ok).toBe(true);
   });
 
+  it("allows the link in marked's error message, and nothing else on that site", () => {
+    const ok = check({ 'assets/a.js': 'var m="Please report this to https://github.com/markedjs/marked.";' });
+    expect(ok.ok).toBe(true);
+    const bad = check({ 'assets/a.js': 'fetch("https://github.com/markedjs/marked/raw/x")' });
+    expect(bad.ok).toBe(false);
+  });
+
   it('fails a plain URL in JS', () => {
     const r = check({ 'assets/a.js': 'fetch("https://evil.example/x")' });
     expect(r.ok).toBe(false);

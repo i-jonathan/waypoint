@@ -19,6 +19,9 @@ const dist = process.argv[2]
 const textExt = /\.(html|js|mjs|css|svg|json|webmanifest|txt)$/;
 const urlRe = /https?:\/\/[^\s"'`)<>\\]+/g;
 
+// Matched whole, not as a prefix: the link marked prints in an error message (text for a human).
+const allowedExact = ['https://github.com/markedjs/marked'];
+
 // Never fetched: XML namespace identifiers, and the documentation links Svelte
 // puts inside its runtime error messages (text for a human, not a request).
 const allowed = [
@@ -84,7 +87,7 @@ for (const file of walk(dist)) {
   const name = relative(dist, file);
   for (const m of text.matchAll(urlRe)) {
     const url = m[0].replace(/[.,;]+$/, '');
-    if (allowed.some((ns) => url.startsWith(ns))) continue;
+    if (allowedExact.includes(url) || allowed.some((ns) => url.startsWith(ns))) continue;
     found.push(`${name}: ${url}`);
   }
   for (const re of protocolRelative) for (const m of text.matchAll(re)) found.push(`${name}: ${m[0]}`);

@@ -1,5 +1,6 @@
 <script lang="ts">
   import Plus from 'phosphor-svelte/lib/Plus';
+  import type { Snippet } from 'svelte';
   import type { CardView, Column } from '../lib/types';
   import Card from './Card.svelte';
 
@@ -32,6 +33,8 @@
     slot?: number | null;
     readonly?: boolean;
     onAdd?: (column: string) => void;
+    /** Takes the place of the Add card row, as quick add does while it is open. */
+    footer?: Snippet<[string]>;
     onOpen: (id: string) => void;
     onPointerDown: (e: PointerEvent, id: string, el: HTMLElement) => void;
   }
@@ -53,6 +56,7 @@
     slot = null,
     readonly = false,
     onAdd,
+    footer,
     onOpen,
     onPointerDown,
   }: Props = $props();
@@ -117,7 +121,9 @@
           {#if dragging}Drop here{:else if total > 0}No matching cards{:else}Nothing here yet{/if}
         </p>
       {/if}
-      {#if part === 'full' && onAdd}
+      {#if part === 'full' && footer}
+        {@render footer(column.name)}
+      {:else if part === 'full' && onAdd}
         <button class="add" disabled={readonly} onclick={() => onAdd(column.name)}>
           <Plus size={13} weight="bold" aria-hidden="true" />Add card
           <span class="sr-only"> to {column.name}</span>

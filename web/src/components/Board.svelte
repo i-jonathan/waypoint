@@ -10,6 +10,7 @@
   import { href, navigate } from '../lib/router.svelte';
   import type { Swimlane } from '../lib/types';
   import Column from './Column.svelte';
+  import QuickAdd from './QuickAdd.svelte';
   import MoveMenu from './MoveMenu.svelte';
   import Swimlanes from './Swimlanes.svelte';
 
@@ -17,11 +18,14 @@
     store: BoardStore;
     project: string;
     lane: Swimlane;
-    /** The Add card row of a column. Quick add arrives with the card panel. */
+    /** The Add card row of a column was used. */
     onAddCard?: (column: string) => void;
+    /** The column whose quick add is open, or null. */
+    adding?: string | null;
+    onCloseAdd?: () => void;
   }
 
-  let { store, project, lane, onAddCard }: Props = $props();
+  let { store, project, lane, onAddCard, adding = null, onCloseAdd }: Props = $props();
 
   const view = $derived(store.view);
   // The whole board, whatever the filter: every index and every count is taken from it.
@@ -372,7 +376,15 @@
         break;
     }
   }
+
+  // ----- Quick add -----
+  /** Cards made here go through the store's queue, so a pasted list keeps its order. */
+  const create = (column: string) => (title: string) => store.create({ title, column });
 </script>
+
+{#snippet quick(column: string)}
+  <QuickAdd {column} onCreate={create(column)} onClose={() => onCloseAdd?.()} />
+{/snippet}
 
 <!-- The board takes keys from the cards inside it, which are the focusable things. -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -411,12 +423,16 @@
             slot={dragState?.target?.zone === zone ? dragState.target.slotY : null}
             {readonly}
             onAdd={onAddCard}
+            footer={adding === col.name ? quick : undefined}
             onOpen={open}
             {onPointerDown}
           />
         {/each}
       </div>
     {:else}
+      {#if adding !== null && columns.some((c) => c.name === adding)}
+        <div class="quick-bar">{@render quick(adding)}</div>
+      {/if}
       <Swimlanes
         {mode}
         {layout}
@@ -472,6 +488,12 @@
   .board.lanes {
     display: block;
     overflow-y: auto;
+  }
+
+  /* Swimlanes have no column foot, so quick add is a bar above the lanes. */
+  .quick-bar {
+    max-width: 420px;
+    margin-bottom: 12px;
   }
 
   .track {

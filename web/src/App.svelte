@@ -5,6 +5,7 @@
   import PlugsConnected from 'phosphor-svelte/lib/PlugsConnected';
   import Question from 'phosphor-svelte/lib/Question';
   import Board from './components/Board.svelte';
+  import CardPanel from './components/CardPanel.svelte';
   import Notice from './components/Notice.svelte';
   import ParseBanner from './components/ParseBanner.svelte';
   import Sidebar from './components/Sidebar.svelte';
@@ -15,7 +16,7 @@
   import { summarize, type BoardStats } from './lib/boardStats';
   import { connectEvents, toasts } from './lib/events.svelte';
   import { toggleGroupTerm } from './lib/filter';
-  import { navigate, route } from './lib/router.svelte';
+  import { href, navigate, route } from './lib/router.svelte';
   import { applyLook, DEFAULT_LOOK, loadLook, saveLook, systemPrefersLight, watchSystemTheme, type Look } from './lib/theme';
   import type { ProjectInfo, Swimlane } from './lib/types';
 
@@ -162,8 +163,30 @@
   function openExisting() {
     navigate('/settings');
   }
+
+  // ----- Quick add: open in one column at a time -----
+  let adding = $state<string | null>(null);
+
+  $effect(() => {
+    void store;
+    adding = null;
+  });
+
+  function addCard(column: string) {
+    if (!store || store.readonly) return;
+    adding = column;
+  }
+
+  /** New card: quick add in the first column. */
   function newCard() {
-    // Quick add and the card panel arrive with the next task.
+    const first = store?.view?.settings.columns[0]?.name;
+    if (first !== undefined) addCard(first);
+  }
+
+  // ----- The card panel -----
+  function closeCard() {
+    if (route.project === undefined) return;
+    navigate(href({ name: 'board', project: route.project, search: route.search }));
   }
 
   const viewTitle: Partial<Record<string, string>> = { next: 'Next up', blocked: 'Blocked', archive: 'Archive' };
@@ -237,13 +260,19 @@
         <h1 class="sr-only">{current.name}</h1>
         {#if store.parseError}<ParseBanner error={store.parseError} />{/if}
         {#if route.name === 'home' || route.name === 'board' || route.name === 'card'}
-          <Board {store} project={current.name} {lane} onAddCard={newCard} />
+          <Board {store} project={current.name} {lane} onAddCard={addCard} {adding} onCloseAdd={() => (adding = null)} />
         {:else}
           <h1 class="page">{viewTitle[route.name] ?? ''}</h1>
         {/if}
       {/if}
     </main>
   </div>
+
+  {#if route.name === 'card' && route.id !== undefined && current && !current.error && store}
+    {#key `${current.name}\n${route.id}`}
+      <CardPanel {store} project={current.name} id={route.id} onClose={closeCard} />
+    {/key}
+  {/if}
 </div>
 
 <Toast />
