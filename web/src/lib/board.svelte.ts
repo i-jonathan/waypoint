@@ -25,6 +25,11 @@ export interface ParseError {
 
 export interface BoardStore {
   readonly view: BoardView | null;
+  /**
+   * The whole board, whatever the query. It is `view` while no query is set;
+   * with one, it is fetched beside the filtered board, so counts stay true.
+   */
+  readonly baseline: BoardView | null;
   readonly appearance: ResolvedAppearance | null;
   /** Set while the board file does not parse. The last good view stays on screen. */
   readonly parseError: ParseError | null;
@@ -78,6 +83,8 @@ interface PendingMove {
 
 export function createBoardStore(client: BoardApi, project: string): BoardStore {
   let view = $state.raw<BoardView | null>(null);
+  // The unfiltered board. The same object as `view` when no query is set.
+  let baseline = $state.raw<BoardView | null>(null);
   let appearance = $state.raw<ResolvedAppearance | null>(null);
   let parseError = $state.raw<ParseError | null>(null);
   let offline = $state(false);
@@ -171,8 +178,16 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
     const asked = query;
     const writesThen = writeSeq;
     let res: BoardResponse;
+    let whole: BoardView | null = null;
     try {
-      res = await client.board(project, asked === '' ? undefined : asked);
+      if (asked === '') {
+        res = await client.board(project, undefined);
+      } else {
+        // The filtered board and the whole one, side by side: the sidebar counts the whole.
+        const [filtered, unfiltered] = await Promise.all([client.board(project, asked), client.board(project, undefined)]);
+        res = filtered;
+        whole = unfiltered.board;
+      }
     } catch (e) {
       if (destroyed || seq !== fetchSeq) return false;
       if (e instanceof ApiError && e.status === 0) {
@@ -196,6 +211,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
     offline = false;
     parseError = null;
     view = res.board;
+    baseline = whole ?? res.board;
     appearance = res.appearance;
     for (const id of answered.keys()) if (!busy.has(id)) answered.delete(id);
     return false;
@@ -240,9 +256,13 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
     return true;
   }
 
+  /** Applies a change to the cards of the view, and of the baseline when that is a separate board. */
   function setCards(update: (cards: CardView[]) => CardView[]) {
     if (!view) return;
+    const shared = baseline === view;
     view = { ...view, cards: update(view.cards) };
+    if (shared) baseline = view;
+    else if (baseline) baseline = { ...baseline, cards: update(baseline.cards) };
   }
 
   /** Swaps the server's version of a card in, where it stands, unless more work on it is waiting. */
@@ -370,7 +390,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
     if (refused) return Promise.reject(refused);
     return write(async () => {
       const card = await client.createCard(project, n);
-      if (!destroyed && view && !view.cards.some((c) => c.id === card.id)) setCards((cards) => [...cards, card]);
+      if (!destroyed) setCards((cards) => (cards.some((c) => c.id === card.id) ? cards : [...cards, card]));
       return card;
     });
   }
@@ -425,6 +445,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
           if (!destroyed) {
             offline = false;
             view = res.board;
+            baseline = res.board;
             appearance = res.appearance;
           }
         } catch (e) {
@@ -458,6 +479,9 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
   return {
     get view() {
       return view;
+    },
+    get baseline() {
+      return baseline;
     },
     get appearance() {
       return appearance;

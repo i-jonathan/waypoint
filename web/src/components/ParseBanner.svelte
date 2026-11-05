@@ -1,6 +1,5 @@
 <script lang="ts">
   import Warning from 'phosphor-svelte/lib/Warning';
-  import { describeParseError } from '../lib/parseError';
 
   interface Props {
     error: { line?: number; message: string };
@@ -8,13 +7,15 @@
 
   let { error }: Props = $props();
 
-  const detail = $derived(describeParseError(error));
-  const where = $derived(detail.line === undefined ? '' : `line ${detail.line}: `);
+  // The store gives the bare message (no file path, no line prefix), so the line is said once.
+  // A message that ends in a full stop would double it before "Fix the file".
+  const where = $derived(error.line === undefined ? '' : `line ${error.line}: `);
+  const message = $derived(error.message.replace(/[.\s]+$/, ''));
 </script>
 
 <div class="banner" role="alert">
   <Warning size={18} weight="bold" aria-hidden="true" />
-  <p>This board can't be read: {where}{detail.message}. Fix the file and Waypoint will reload it.</p>
+  <p>This board can't be read: {where}{message}. Fix the file and Waypoint will reload it.</p>
 </div>
 
 <style>

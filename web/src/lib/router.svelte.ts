@@ -41,7 +41,7 @@ export function parsePath(path: string): Route {
   const project = parts[1];
   if (parts.length === 2) return { name: 'board', project, search };
   const view = parts[2]!;
-  if (parts.length === 3 && view in PROJECT_VIEWS) return { name: PROJECT_VIEWS[view]!, project, search };
+  if (parts.length === 3 && Object.hasOwn(PROJECT_VIEWS, view)) return { name: PROJECT_VIEWS[view]!, project, search };
   if (parts.length === 4 && view === 'card') return { name: 'card', project, id: parts[3]!, search };
   return home;
 }

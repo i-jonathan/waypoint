@@ -157,7 +157,14 @@
   .q:focus-within {
     border-color: var(--acc);
     outline: 2px solid var(--acc);
-    outline-offset: 1px;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 2px var(--text);
+  }
+
+  /* The input's own ring would double the box's. */
+  input:focus-visible {
+    outline: 0;
+    box-shadow: none;
   }
 
   .q :global(svg) {
@@ -231,8 +238,15 @@
     color: var(--headtext);
   }
 
+  /* The group clips its edge, so its ring is drawn inside: text colour on the edge, accent within.
+     The filled button has the text colour as its fill, so its edge ring uses the canvas colour. */
   .seg button:focus-visible {
-    outline-offset: -3px;
+    outline-offset: -4px;
+    box-shadow: inset 0 0 0 2px var(--text);
+  }
+
+  .seg button.on:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--bg);
   }
 
   .lane {

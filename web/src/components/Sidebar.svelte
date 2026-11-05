@@ -54,8 +54,8 @@
     count?: number;
   }
 
-  // The card route is the board with a panel open, so it keeps Board lit.
-  const active = $derived(routeName === 'card' ? 'board' : routeName);
+  // The card route is the board with a panel open, and home shows the board, so both keep Board lit.
+  const active = $derived(routeName === 'card' || routeName === 'home' ? 'board' : routeName);
 
   const nav: NavItem[] = $derived([
     { route: 'board', label: 'Board', icon: Kanban, ...(stats ? { count: stats.total } : {}) },

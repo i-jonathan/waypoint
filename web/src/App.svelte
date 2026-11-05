@@ -107,19 +107,8 @@
   });
 
   // ----- Sidebar numbers -----
-  // Counts come from the whole board. While a filter is on, the view holds only
-  // the matches, so the last unfiltered counts stay.
-  let stats = $state.raw<BoardStats | null>(null);
-
-  $effect(() => {
-    const s = store;
-    const view = s?.view;
-    if (!s || !view) {
-      stats = null;
-      return;
-    }
-    if (untrack(() => s.query) === '') stats = summarize(view);
-  });
+  // Counted on the whole board, never the filtered view, so they stay true while a filter is on.
+  const stats = $derived<BoardStats | null>(store?.baseline ? summarize(store.baseline) : null);
 
   const query = $derived(store?.query ?? '');
 
@@ -254,7 +243,7 @@
       {:else if current && store}
         <h1 class="sr-only">{current.name}</h1>
         {#if store.parseError}<ParseBanner error={store.parseError} />{/if}
-        {#if route.name === 'board' || route.name === 'card'}
+        {#if route.name === 'home' || route.name === 'board' || route.name === 'card'}
           <!-- A stand-in for the board, which is built in the next task. -->
           <ul class="cols" aria-label="Columns">
             {#each store.view?.settings.columns ?? [] as col (col.name)}

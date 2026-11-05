@@ -56,10 +56,13 @@ a {
   text-decoration: none;
 }
 
-/* Focus is always visible, in the project accent. */
+/* Focus is always visible. The ring has two tones: the project accent outside and
+   an inner ring in the text colour, which keeps 3:1 against the canvas and cards in
+   both themes (light orange alone is 2.92:1). tests/focus.test.ts checks the numbers. */
 :focus-visible {
   outline: 2px solid var(--acc);
   outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--text);
 }
 
 .sr-only {

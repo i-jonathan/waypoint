@@ -215,7 +215,8 @@
   }
 
   .item:focus-visible {
-    outline-offset: -2px;
+    outline-offset: -4px;
+    box-shadow: inset 0 0 0 2px var(--text);
   }
 
   .label {

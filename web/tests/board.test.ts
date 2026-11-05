@@ -561,12 +561,12 @@ describe('refreshing', () => {
     const { api, store } = await loaded();
     const forA = deferred<BoardResponse>();
     const forB = deferred<BoardResponse>();
-    api.board.mockReturnValueOnce(forA.promise).mockReturnValueOnce(forB.promise);
+    api.board.mockImplementation(async (_p, q) => (q === 'a' ? forA.promise : q === 'ab' ? forB.promise : response(start)));
     store.setQuery('a');
     await vi.advanceTimersByTimeAsync(120);
     store.setQuery('ab');
     await vi.advanceTimersByTimeAsync(120);
-    expect(api.board.mock.calls.map((c) => c[1])).toEqual(['a', 'ab']);
+    expect(api.board.mock.calls.map((c) => c[1]).filter((q) => q !== undefined)).toEqual(['a', 'ab']);
     forB.resolve(response([card('B', 'todo')]));
     await settle();
     forA.resolve(response([card('A', 'todo')]));
@@ -598,8 +598,80 @@ describe('query', () => {
     await vi.advanceTimersByTimeAsync(119);
     expect(api.board).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(api.board).toHaveBeenCalledTimes(1);
+    // The filtered board once, and the whole board beside it for the counts.
+    expect(api.board.mock.calls.filter((c) => c[1] === 'kit')).toHaveLength(1);
+    expect(api.board).toHaveBeenCalledTimes(2);
     expect(api.board).toHaveBeenCalledWith('Home', 'kit');
+  });
+});
+
+describe('the unfiltered baseline', () => {
+  const all = [card('A', 'todo'), card('B', 'todo'), card('C', 'done'), card('D', 'doing')];
+  const narrowed = [card('A', 'todo')];
+
+  /** A server that filters: with a query it answers `narrowed`, without one `all`. */
+  function filtering() {
+    const api = fakeApi();
+    api.board.mockImplementation(async (_p, q) => response(q ? narrowed : all));
+    return api;
+  }
+
+  it('is the board itself while no query is set', async () => {
+    const api = filtering();
+    const store = createBoardStore(api, 'Home');
+    expect(store.baseline).toBeNull();
+    await store.refresh();
+    expect(store.baseline?.cards.map((c) => c.id)).toEqual(['A', 'B', 'C', 'D']);
+    expect(api.board).toHaveBeenCalledTimes(1);
+  });
+
+  it('is fetched beside the filtered board when a query is set, and the view stays filtered', async () => {
+    const api = filtering();
+    const store = createBoardStore(api, 'Home');
+    await store.refresh();
+    api.board.mockClear();
+    store.setQuery('group:"X"');
+    await vi.advanceTimersByTimeAsync(120);
+    expect(api.board).toHaveBeenCalledWith('Home', 'group:"X"');
+    expect(api.board).toHaveBeenCalledWith('Home', undefined);
+    expect(order(store)).toEqual(['A']);
+    expect(store.baseline?.cards.map((c) => c.id)).toEqual(['A', 'B', 'C', 'D']);
+  });
+
+  it('follows a refresh made while the query is on', async () => {
+    const api = filtering();
+    const store = createBoardStore(api, 'Home');
+    await store.refresh();
+    store.setQuery('x');
+    await vi.advanceTimersByTimeAsync(120);
+    api.board.mockImplementation(async (_p, q) => response(q ? narrowed : [...all, card('E', 'done')]));
+    store.handleEvent({ type: 'changed', project: 'Home' });
+    await settle();
+    expect(store.baseline?.cards.map((c) => c.id)).toEqual(['A', 'B', 'C', 'D', 'E']);
+    expect(order(store)).toEqual(['A']);
+  });
+
+  it('shows a move at once in the baseline as well', async () => {
+    const api = filtering();
+    api.move.mockResolvedValue(card('A', 'done'));
+    const store = createBoardStore(api, 'Home');
+    await store.refresh();
+    store.setQuery('x');
+    await vi.advanceTimersByTimeAsync(120);
+    const moving = store.move('A', 'done', -1);
+    expect(store.baseline?.cards.find((c) => c.id === 'A')?.column).toBe('done');
+    await moving;
+    expect(store.baseline?.cards.find((c) => c.id === 'A')?.column).toBe('done');
+  });
+
+  it('keeps the last good baseline when a filtered fetch fails', async () => {
+    const api = filtering();
+    const store = createBoardStore(api, 'Home');
+    await store.refresh();
+    api.board.mockRejectedValue(new ApiError(500, 'error', 'boom'));
+    store.setQuery('x');
+    await vi.advanceTimersByTimeAsync(120);
+    expect(store.baseline?.cards).toHaveLength(4);
   });
 });
 

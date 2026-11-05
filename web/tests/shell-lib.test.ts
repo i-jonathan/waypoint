@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { summarize } from '../src/lib/boardStats';
 import { accentColor, groupColor } from '../src/lib/colors';
 import { groupTerm, hasGroupTerm, toggleGroupTerm } from '../src/lib/filter';
-import { describeParseError } from '../src/lib/parseError';
 import type { BoardView, CardView } from '../src/lib/types';
 
 describe('toggleGroupTerm', () => {
@@ -30,23 +29,6 @@ describe('toggleGroupTerm', () => {
 
   it('drops quotes from a name, since the query has no escape for them', () => {
     expect(groupTerm('say "hi"')).toBe('group:"say hi"');
-  });
-});
-
-describe('describeParseError', () => {
-  it('strips the file path and line prefix the server puts in the message', () => {
-    expect(describeParseError({ line: 24, message: '/tmp/a.md: line 24: invalid card id' })).toEqual({
-      line: 24,
-      message: 'invalid card id',
-    });
-  });
-
-  it('finds the line in the message when the error has none', () => {
-    expect(describeParseError({ message: 'line 3: bad front matter' })).toEqual({ line: 3, message: 'bad front matter' });
-  });
-
-  it('keeps a message with no line as it is', () => {
-    expect(describeParseError({ message: 'file is empty' })).toEqual({ message: 'file is empty' });
   });
 });
 

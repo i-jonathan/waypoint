@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../src/App.svelte';
 import { accentInk, resolveAccent } from '../src/lib/accent';
 import { api, ApiError } from '../src/lib/api';
+import type { BoardStore } from '../src/lib/board.svelte';
 import { toasts } from '../src/lib/events.svelte';
 import { navigate } from '../src/lib/router.svelte';
 import type { BoardResponse, CardView, ProjectInfo, Settings } from '../src/lib/types';
@@ -13,6 +14,22 @@ import type { BoardResponse, CardView, ProjectInfo, Settings } from '../src/lib/
 vi.mock('../src/lib/api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../src/lib/api')>();
   return { ...real, api: { projects: vi.fn(), board: vi.fn() } };
+});
+
+// Real stores, watched: which were made, and whether each was destroyed.
+const made: Array<{ project: string; store: BoardStore; destroy: ReturnType<typeof vi.fn> }> = [];
+vi.mock('../src/lib/board.svelte', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../src/lib/board.svelte')>();
+  return {
+    ...real,
+    createBoardStore: (client: Parameters<typeof real.createBoardStore>[0], project: string) => {
+      const store = real.createBoardStore(client, project);
+      const destroy = vi.fn(store.destroy);
+      store.destroy = destroy;
+      made.push({ project, store, destroy });
+      return store;
+    },
+  };
 });
 
 // ----- Browser fakes -----
@@ -23,12 +40,20 @@ class FakeEventSource {
   onerror: (() => void) | null = null;
   onmessage: ((m: MessageEvent) => void) | null = null;
   closed = false;
+  listeners = new Map<string, Array<(m: MessageEvent) => void>>();
   constructor(public url: string) {
     FakeEventSource.all.push(this);
   }
-  addEventListener() {}
+  addEventListener(name: string, fn: (m: MessageEvent) => void) {
+    this.listeners.set(name, [...(this.listeners.get(name) ?? []), fn]);
+  }
   close() {
     this.closed = true;
+  }
+  /** Delivers a named server event, the way a browser does. */
+  emit(name: string, data: unknown) {
+    const m = { data: JSON.stringify(data) } as MessageEvent;
+    for (const fn of this.listeners.get(name) ?? []) fn(m);
   }
 }
 
@@ -126,6 +151,7 @@ function mountApp(list: ProjectInfo[] = [reno, garden], path = '/p/Home%20reno')
 
 beforeEach(() => {
   FakeEventSource.all = [];
+  made.length = 0;
   FakeMedia.all = [];
   FakeMedia.light = false;
   vi.stubGlobal('EventSource', FakeEventSource);
@@ -155,7 +181,7 @@ describe('routes', () => {
     await fireEvent.click(security);
     expect(filter).toHaveValue('group:"Security"');
     expect(security).toHaveAttribute('aria-pressed', 'true');
-    await waitFor(() => expect(boardCall).toHaveBeenLastCalledWith('Home reno', 'group:"Security"'));
+    await waitFor(() => expect(boardCall).toHaveBeenCalledWith('Home reno', 'group:"Security"'));
 
     await fireEvent.click(security);
     expect(filter).toHaveValue('');
@@ -181,17 +207,31 @@ describe('routes', () => {
     expect(screen.getByRole('button', { name: /Purchasing/ })).toHaveTextContent('0/1');
   });
 
-  it('keeps the counts of the whole board while a filter is on', async () => {
+  it('counts the whole board, and keeps counting it while a filter is on', async () => {
     mountApp();
     const security = await screen.findByRole('button', { name: /Security/ });
     await waitFor(() => expect(security).toHaveTextContent('2/3'));
-    const narrowed = board();
-    narrowed.board = { ...narrowed.board, cards: [narrowed.board.cards[0]!] };
-    boardCall.mockResolvedValue(narrowed);
+
+    // A server that filters: the Security filter answers only the one open Security card.
+    const full = board();
+    const filtered = board();
+    filtered.board = { ...filtered.board, cards: [full.board.cards[0]!] };
+    boardCall.mockImplementation(async (_p, q) => (q ? filtered : full));
     await fireEvent.click(security);
-    await waitFor(() => expect(boardCall).toHaveBeenLastCalledWith('Home reno', 'group:"Security"'));
+    await waitFor(() => expect(boardCall).toHaveBeenCalledWith('Home reno', 'group:"Security"'));
     await new Promise((r) => setTimeout(r, 30));
     expect(screen.getByRole('button', { name: /Security/ })).toHaveTextContent('2/3');
+
+    // The open Security card gets done elsewhere: the numbers follow, filter still on.
+    const after = board();
+    after.board = {
+      ...after.board,
+      cards: after.board.cards.map((c) => (c.id === 'H-1' ? { ...c, column: 'Done' } : c)),
+    };
+    boardCall.mockImplementation(async (_p, q) => (q ? { ...after, board: { ...after.board, cards: [] } } : after));
+    FakeEventSource.all[0]!.emit('changed', { type: 'changed', project: 'Home reno' });
+    await waitFor(() => expect(screen.getByRole('button', { name: /Security/ })).toHaveTextContent('3/3'));
+    expect(screen.getByPlaceholderText('Filter')).toHaveValue('group:"Security"');
   });
 });
 
@@ -205,6 +245,14 @@ describe('navigation and landmarks', () => {
     expect(within(nav).getByRole('link', { name: /Next up/ })).toHaveAttribute('href', '/p/Home%20reno/next');
     expect(screen.getByRole('main')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Skip to the board' })).toHaveAttribute('href', '#board');
+  });
+
+  it('shows the board at /, which is the first project', async () => {
+    mountApp([reno, garden], '/');
+    const list = await screen.findByRole('list', { name: 'Columns' });
+    await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(3));
+    const nav = screen.getByRole('navigation', { name: 'Project' });
+    expect(within(nav).getByRole('link', { name: /Board/ })).toHaveAttribute('aria-current', 'page');
   });
 
   it('lists the columns as a stand-in for the board', async () => {
@@ -243,14 +291,26 @@ describe('navigation and landmarks', () => {
 describe('read-only board', () => {
   it('shows the parse error with its line and disables New card', async () => {
     boardCall.mockRejectedValue(
-      new ApiError(423, 'parse', '/tmp/reno.md: line 12: invalid card id "???" in depends', { line: 12 }),
+      new ApiError(423, 'parse', '/tmp/reno.md: line 12: invalid card id "???" in depends', {
+        line: 12,
+        detail: 'invalid card id "???" in depends',
+      }),
     );
     mountApp();
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
       `This board can't be read: line 12: invalid card id "???" in depends. Fix the file and Waypoint will reload it.`,
     );
+    expect(alert).not.toHaveTextContent('/tmp/reno.md');
     expect(screen.getByRole('button', { name: /New card/ })).toBeDisabled();
+  });
+
+  it('does not double the period when the message ends with one', async () => {
+    boardCall.mockRejectedValue(new ApiError(423, 'parse', 'x.md: line 3: file ends early.', { line: 3, detail: 'file ends early.' }));
+    mountApp();
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('line 3: file ends early. Fix the file');
+    expect(alert.textContent).not.toContain('..');
   });
 
   it('leaves New card enabled on a good board', async () => {
@@ -386,6 +446,80 @@ describe('status and toasts', () => {
     expect(await within(region).findByText('Card H-1 is locked')).toBeInTheDocument();
     await fireEvent.click(within(region).getByRole('button', { name: 'Dismiss' }));
     expect(within(region).queryByText('Card H-1 is locked')).toBeNull();
+  });
+});
+
+describe('live events', () => {
+  it('refreshes the open board when its project changes, and for the synthetic all-projects event', async () => {
+    mountApp();
+    await screen.findByPlaceholderText('Filter');
+    await waitFor(() => expect(boardCall).toHaveBeenCalled());
+    const es = FakeEventSource.all[0]!;
+
+    boardCall.mockClear();
+    es.emit('changed', { type: 'changed', project: 'Garden' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(boardCall).not.toHaveBeenCalled();
+
+    es.emit('changed', { type: 'changed', project: 'Home reno' });
+    await waitFor(() => expect(boardCall).toHaveBeenCalledWith('Home reno', undefined));
+
+    boardCall.mockClear();
+    es.emit('changed', { type: 'changed', project: '*' });
+    await waitFor(() => expect(boardCall).toHaveBeenCalledWith('Home reno', undefined));
+  });
+
+  it('reloads the project list on a projects event', async () => {
+    mountApp();
+    await screen.findByPlaceholderText('Filter');
+    projects.mockClear();
+    projects.mockResolvedValue([reno, garden, { ...garden, name: 'Shed' }]);
+    FakeEventSource.all[0]!.emit('projects', { type: 'projects', project: '' });
+    await waitFor(() => expect(projects).toHaveBeenCalledTimes(1));
+    await fireEvent.click(await screen.findByRole('button', { name: /Switch project/ }));
+    expect(await screen.findByRole('menuitemradio', { name: /Shed/ })).toBeInTheDocument();
+  });
+
+  it('opens one stream, and a first open refreshes the board', async () => {
+    mountApp();
+    await screen.findByPlaceholderText('Filter');
+    expect(FakeEventSource.all).toHaveLength(1);
+    boardCall.mockClear();
+    FakeEventSource.all[0]!.onopen?.();
+    await waitFor(() => expect(boardCall).toHaveBeenCalledWith('Home reno', undefined));
+  });
+});
+
+describe('store and stream lifetime', () => {
+  it('destroys the old store on a project switch and makes one for the new project', async () => {
+    mountApp();
+    await screen.findByPlaceholderText('Filter');
+    await waitFor(() => expect(made.map((m) => m.project)).toEqual(['Home reno']));
+    expect(made[0]!.destroy).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: /Switch project/ }));
+    await fireEvent.click(await screen.findByRole('menuitemradio', { name: /Garden/ }));
+
+    await waitFor(() => expect(made.map((m) => m.project)).toEqual(['Home reno', 'Garden']));
+    expect(made[0]!.destroy).toHaveBeenCalledTimes(1);
+    expect(made[1]!.destroy).not.toHaveBeenCalled();
+    expect(FakeEventSource.all).toHaveLength(1); // one stream for every project
+    expect(FakeEventSource.all[0]!.closed).toBe(false);
+  });
+
+  it('does not make a store for a project that cannot be opened', async () => {
+    mountApp([{ ...reno, error: 'broken' }], '/p/Home%20reno');
+    await screen.findByRole('heading', { name: "Home reno can't be opened" });
+    expect(made).toHaveLength(0);
+  });
+
+  it('closes the event stream and destroys the store on unmount', async () => {
+    const view = mountApp();
+    await screen.findByPlaceholderText('Filter');
+    await waitFor(() => expect(made).toHaveLength(1));
+    view.unmount();
+    expect(FakeEventSource.all[0]!.closed).toBe(true);
+    expect(made[0]!.destroy).toHaveBeenCalledTimes(1);
   });
 });
 

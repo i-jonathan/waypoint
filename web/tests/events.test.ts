@@ -56,6 +56,7 @@ describe('connectEvents', () => {
     const got: unknown[] = [];
     connectEvents((e) => got.push(e));
     last().open();
+    got.length = 0; // the synthetic event of the first open
     last().send('changed', '{"type":"changed","project":"Home"}');
     last().send('projects', '{"type":"projects","project":""}');
     expect(got).toEqual([
@@ -73,11 +74,14 @@ describe('connectEvents', () => {
     expect(got).toEqual([]);
   });
 
-  it('does not emit a synthetic event for the first open', () => {
+  it('emits one synthetic changed event on the first open, so a change made before the subscription is not missed', () => {
     const got: unknown[] = [];
     connectEvents((e) => got.push(e));
-    last().open();
     expect(got).toEqual([]);
+    last().open();
+    expect(got).toEqual([{ type: 'changed', project: '*' }]);
+    last().open(); // one stream opens once
+    expect(got).toHaveLength(1);
   });
 
   it('retries after 0.5s, 1s, 2s, 4s, 8s, then every 10s', () => {
@@ -101,12 +105,15 @@ describe('connectEvents', () => {
     last().open();
     last().fail();
     vi.advanceTimersByTime(500);
-    expect(got).toEqual([]);
+    expect(got).toEqual([{ type: 'changed', project: '*' }]); // from the first open
     last().open();
     expect(events.status).toBe('open');
-    expect(got).toEqual([{ type: 'changed', project: '*' }]);
+    expect(got).toEqual([
+      { type: 'changed', project: '*' },
+      { type: 'changed', project: '*' },
+    ]);
     last().open(); // a repeated open is not a second reconnect
-    expect(got).toHaveLength(1);
+    expect(got).toHaveLength(2);
   });
 
   it('starts the backoff over after a successful reopen', () => {

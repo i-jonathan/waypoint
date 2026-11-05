@@ -108,3 +108,11 @@ describe('navigate', () => {
     expect(route).toMatchObject({ name: 'archive', project: 'a/b c%d', search: '?q=tiles' });
   });
 });
+
+describe('parsePath with names that are also Object properties', () => {
+  it('does not take an inherited property name for a project view', () => {
+    for (const view of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
+      expect(parsePath(`/p/X/${view}`), view).toEqual({ name: 'home', search: '' });
+    }
+  });
+});
