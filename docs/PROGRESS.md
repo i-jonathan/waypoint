@@ -17,6 +17,8 @@ Read this first when resuming. Spec: `docs/superpowers/specs/2026-11-03-waypoint
 2. Open a PR for `feat/web`.
 3. Later, with the owner: a guided review of the whole branch, in about 8 sections with the riskiest first.
 
+- **Plan 4 (proposed):** choose the SQL server per project: SQLite, or Postgres or MySQL, local or remote. One person's data only, even on a remote server. Plan 3's SQL storage must leave room for this.
+
 ## How we work
 
 - Build in the main session. Subagents only where a fresh context helps, such as code and security reviews.
@@ -24,6 +26,7 @@ Read this first when resuming. Spec: `docs/superpowers/specs/2026-11-03-waypoint
 
 ## Decisions to keep
 
+- Plan 3: SQLite is the default storage for new projects. Markdown stays a supported choice, and existing markdown boards keep working.
 - A project is a registry entry (name and board file path), not a folder or git repo. Commands use the nearest registered board in the current folder or a parent.
 - Dates are stored as UTC timestamps and shown as the local date. Hand-written date-only values stay valid.
 - Reviews go by risk: own review for risky tasks, groups for the rest, no re-review of small fixes unless they touch saving, locking or conflicts, and binary-level whole-branch reviews at the midpoint and end.
@@ -31,5 +34,7 @@ Read this first when resuming. Spec: `docs/superpowers/specs/2026-11-03-waypoint
 
 ## Known limits
 
+- On plain HTTP, more than five visible Waypoint windows at once can stall writes. Hidden tabs release their connection, and HTTPS has no such limit.
+- A read-only board with a hand-added card without an id can't be read until its id is assigned. Temp files from a crash stay until deleted by hand.
 - A hand edit during a Waypoint write can rarely be lost (0-2 of about 230 under stress). Agents should use the CLI or API, which take the lock.
 - The constrained local CA hasn't been tried in a real browser; check this on the first `waypoint trust`.

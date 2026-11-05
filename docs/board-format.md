@@ -14,7 +14,8 @@ done, leaves the file exactly as it is.
 Waypoint also keeps a `BOARD.md.lock` file beside the board while it writes. It
 holds nothing and is safe to ignore. To keep it out of version control add
 `*.lock` to `.gitignore`, or `BOARD.md.lock` if the repository tracks other lock
-files such as `Cargo.lock`.
+files such as `Cargo.lock`. A crash during a save can leave a `.waypoint-*` temp file
+beside the board. It is safe to delete when nothing is running.
 
 ## Example
 
@@ -88,7 +89,7 @@ then dropped the next time Waypoint saves a change. Keep notes in a card instead
 | `appearance` | Optional per-project display overrides: `theme`, `accent`, `density`, `swimlane`, `textures`. |
 
 Waypoint writes the keys in this order and quotes names that need it (commas,
-colons, `#`, words like `yes` or `null`). By hand, quote such names yourself.
+colons, `#`). By hand, quote such names yourself.
 
 ## Columns
 

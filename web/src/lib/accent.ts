@@ -12,6 +12,9 @@ export const PRESETS: Record<string, { dark: string; light: string }> = {
 };
 
 const HEX = /^#[0-9a-f]{6}$/i;
+
+/** Whether a value is a safe colour to hand to CSS. A hand-edited file can hold anything. */
+export const isHex = (value: string): boolean => HEX.test(value);
 const DARK_INK = '#0f1714';
 const LIGHT_INK = '#ffffff';
 

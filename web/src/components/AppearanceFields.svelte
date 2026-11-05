@@ -1,7 +1,7 @@
 <script lang="ts">
   import Check from 'phosphor-svelte/lib/Check';
   import Warning from 'phosphor-svelte/lib/Warning';
-  import { accentWarnings, PRESETS } from '../lib/accent';
+  import { accentWarnings, isHex, PRESETS } from '../lib/accent';
   import { accentColor } from '../lib/colors';
   import type { Errors } from '../lib/settingsEdit';
   import { resolveTheme, systemPrefersLight } from '../lib/theme';
@@ -99,7 +99,7 @@
     <div class="custom">
       <label for="{uid}-custom">Custom colour</label>
       <div class="inline">
-        <span class="dot lg" style:background={custom !== '' && accentError === undefined ? custom : 'transparent'}></span>
+        <span class="dot lg" style:background={isHex(custom) ? custom : 'transparent'}></span>
         <input
           id="{uid}-custom"
           class="mono"

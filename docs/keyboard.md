@@ -1,6 +1,6 @@
 # Keyboard reference
 
-Everything on the board can be done from the keyboard. This page lists the keys as they work in the web UI. Keys with a letter work in upper or lower case, and none of them fire while you are typing in a field.
+Everything on the board can be done from the keyboard. This page lists the keys as they work in the web UI. Keys with a letter also work with Caps Lock on, and none of them fire while you are typing in a field.
 
 ## Anywhere on a board view
 

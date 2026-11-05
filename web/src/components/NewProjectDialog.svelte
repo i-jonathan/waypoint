@@ -233,7 +233,7 @@
           aria-invalid={errors.path ? 'true' : undefined}
           aria-describedby={described('path', `${id}-path-hint`)}
         />
-        <p class="sf-hint" id="{id}-path-hint">A Markdown board file that Waypoint made. It is not changed by opening it.</p>
+        <p class="sf-hint" id="{id}-path-hint">A Markdown board file that Waypoint made. Waypoint may tidy its format when it reads the file.</p>
         {#if errors.path}<p class="sf-error" id="{id}-path-err">{errors.path}</p>{/if}
       </div>
 
