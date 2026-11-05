@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectEvents } from '../src/lib/events.svelte';
 
@@ -43,6 +44,48 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+function setHidden(hidden: boolean) {
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+  document.dispatchEvent(new Event('visibilitychange'));
+}
+
+describe('connectEvents in a hidden tab', () => {
+  afterEach(() => setHidden(false));
+
+  it('gives the connection back while hidden, and catches up when shown', () => {
+    const seen: unknown[] = [];
+    const conn = connectEvents((e) => seen.push(e));
+    last().open();
+    seen.length = 0;
+
+    setHidden(true);
+    expect(last().closed).toBe(true);
+
+    setHidden(false);
+    expect(FakeEventSource.all).toHaveLength(2);
+    last().open();
+    expect(seen).toEqual([{ type: 'changed', project: '*' }]);
+    conn.close();
+  });
+
+  it('does not connect at all until the tab is shown', () => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    const conn = connectEvents(() => {});
+    expect(FakeEventSource.all).toHaveLength(0);
+    setHidden(false);
+    expect(FakeEventSource.all).toHaveLength(1);
+    conn.close();
+  });
+
+  it('stops listening once closed', () => {
+    const conn = connectEvents(() => {});
+    conn.close();
+    setHidden(true);
+    setHidden(false);
+    expect(FakeEventSource.all).toHaveLength(1);
+  });
 });
 
 describe('connectEvents', () => {

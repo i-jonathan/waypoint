@@ -75,7 +75,7 @@ export function connectEvents(onEvent: (e: ServerEvent) => void): { readonly sta
   }
 
   function open() {
-    if (closed) return;
+    if (closed || document.hidden) return;
     const es = new EventSource('/api/events');
     source = es;
     let announced = false; // a stream opens once; this guards a repeated call
@@ -104,6 +104,20 @@ export function connectEvents(onEvent: (e: ServerEvent) => void): { readonly sta
     es.onmessage = deliver;
   }
 
+  // On plain HTTP a browser allows six connections per server, and each stream holds one. So a
+  // tab nobody is looking at gives its connection back, or a few open tabs would stall every
+  // write. The open that follows asks for a fresh look, so nothing is missed.
+  function onVisibility() {
+    clearTimeout(timer);
+    if (document.hidden) {
+      source?.close();
+      source = null;
+    } else if (source === null) {
+      open();
+    }
+  }
+  document.addEventListener('visibilitychange', onVisibility);
+
   open();
 
   return {
@@ -112,6 +126,7 @@ export function connectEvents(onEvent: (e: ServerEvent) => void): { readonly sta
     },
     close() {
       closed = true;
+      document.removeEventListener('visibilitychange', onVisibility);
       clearTimeout(timer);
       source?.close();
       source = null;
