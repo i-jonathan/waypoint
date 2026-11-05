@@ -42,7 +42,7 @@ func start(t *testing.T, targets ...Target) (*recorder, func() error) {
 	synced := make(chan struct{})
 	result := make(chan error, 1)
 	go func() {
-		result <- run(ctx, func() []Target { return targets }, rec.publish, hooks{synced: synced})
+		result <- run(ctx, func() []Target { return targets }, rec.publish, Options{}, hooks{synced: synced})
 	}()
 	select {
 	case <-synced:
@@ -256,7 +256,7 @@ func TestWatchReloadsTargets(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			return append([]Target(nil), targets...)
-		}, rec.publish, hooks{synced: synced})
+		}, rec.publish, Options{}, hooks{synced: synced})
 	}()
 	<-synced
 
@@ -303,7 +303,7 @@ func TestWatchErrorRepublishesEveryProject(t *testing.T) {
 	errs := make(chan error, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, func() []Target { return []Target{{"A", a}, {"B", b}} }, rec.publish, hooks{synced: synced, errs: errs})
+		done <- run(ctx, func() []Target { return []Target{{"A", a}, {"B", b}} }, rec.publish, Options{}, hooks{synced: synced, errs: errs})
 	}()
 	<-synced
 

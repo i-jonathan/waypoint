@@ -75,7 +75,12 @@ func (r *runner) cmdServe(args []string) int {
 	go func() {
 		defer watcher.Done()
 		publish := func(project string) { broker.Publish(httpapi.Event{Type: "changed", Project: project}) }
-		if err := watch.Run(ctx, watchTargets(cfgPath, r.env.Getenv, log), publish); err != nil {
+		opts := watch.Options{
+			ConfigPath: cfgPath,
+			Projects:   func() { broker.Publish(httpapi.Event{Type: "projects"}) },
+			Logger:     log,
+		}
+		if err := watch.Run(ctx, watchTargets(cfgPath, r.env.Getenv, log), publish, opts); err != nil {
 			log.Warn("not watching board files; the page will not update by itself", "error", err)
 		}
 	}()
@@ -123,7 +128,7 @@ func certsFor(cfg *config.Config, getenv func(string) string) server.Certs {
 	return server.Certs{Dir: filepath.Join(cfg.DataDir, "tls"), Home: getenv("HOME")}
 }
 
-// watchTargets returns the function the watcher calls every couple of seconds
+// watchTargets returns the function the watcher calls every second
 // for the boards to watch. It re-reads the registry each time, so a project
 // added while the server runs is picked up. When the config cannot be read
 // (half-edited, say) the previous targets stay, so a typo does not make the

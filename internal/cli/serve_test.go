@@ -343,6 +343,9 @@ func TestServeWatchesProjectsRegisteredAfterStart(t *testing.T) {
 	for i := 0; ; i++ {
 		select {
 		case data := <-events:
+			if strings.Contains(data, `"type":"projects"`) {
+				continue // the registry change itself
+			}
 			assertContains(t, data, `"project":"demo"`)
 			assertContains(t, data, `"type":"changed"`)
 			return
@@ -352,6 +355,37 @@ func TestServeWatchesProjectsRegisteredAfterStart(t *testing.T) {
 			runIn(t, dir, "add", fmt.Sprintf("card %d", i))
 		}
 	}
+}
+
+// waitForEvent reads events until one holds want, failing after 3 seconds.
+func waitForEvent(t *testing.T, events <-chan string, want string) {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case data, ok := <-events:
+			if !ok {
+				t.Fatal("the event stream ended")
+			}
+			if strings.Contains(data, want) {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("no event holding %s", want)
+		}
+	}
+}
+
+func TestServePublishesProjectsForCLIRegistryChanges(t *testing.T) {
+	s := startServe(t, "serve", "--port", "0", "--no-open")
+	events := sseEvents(t, s.get("/api/events"))
+
+	dir := t.TempDir()
+	runIn(t, dir, "project", "add", "Later", "--path", filepath.Join(dir, "later.md"))
+	waitForEvent(t, events, `"type":"projects"`)
+
+	runIn(t, dir, "project", "rm", "Later")
+	waitForEvent(t, events, `"type":"projects"`)
 }
 
 func TestWatchTargetsReadsTheRegistryEachTime(t *testing.T) {
