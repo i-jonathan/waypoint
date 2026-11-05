@@ -183,7 +183,7 @@ func writeCopy(ctx context.Context, dst config.ProjectRef, board *domain.Board) 
 				if dst.Storage == "markdown" {
 					hint = ". A Markdown board keeps only headings of #### or deeper inside a card, so edit that card's body and convert again"
 				}
-				err = fmt.Errorf("the converted copy did not match the original (%s); nothing was changed%s", d, hint)
+				err = fmt.Errorf("%w: the converted copy did not match the original (%s); nothing was changed%s", domain.ErrInvalid, d, hint)
 			}
 		}
 	}

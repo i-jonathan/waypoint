@@ -109,6 +109,37 @@ func (a *api) createProject(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// convertProject moves a project to the other storage. See projects.Convert.
+func (a *api) convertProject(w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		To   string `json:"to"`
+		Path string `json:"path"`
+	}
+	if err := decodeBody(w, r, &in, false); err != nil {
+		return err
+	}
+	if in.To == "" {
+		return invalidRequest("to is required: sqlite or markdown")
+	}
+	if in.Path != "" && !filepath.IsAbs(in.Path) {
+		return invalidRequest("path must be an absolute path")
+	}
+	res, err := projects.Convert(r.Context(), a.d.ConfigPath, a.d.Getenv, r.PathValue("p"), in.To, in.Path)
+	if err != nil {
+		return err
+	}
+	cfg, err := a.loadConfig()
+	if err != nil {
+		return err
+	}
+	a.publish(Event{Type: "projects"})
+	a.writeJSON(w, r, http.StatusOK, struct {
+		projectJSON
+		Backups []string `json:"backups"`
+	}{projectOut(r.Context(), cfg, res.Ref), res.Backups})
+	return nil
+}
+
 // deleteProject unregisters a project. Its files are left alone.
 func (a *api) deleteProject(w http.ResponseWriter, r *http.Request) error {
 	name := r.PathValue("p")

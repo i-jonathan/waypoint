@@ -153,6 +153,11 @@ export interface ProjectInfo {
   error?: string;
 }
 
+/** What converting a project's storage returns: the project as now registered, and the old files' new names. */
+export interface ConvertedProject extends ProjectInfo {
+  backups: string[];
+}
+
 export type TlsMode = 'auto' | 'on' | 'off';
 
 /** The global config as the settings screen shows it. */

@@ -154,3 +154,30 @@ test('a project made from the dialog with the defaults is a working SQLite board
   expect(await wp.cli('project', 'ls')).toMatch(/Lite\s+sqlite\s+\S+lite\.db/);
   expect(await wp.cli('ls', '--project', 'Lite')).toContain('Made in a database');
 });
+
+test('converting a project to SQLite from its settings keeps the board working', async ({ page, wp }) => {
+  await wp.cli('add', 'Survives the move', '--body', 'with its notes');
+  await wp.cli('add', 'Second card', '--depends', 'T-1');
+  await page.goto(`${wp.boardURL}/settings`);
+
+  await page.getByRole('button', { name: 'Convert to SQLite' }).click();
+  const dialog = page.getByRole('alertdialog', { name: 'Convert this project to SQLite?' });
+  await expect(dialog).toContainText('waypoint.db');
+  await dialog.getByRole('button', { name: 'Convert' }).click();
+
+  const result = page.getByRole('status', { name: 'Conversion result' });
+  await expect(result).toContainText('waypoint.md.bak-');
+  // The page follows the registry: the type now reads sqlite, and the button offers the way back.
+  await expect(page.getByRole('button', { name: 'Convert to Markdown' })).toBeVisible();
+
+  await page.goto(wp.boardURL);
+  await expect(page.locator('[data-card-id="T-1"]')).toBeVisible();
+  await expect(page.locator('[data-card-id="T-2"]')).toContainText('Blocked by T-1');
+  await page.keyboard.press('n');
+  await page.keyboard.type('Added after the move');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('[data-card-id="T-3"]')).toBeVisible();
+
+  expect(await wp.cli('ls')).toContain('Added after the move');
+  expect(await wp.cli('project', 'ls')).toMatch(/sqlite\s+\S+waypoint\.db/);
+});

@@ -1236,3 +1236,68 @@ func TestCreateProjectStorageChoice(t *testing.T) {
 	f.do("POST", "/api/projects", map[string]any{"name": "Odd", "storage": "mongo"}).wantCode(422, "invalid")
 	f.do("GET", "/api/projects/Default/board", nil).want(200)
 }
+
+func TestConvertProjectAPI(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	f.do("POST", "/api/projects/Alpha/cards", map[string]any{"title": "Kept across the move"}).want(201)
+	events, cancel := f.broker.Subscribe()
+	defer cancel()
+
+	var out struct {
+		projectJSON
+		Backups []string `json:"backups"`
+	}
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "sqlite"}).want(200).decode(&out)
+	assertEq(t, out.Storage, "sqlite")
+	assertEq(t, strings.HasSuffix(out.Path, "Alpha.db") || strings.HasSuffix(out.Path, "alpha.db"), true)
+	assertEq(t, len(out.Backups) >= 1, true)
+	assertEq(t, receive(t, events), Event{Type: "projects"})
+	assertEq(t, f.config().Projects[0].Storage, "sqlite")
+	if _, err := os.Stat(out.Backups[0]); err != nil {
+		t.Fatalf("the old board was not kept: %v", err)
+	}
+
+	var board struct {
+		Board struct {
+			Cards []struct{ Title, Hash string } `json:"cards"`
+		} `json:"board"`
+	}
+	f.do("GET", "/api/projects/Alpha/board", nil).want(200).decode(&board)
+	assertEq(t, len(board.Board.Cards), 1)
+	assertEq(t, board.Board.Cards[0].Title, "Kept across the move")
+
+	// And back, to a path of the caller's choosing.
+	back := filepath.Join(f.dir, "back", "alpha.md")
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "markdown", "path": back}).want(200).decode(&out)
+	assertEq(t, out.Storage, "markdown")
+	assertEq(t, out.Path, back)
+	f.do("GET", "/api/projects/Alpha/board", nil).want(200)
+}
+
+func TestConvertProjectAPIRefusals(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	taken := filepath.Join(f.dir, "taken.db")
+	os.WriteFile(taken, []byte("mine"), 0o644)
+
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "markdown"}).wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "mongo"}).wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{}).wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "sqlite", "path": "rel.db"}).wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "sqlite", "path": taken}).wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Nobody/convert", map[string]any{"to": "sqlite"}).wantCode(404, "not_found")
+
+	if data, _ := os.ReadFile(taken); string(data) != "mine" {
+		t.Fatal("the file at the target was touched")
+	}
+	assertEq(t, f.config().Projects[0].Storage, "markdown")
+	f.do("GET", "/api/projects/Alpha/board", nil).want(200)
+}
+
+func TestConvertProjectAPIMismatchSaysWhichCard(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	f.do("POST", "/api/projects", map[string]any{"name": "Lite"}).want(201)
+	f.do("POST", "/api/projects/Lite/cards", map[string]any{"title": "Odd", "body": "## a heading"}).want(201)
+	e := f.do("POST", "/api/projects/Lite/convert", map[string]any{"to": "markdown"}).wantCode(422, "invalid")
+	assertContains(t, e.Error, "T-1")
+	assertContains(t, e.Error, "#### or deeper")
+}

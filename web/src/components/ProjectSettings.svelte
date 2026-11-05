@@ -23,7 +23,7 @@
     validateDraft,
     type Draft,
   } from '../lib/settingsEdit';
-  import type { Appearance, ArchiveMode, CardView, ProjectInfo, Settings } from '../lib/types';
+  import type { Appearance, ArchiveMode, CardView, ConvertedProject, ProjectInfo, Settings } from '../lib/types';
   import AppearanceFields from './AppearanceFields.svelte';
   import ColumnsEditor from './ColumnsEditor.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
@@ -34,7 +34,7 @@
     project: string;
     info: ProjectInfo;
     /** Reads the app settings, whose appearance is what a project's empty fields inherit. */
-    client?: Pick<typeof api, 'settings' | 'archive'>;
+    client?: Pick<typeof api, 'settings' | 'archive' | 'convertProject'>;
   }
 
   let { store, project, info, client = api }: Props = $props();
@@ -54,6 +54,30 @@
   /** Group and priority removals waiting for a yes, one line each. */
   let pending = $state.raw<string[] | null>(null);
   let root: HTMLElement | undefined = $state();
+
+  // ----- Converting the storage -----
+  const otherStorage = $derived(info.storage === 'sqlite' ? ('markdown' as const) : ('sqlite' as const));
+  const otherLabel = $derived(otherStorage === 'sqlite' ? 'SQLite' : 'Markdown');
+  /** The file the server will make: the same folder and name with the other extension. */
+  const newPath = $derived(info.path.replace(/\.[^./\\]*$/, '') + (otherStorage === 'sqlite' ? '.db' : '.md'));
+  let confirmingConvert = $state(false);
+  let converting = $state(false);
+  let converted = $state.raw<ConvertedProject | null>(null);
+  let convertFailure = $state('');
+
+  async function convert() {
+    confirmingConvert = false;
+    converting = true;
+    convertFailure = '';
+    converted = null;
+    try {
+      converted = await client.convertProject(project, { to: otherStorage });
+    } catch (err) {
+      convertFailure = err instanceof Error && err.message !== '' ? err.message : 'The conversion failed. Nothing was changed.';
+    } finally {
+      converting = false;
+    }
+  }
 
   function adopt() {
     const view = store.view;
@@ -406,6 +430,22 @@
         <dt>Type</dt>
         <dd class="mono">{info.storage}</dd>
       </dl>
+      <div class="convert">
+        <button type="button" class="btn" disabled={converting || dirty} onclick={() => (confirmingConvert = true)}>Convert to {otherLabel}</button>
+        {#if dirty}
+          <p class="sf-hint">Save or cancel your changes first.</p>
+        {:else}
+          <p class="sf-hint">Writes a copy, checks that it matches, then switches the project to it. The old files are kept.</p>
+        {/if}
+        {#if converted}
+          <div class="sf-note" role="status" aria-label="Conversion result">
+            <p>Converted to {converted.storage === 'sqlite' ? 'SQLite' : 'Markdown'}. The old files are kept as:</p>
+            <ul>{#each converted.backups as file (file)}<li class="mono">{file}</li>{/each}</ul>
+          </div>
+        {:else if convertFailure}
+          <div class="sf-error" role="alert"><p>{convertFailure}</p></div>
+        {/if}
+      </div>
       <div class="sf-field prefix">
         <label class="sf-label" for="ps-prefix">Prefix</label>
         <input id="ps-prefix" class="sf-input mono" type="text" value={base.prefix} readonly aria-describedby="ps-prefix-note" />
@@ -435,6 +475,19 @@
 
 <UnsavedGuard {dirty} />
 
+{#if confirmingConvert}
+  <ConfirmDialog
+    title="Convert this project to {otherLabel}?"
+    confirmLabel="Convert"
+    onConfirm={() => void convert()}
+    onCancel={() => (confirmingConvert = false)}
+  >
+    <p class="line-msg">Waypoint will write the board to</p>
+    <p class="line-msg mono">{newPath}</p>
+    <p class="line-msg">and check that every card and setting matches before it switches over. The old files are kept next to it, renamed with .bak and today's date.</p>
+  </ConfirmDialog>
+{/if}
+
 {#if pending}
   <ConfirmDialog
     title="Some cards will lose a group or priority"
@@ -448,6 +501,19 @@
 {/if}
 
 <style>
+  .convert {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 10px 0 14px;
+  }
+
+  .convert ul {
+    margin: 4px 0 0;
+    padding-left: 18px;
+  }
+
   .rows {
     list-style: none;
     margin: 0;

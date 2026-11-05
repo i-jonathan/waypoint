@@ -67,6 +67,7 @@ func Handler(d Deps) http.Handler {
 	handle("GET /api/projects", a.listProjects)
 	handle("POST /api/projects", a.createProject)
 	handle("DELETE /api/projects/{p}", a.deleteProject)
+	handle("POST /api/projects/{p}/convert", a.convertProject)
 	handle("GET /api/settings", a.getSettings)
 	handle("PUT /api/settings", a.putSettings)
 

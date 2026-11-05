@@ -7,6 +7,7 @@ import type {
   GlobalSettingsChange,
   NewCard,
   NewProject,
+  ConvertedProject,
   ProjectInfo,
   ProjectSettingsChange,
 } from './types';
@@ -105,6 +106,9 @@ export const api = {
   projects: () => request<ProjectInfo[]>('GET', '/api/projects'),
   createProject: (project: NewProject) => request<ProjectInfo>('POST', '/api/projects', project),
   deleteProject: (p: string) => request<void>('DELETE', projectPath(p)),
+  /** Moves a project to the other storage. The old files are kept. */
+  convertProject: (p: string, body: { to: 'sqlite' | 'markdown'; path?: string }) =>
+    request<ConvertedProject>('POST', `${projectPath(p)}/convert`, body),
 
   settings: () => request<GlobalSettings>('GET', '/api/settings'),
   putSettings: (change: GlobalSettingsChange) => request<GlobalSettings>('PUT', '/api/settings', change),
