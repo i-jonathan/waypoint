@@ -38,3 +38,21 @@ func TestDisplayDate(t *testing.T) {
 	assertEqual(t, DisplayDate(bare, west), "2026-10-26")
 	assertEqual(t, DisplayDate(bare, east), "2026-10-26")
 }
+
+func TestParseStoredRoundTripsStoredDate(t *testing.T) {
+	for _, in := range []string{"2026-10-26", "2026-11-04T23:52:10Z"} {
+		got, err := ParseStored(in)
+		if err != nil {
+			t.Fatalf("ParseStored(%q): %v", in, err)
+		}
+		if StoredDate(got) != in {
+			t.Fatalf("StoredDate(ParseStored(%q)) = %q", in, StoredDate(got))
+		}
+	}
+	if got, err := ParseStored(""); err != nil || !got.IsZero() {
+		t.Fatalf("ParseStored(\"\") = %v, %v; want the zero time", got, err)
+	}
+	if _, err := ParseStored("yesterday"); err == nil {
+		t.Fatal("ParseStored(\"yesterday\") succeeded")
+	}
+}
