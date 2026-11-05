@@ -88,7 +88,7 @@ function server(settings: Settings = baseSettings(), cards: CardView[] = cardsOf
 
 let store: BoardStore | null = null;
 let srv: ReturnType<typeof server>;
-const globalClient = { settings: vi.fn(async () => globalOf()), putSettings: vi.fn() };
+const globalClient = { settings: vi.fn(async () => globalOf()), putSettings: vi.fn(), archive: vi.fn(async (): Promise<CardView[]> => []) };
 
 async function mount(settings?: Settings, cards?: CardView[]) {
   srv = server(settings, cards);
@@ -281,6 +281,20 @@ describe('groups and priorities', () => {
     await waitFor(() => expect(put()).toHaveBeenCalled());
     expect(sent().settings.priorities).toEqual(['P1', 'P0']);
     expect(sent().priority_renames).toEqual({});
+  });
+
+  it('counts archived cards in the warning, and saves nothing if the archive cannot be read', async () => {
+    await mount();
+    await fireEvent.click(within(row('Group', 1)).getByRole('button', { name: 'Remove group Security' }));
+    globalClient.archive.mockRejectedValueOnce(new Error('archive unreadable'));
+    await fireEvent.click(save());
+    expect(await screen.findByText('archive unreadable')).toBeInTheDocument();
+    expect(put()).not.toHaveBeenCalled();
+
+    globalClient.archive.mockResolvedValueOnce([card('T-99', 'Done', 'Security')]);
+    await fireEvent.click(save());
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Removing Security clears it from 5 cards, including 1 archived.');
+    expect(put()).not.toHaveBeenCalled();
   });
 
   it('warns with a count before removing a group that cards have, and sends nothing until told to', async () => {
@@ -708,7 +722,7 @@ describe('NewProjectDialog', () => {
     expect(field('Name')).toHaveValue('Home reno');
     await submit('Open file');
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('Home reno'));
-    expect(createProject).toHaveBeenCalledWith({ name: 'Home reno', path: '/home/me/Home reno.md' });
+    expect(createProject).toHaveBeenCalledWith({ name: 'Home reno', path: '/home/me/Home reno.md', existing: true });
   });
 
   it('puts a name error under the name field', async () => {

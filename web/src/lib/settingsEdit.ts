@@ -225,16 +225,24 @@ function removedNames(had: readonly string[], rows: ReadonlyArray<{ origin: stri
   );
 }
 
+/** Whether this edit removes a group or priority, so the archive has to be counted as well. */
+export function removesNames(base: Settings, d: Draft): boolean {
+  return removedNames(base.groups.map((g) => g.name), d.groups).length > 0 || removedNames(base.priorities, d.priorities).length > 0;
+}
+
 /**
  * One line for each group or priority this edit removes while cards still have
- * it: the server clears it from them. `cards` is the whole board, not a filtered view.
+ * it: the server clears it from them. `cards` is the whole board, not a filtered view, and
+ * `archived` is the archive, which the server changes too.
  */
-export function clearWarnings(base: Settings, d: Draft, cards: readonly CardView[]): string[] {
+export function clearWarnings(base: Settings, d: Draft, cards: readonly CardView[], archived: readonly CardView[] = []): string[] {
   const out: string[] = [];
   const add = (names: string[], of: (c: CardView) => string) => {
     for (const name of names) {
-      const n = cards.filter((c) => of(c).toLowerCase() === name.toLowerCase()).length;
-      if (n > 0) out.push(`Removing ${name} clears it from ${cardsWord(n)}.`);
+      const has = (c: CardView) => of(c).toLowerCase() === name.toLowerCase();
+      const old = archived.filter(has).length;
+      const n = cards.filter(has).length + old;
+      if (n > 0) out.push(`Removing ${name} clears it from ${cardsWord(n)}${old > 0 ? `, including ${old} archived` : ''}.`);
     }
   };
   add(

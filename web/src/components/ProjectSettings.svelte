@@ -15,6 +15,7 @@
     addPriority,
     buildChange,
     clearWarnings,
+    removesNames,
     columnCounts,
     isDirty,
     moveRow,
@@ -22,7 +23,7 @@
     validateDraft,
     type Draft,
   } from '../lib/settingsEdit';
-  import type { Appearance, ArchiveMode, ProjectInfo, Settings } from '../lib/types';
+  import type { Appearance, ArchiveMode, CardView, ProjectInfo, Settings } from '../lib/types';
   import AppearanceFields from './AppearanceFields.svelte';
   import ColumnsEditor from './ColumnsEditor.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
@@ -33,7 +34,7 @@
     project: string;
     info: ProjectInfo;
     /** Reads the app settings, whose appearance is what a project's empty fields inherit. */
-    client?: Pick<typeof api, 'settings'>;
+    client?: Pick<typeof api, 'settings' | 'archive'>;
   }
 
   let { store, project, info, client = api }: Props = $props();
@@ -119,13 +120,29 @@
     void tick().then(() => root?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
   }
 
-  function save() {
+  async function save() {
     if (!draft || !base || saving || changedElsewhere) return;
     if (Object.keys(errors).length > 0) {
       focusFirstInvalid();
       return;
     }
-    const lines = clearWarnings(base, draft, store.baseline?.cards ?? []);
+    // The server clears archived cards too, so the warning has to count them. If they can't be
+    // read the count would be wrong, so nothing is saved.
+    let archived: CardView[] = [];
+    if (removesNames(base, draft)) {
+      saving = true;
+      failure = '';
+      try {
+        archived = await client.archive(project);
+      } catch (e) {
+        failure = e instanceof Error && e.message !== '' ? e.message : 'Something went wrong';
+        return;
+      } finally {
+        saving = false;
+      }
+      if (!draft || !base) return;
+    }
+    const lines = clearWarnings(base, draft, store.baseline?.cards ?? [], archived);
     if (lines.length > 0) {
       pending = lines;
       return;

@@ -3,6 +3,7 @@ import {
   addColumn,
   buildChange,
   clearWarnings,
+  removesNames,
   columnCounts,
   isDirty,
   moveRow,
@@ -195,6 +196,21 @@ describe('counts', () => {
       'Removing Security clears it from 5 cards.',
       'Removing P0 clears it from 1 card.',
     ]);
+  });
+
+  it('counts archived cards, which the server clears too', () => {
+    const d = toDraft(base);
+    d.groups = d.groups.filter((g) => g.name !== 'Security');
+    const archived = cards.filter((c) => c.group === 'Security').slice(0, 2);
+    expect(clearWarnings(base, d, cards, archived)).toEqual(['Removing Security clears it from 7 cards, including 2 archived.']);
+    expect(clearWarnings(base, d, [], archived)).toEqual(['Removing Security clears it from 2 cards, including 2 archived.']);
+  });
+
+  it('knows when an edit removes a name, even with no cards to count', () => {
+    const d = toDraft(base);
+    expect(removesNames(base, d)).toBe(false);
+    d.priorities = d.priorities.filter((p) => p.name !== 'P0');
+    expect(removesNames(base, d)).toBe(true);
   });
 
   it('does not warn for a rename, for a group with no cards, or for a name that is added back', () => {
