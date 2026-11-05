@@ -170,6 +170,62 @@ describe('saving', () => {
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
   });
 
+  it('does not show Saved over text that is still unsaved', async () => {
+    await mount([card('T-1', 'Todo')], 'T-1');
+    let release!: () => void;
+    srv.api.patch.mockImplementationOnce(
+      (_p, id) =>
+        new Promise((resolve) => {
+          release = () => resolve({ ...srv.state.cards.find((c) => c.id === id)!, title: 'One', hash: 'h2' });
+        }),
+    );
+    await type(titleInput(), 'One');
+    await fireEvent.click(saveButton());
+    await type(titleInput(), 'One and more');
+    release();
+    await waitFor(() => expect(screen.queryByText('Saving')).toBeNull());
+    expect(screen.queryByText('Saved')).toBeNull();
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+  });
+
+  it('queues a save asked for while one is in flight, instead of dropping it', async () => {
+    await mount([card('T-1', 'Todo')], 'T-1');
+    let release!: () => void;
+    srv.api.patch.mockImplementationOnce(
+      (_p, id) =>
+        new Promise((resolve) => {
+          release = () => resolve({ ...srv.state.cards.find((c) => c.id === id)!, title: 'One', hash: 'h2' });
+        }),
+    );
+    await type(titleInput(), 'One');
+    await fireEvent.keyDown(titleInput(), { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(srv.api.patch).toHaveBeenCalledTimes(1));
+    await type(titleInput(), 'Two');
+    await fireEvent.keyDown(titleInput(), { key: 'Enter', ctrlKey: true });
+    expect(srv.api.patch).toHaveBeenCalledTimes(1);
+    release();
+    await waitFor(() => expect(srv.api.patch).toHaveBeenCalledTimes(2));
+    expect(srv.api.patch.mock.calls[1]![2]).toEqual({ title: 'Two' });
+    expect(srv.api.patch.mock.calls[1]![3]).toBe('h2');
+  });
+
+  it('does not run the queued save after a failure', async () => {
+    await mount([card('T-1', 'Todo')], 'T-1');
+    let fail!: () => void;
+    srv.api.patch.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = () => reject(new ApiError(422, 'invalid', 'nope'));
+        }),
+    );
+    await type(titleInput(), 'One');
+    await fireEvent.keyDown(titleInput(), { key: 'Enter', ctrlKey: true });
+    await fireEvent.keyDown(titleInput(), { key: 'Enter', ctrlKey: true });
+    fail();
+    expect(await screen.findByText('nope')).toBeInTheDocument();
+    expect(srv.api.patch).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps what was typed while the save was on its way', async () => {
     await mount([card('T-1', 'Todo')], 'T-1');
     let release!: () => void;
@@ -294,11 +350,23 @@ describe('a draft against changes made elsewhere (Review Focus 2)', () => {
   it('keeps the original hash when an outside edit changes a dirty card, so saving meets the 409', async () => {
     await mount([card('T-1', 'Todo')], 'T-1');
     await type(titleInput(), 'Mine');
-    srv.state.cards = [card('T-1', 'Todo', { hash: 'hash-new' })];
+    srv.state.cards = [card('T-1', 'Todo', { body: 'edited by an agent', hash: 'hash-new' })];
     await store!.refresh();
     await fireEvent.click(saveButton());
     expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
     expect(srv.api.patch.mock.calls[0]![3]).toBe('hash-T-1');
+  });
+
+  it('does not take a drag of the card on the board, or an outside move, for a conflict', async () => {
+    await mount([card('T-1', 'Todo')], 'T-1');
+    await type(titleInput(), 'Mine');
+    // The board moves the card (a drag, an agent's `move`): its hash changes, no field of the draft does.
+    srv.state.cards = [card('T-1', 'In progress', { hash: 'hash-moved' })];
+    await store!.refresh();
+    await fireEvent.click(saveButton());
+    await waitFor(() => expect(srv.api.patch).toHaveBeenCalled());
+    expect(srv.api.patch.mock.calls[0]![3]).toBe('hash-moved');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 });
 
@@ -384,6 +452,8 @@ describe('what goes wrong while saving', () => {
     await type(titleInput(), 'Kept');
     await fireEvent.click(saveButton());
     expect(await screen.findByText(/Could not reach Waypoint/)).toBeInTheDocument();
+    expect(screen.queryByText(/Failed to fetch/)).toBeNull();
+    expect(toasts.items).toEqual([]); // the panel says it; the store does not say it again
     expect(titleInput().value).toBe('Kept');
     expect(saveButton()).toBeEnabled();
     await fireEvent.click(screen.getByRole('button', { name: /Retry/ }));
@@ -401,6 +471,7 @@ describe('what goes wrong while saving', () => {
     await fireEvent.click(saveButton());
     expect(await screen.findByText('invalid: dependency T-2 would make a cycle')).toBeInTheDocument();
     expect(saveButton()).toBeEnabled();
+    expect(toasts.items).toEqual([]);
   });
 });
 

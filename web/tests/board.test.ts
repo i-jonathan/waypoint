@@ -770,7 +770,23 @@ describe('when the server cannot be reached', () => {
     api.deleteCard.mockRejectedValue(new ApiError(0, 'network', 'Failed to fetch'));
     api.board.mockRejectedValue(new ApiError(0, 'network', 'Failed to fetch'));
     await expect(store.remove('A')).rejects.toThrow('Failed to fetch');
-    expect(toasts.items.map((t) => t.msg)).toEqual(['Failed to fetch']);
+    // The toast says what a person can use, not the browser's wording.
+    expect(toasts.items.map((t) => t.msg)).toEqual(['Could not reach Waypoint']);
+  });
+
+  it('does not toast a patch or a delete that the caller reports itself (quiet), and still refreshes', async () => {
+    const { api, store } = await loaded();
+    api.patch.mockRejectedValue(new ApiError(422, 'invalid', 'no such priority'));
+    api.deleteCard.mockRejectedValue(new ApiError(404, 'not_found', 'card A not found'));
+    await expect(store.patch('A', { priority: 'P9' }, undefined, { quiet: true })).rejects.toThrow('no such priority');
+    await expect(store.remove('A', { quiet: true })).rejects.toThrow('not found');
+    expect(toasts.items).toEqual([]);
+    const boards = api.board.mock.calls.length;
+    await store.refresh();
+    expect(api.board.mock.calls.length).toBeGreaterThan(boards - 1);
+    // Without it, the store still says what went wrong.
+    await expect(store.patch('A', { priority: 'P9' })).rejects.toThrow();
+    expect(toasts.items.map((t) => t.msg)).toEqual(['no such priority']);
   });
 });
 

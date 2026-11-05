@@ -46,12 +46,15 @@ export interface BoardStore {
   /** Shows the move at once. A failure puts the card back, toasts, and refreshes. */
   move(id: string, column: string, index: number): Promise<void>;
   create(n: NewCard): Promise<CardView>;
-  /** A 409 is thrown for the panel to handle; it is not toasted. */
-  patch(id: string, body: CardPatch, ifMatch?: string): Promise<CardView>;
+  /**
+   * A 409 is thrown for the panel to handle; it is not toasted. With `quiet`
+   * no failure is toasted: the caller shows it where the person is looking.
+   */
+  patch(id: string, body: CardPatch, ifMatch?: string, opts?: WriteOptions): Promise<CardView>;
   /** Shows the tick at once; a failure undoes just that tick. Sent against the card's hash, so a changed card refuses it. */
   check(id: string, n: number): Promise<void>;
-  /** Sent against the card's hash. A 409 is thrown for the caller to handle, and the board refreshes. */
-  remove(id: string): Promise<void>;
+  /** Sent against the card's hash. A 409 is thrown for the caller to handle, and the board refreshes. `quiet` as for patch. */
+  remove(id: string, opts?: WriteOptions): Promise<void>;
   archiveDone(): Promise<string[]>;
   /** Brings an archived card back to a column (the first when none is given). A refusal is toasted and thrown; nothing is shown early. */
   restore(id: string, column?: string): Promise<CardView>;
@@ -65,11 +68,17 @@ export interface BoardStore {
   destroy(): void;
 }
 
+export interface WriteOptions {
+  /** Do not toast a failure: the caller reports it itself. The board still refreshes. */
+  quiet?: boolean;
+}
+
 const QUERY_DEBOUNCE_MS = 120;
 const RETRY_FIRST_MS = 500;
 const RETRY_MAX_MS = 10_000;
 
 function messageOf(e: unknown): string {
+  if (e instanceof ApiError && e.status === 0) return 'Could not reach Waypoint'; // not the browser's "Failed to fetch"
   return e instanceof Error && e.message !== '' ? e.message : 'Something went wrong';
 }
 
@@ -304,7 +313,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
    * refresh: it is held back until the queue is empty, and this job is in the
    * queue. A 423 is not toasted, because the banner already says it.
    */
-  function write<T>(job: () => Promise<T>, onFail: (e: unknown) => void = () => {}): Promise<T> {
+  function write<T>(job: () => Promise<T>, onFail: (e: unknown) => void = () => {}, quiet = false): Promise<T> {
     writeSeq++;
     return enqueue(async () => {
       try {
@@ -316,7 +325,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
           if (parse) {
             parseError = parseErrorOf(e);
           }
-          if (!parse && !(e instanceof ApiError && e.status === 409 && e.current)) toasts.push(messageOf(e));
+          if (!parse && !quiet && !(e instanceof ApiError && e.status === 409 && e.current)) toasts.push(messageOf(e));
           stale = true;
           void refresh();
         }
@@ -415,7 +424,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
     });
   }
 
-  function patch(id: string, body: CardPatch, ifMatch?: string): Promise<CardView> {
+  function patch(id: string, body: CardPatch, ifMatch?: string, opts: WriteOptions = {}): Promise<CardView> {
     const refused = refuseIfReadonly();
     if (refused) return Promise.reject(refused);
     hold(id);
@@ -428,17 +437,17 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
         release(id);
         throw e;
       }
-    });
+    }, undefined, opts.quiet);
   }
 
-  function remove(id: string): Promise<void> {
+  function remove(id: string, opts: WriteOptions = {}): Promise<void> {
     const refused = refuseIfReadonly();
     if (refused) return Promise.reject(refused);
     return write(async () => {
       await client.deleteCard(project, id, hashOf(id));
       answered.delete(id);
       if (!destroyed) setCards((cards) => cards.filter((c) => c.id !== id));
-    });
+    }, undefined, opts.quiet);
   }
 
   function archiveDone(): Promise<string[]> {

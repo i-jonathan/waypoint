@@ -97,20 +97,22 @@ export interface Own {
   body: string | undefined;
 }
 
-/** Whether `c` is the draft's base card with nothing changed but what this panel's own writes change. */
-function onlyOwnChanges(base: Fields, c: Fields, own: Own): boolean {
+/** Whether `c` is the draft's base card as far as every field of the draft goes, apart from the ticks this panel made itself. */
+function sameAsBase(base: Fields, c: Fields, own: Own | null): boolean {
   return FIELD_NAMES.every((f) => {
-    if (f === 'body' && own.body !== undefined && c.body === own.body) return true;
+    if (f === 'body' && own?.body !== undefined && c.body === own.body) return true;
     return sameField(f, base, c);
   });
 }
 
 /**
  * A card from the store arrived. Fields that are not dirty follow the server;
- * a dirty one is never touched. The hash the draft is based on moves only when
- * nothing is dirty, or when the change is this panel's own write (`own`): a
- * move or tick of its own gives the card a new hash, which is not a conflict.
- * An outside edit leaves the old hash in place, so that saving meets the 409.
+ * a dirty one is never touched. The hash the draft is based on moves when
+ * nothing is dirty, and when the card differs from the base in no field of the
+ * draft: a drag, a move or an archive changes the hash but conflicts with
+ * nothing that is being edited, and neither does this panel's own tick (`own`).
+ * A real change to any field of the draft, from outside, leaves the old hash in
+ * place, so that saving meets the 409.
  */
 export function absorb(s: DraftState, c: Pick<Card, FieldName> & { hash: string }, own: Own | null): DraftState {
   const dirty = new Set(dirtyOf(s));
@@ -123,7 +125,7 @@ export function absorb(s: DraftState, c: Pick<Card, FieldName> & { hash: string 
     (draft as Record<FieldName, unknown>)[f] = incoming[f];
   }
   let baseHash = s.baseHash;
-  if (dirty.size === 0 || (c.hash !== s.baseHash && own !== null && onlyOwnChanges(s.base, incoming, own))) baseHash = c.hash;
+  if (dirty.size === 0 || sameAsBase(s.base, incoming, own)) baseHash = c.hash;
   return { baseHash, base, draft };
 }
 

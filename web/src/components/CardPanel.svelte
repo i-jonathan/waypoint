@@ -193,8 +193,15 @@
 
   const dialogOpen = $derived(conflict !== null || confirmClose || confirmDelete);
 
+  /** A save was asked for while one was on its way: it runs when that one is done, if that one went well. */
+  let queued = false;
+
   async function save(ifMatch?: string) {
-    if (!st || saving || locked || blocker || dirtyOf(st).length === 0) return;
+    if (!st || locked || blocker || dirtyOf(st).length === 0) return;
+    if (saving) {
+      queued = true;
+      return;
+    }
     saving = true;
     error = '';
     errorRetry = false;
@@ -205,7 +212,7 @@
       const names = dirtyOf(now);
       if (names.length === 0) return;
       const sent = now.draft;
-      const card = await store.patch(id, toPatch(now, names), ifMatch ?? now.baseHash);
+      const card = await store.patch(id, toPatch(now, names), ifMatch ?? now.baseHash, { quiet: true });
       if (st) st = saved(st, sent, card);
       shown = card;
       if (live === null) archived = card;
@@ -215,9 +222,14 @@
       flash = true;
       flashTimer = setTimeout(() => (flash = false), 2400);
     } catch (e) {
+      queued = false;
       fail(e);
     } finally {
       saving = false;
+    }
+    if (queued) {
+      queued = false;
+      if (!conflict && !lost && error === '') void save();
     }
   }
 
@@ -326,11 +338,12 @@
   async function remove() {
     confirmDelete = false;
     try {
-      await store.remove(id);
+      await store.remove(ownId, { quiet: true });
       await finish();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) error = 'This card changed outside Waypoint. Look at it again, then delete it.';
       else if (e instanceof ApiError && e.status === 404) await finish();
+      else if (e instanceof ApiError && e.status === 0) error = 'Could not reach Waypoint. The card was not deleted.';
       else error = e instanceof Error ? e.message : 'Could not delete the card';
     }
   }
@@ -581,7 +594,7 @@
           <p class="err" role="status">{blocker}</p>
         {:else if saving}
           <p class="muted" role="status">Saving</p>
-        {:else if flash}
+        {:else if flash && dirty.length === 0}
           <p class="muted" role="status">Saved</p>
         {:else if dirty.length > 0}
           <p class="muted" role="status">Unsaved changes</p>

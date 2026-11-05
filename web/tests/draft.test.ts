@@ -91,8 +91,29 @@ describe('absorb: what a store refresh does to a draft', () => {
     expect(dirtyOf(s)).toEqual(['body']);
   });
 
-  it('keeps the original hash when the dirty card gets a new hash and nothing else differs', () => {
-    const s = absorb(typed(startDraft(card()), { title: 'Mine' }), card({ hash: 'h2' }), null);
+  it('rebases the hash when the card changed in a way that touches no draft field: a move, a drag, an archive', () => {
+    const s0 = typed(startDraft(card()), { title: 'Mine', body: 'my words' });
+    const s = absorb(s0, card({ column: 'Done', hash: 'h2' }), null);
+    expect(s.baseHash).toBe('h2');
+    expect(s.draft.title).toBe('Mine');
+    expect(dirtyOf(s)).toEqual(['title', 'body']);
+    expect(absorb(s0, card({ archived: true, hash: 'h3' }), null).baseHash).toBe('h3');
+  });
+
+  it.each([
+    ['title', { title: 'Theirs' }],
+    ['group', { group: 'Security' }],
+    ['priority', { priority: 'P0' }],
+    ['depends', { depends: ['T-2'] }],
+    ['body', { body: 'their words' }],
+    ['extra', { extra: [{ key: 'a', value: 'b' }] }],
+  ])('keeps the original hash when %s changed outside, even in a field that is not dirty', (_name, change) => {
+    const s = absorb(typed(startDraft(card()), { title: 'Mine' }), card({ ...change, hash: 'h2' }), null);
+    expect(s.baseHash).toBe('h1');
+  });
+
+  it('keeps the original hash for a change to a dirty field too', () => {
+    const s = absorb(typed(startDraft(card()), { body: 'mine' }), card({ body: 'theirs', column: 'Done', hash: 'h2' }), null);
     expect(s.baseHash).toBe('h1');
   });
 
