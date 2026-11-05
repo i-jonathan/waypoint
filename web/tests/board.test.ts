@@ -386,6 +386,119 @@ describe('stale cards', () => {
   });
 });
 
+describe('a refresh that fails', () => {
+  const down = () => new ApiError(0, 'network', 'Failed to fetch');
+  const refused = () => new ApiError(422, 'wip_limit', 'Doing is full');
+
+  it('ends equal to the server after a failed write and a failed refresh, with no later event', async () => {
+    const { api, store } = await loaded();
+    const server = [card('B', 'todo'), card('A', 'doing'), card('D', 'done')];
+    api.move.mockRejectedValue(refused());
+    api.board.mockRejectedValueOnce(down()).mockResolvedValue(response(server));
+
+    await store.move('A', 'doing', 0);
+    await settle();
+    expect(api.board).toHaveBeenCalledTimes(1);
+    expect(store.offline).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(api.board).toHaveBeenCalledTimes(2);
+    expect(store.view!.cards).toEqual(server);
+    expect(store.offline).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(api.board).toHaveBeenCalledTimes(2); // a landed board ends the retries
+  });
+
+  it('retries a refresh an event asked for, too', async () => {
+    const { api, store } = await loaded();
+    api.board.mockRejectedValueOnce(down()).mockResolvedValue(response([card('Z', 'todo')]));
+    store.handleEvent({ type: 'changed', project: 'Home' });
+    await settle();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(order(store)).toEqual(['Z']);
+  });
+
+  it('backs off 0.5s, 1s, 2s and so on, up to 10s', async () => {
+    const { api, store } = await loaded();
+    api.board.mockRejectedValue(down());
+    await store.refresh();
+    const gaps: number[] = [];
+    let last = 0;
+    for (let t = 1; t <= 45_000; t += 100) {
+      await vi.advanceTimersByTimeAsync(100);
+      const n = api.board.mock.calls.length;
+      if (n > gaps.length + 1) {
+        gaps.push(t + 99 - last);
+        last = t + 99;
+      }
+    }
+    expect(gaps.slice(0, 7)).toEqual([500, 1000, 2000, 4000, 8000, 10000, 10000]);
+  });
+
+  it('starts the backoff again after a board lands', async () => {
+    const { api, store } = await loaded();
+    api.board.mockRejectedValueOnce(down()).mockRejectedValueOnce(down()).mockResolvedValue(response(start));
+    await store.refresh();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(api.board).toHaveBeenCalledTimes(3);
+
+    api.board.mockClear();
+    api.board.mockRejectedValueOnce(down()).mockResolvedValue(response(start));
+    await store.refresh();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(api.board).toHaveBeenCalledTimes(2);
+  });
+
+  it('stays offline and silent through network failures', async () => {
+    const { api, store } = await loaded();
+    api.board.mockRejectedValue(down());
+    await store.refresh();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(api.board.mock.calls.length).toBeGreaterThan(3);
+    expect(store.offline).toBe(true);
+    expect(toasts.items).toEqual([]);
+  });
+
+  it('toasts a server failure once, not on every retry', async () => {
+    const { api, store } = await loaded();
+    api.board.mockRejectedValue(new ApiError(500, 'error', 'internal error'));
+    await store.refresh();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(api.board.mock.calls.length).toBeGreaterThan(3);
+    expect(toasts.items.map((t) => t.msg)).toEqual(['internal error']);
+  });
+
+  it('waits for queued writes before it retries', async () => {
+    const { api, store } = await loaded();
+    api.board.mockRejectedValueOnce(down()).mockResolvedValue(response(start));
+    await store.refresh();
+    api.board.mockClear();
+    const held = deferred<CardView>();
+    api.move.mockReturnValue(held.promise);
+    const moved = store.move('A', 'doing', 0);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(api.board).not.toHaveBeenCalled();
+
+    held.resolve(card('A', 'doing'));
+    await moved;
+    await settle();
+    expect(api.board).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops retrying on destroy', async () => {
+    const { api, store } = await loaded();
+    api.board.mockRejectedValue(down());
+    await store.refresh();
+    api.board.mockClear();
+    store.destroy();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(api.board).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
 describe('refreshing', () => {
   it('shares one more refresh among all the events that arrive while one is in flight', async () => {
     const { api, store } = await loaded();
@@ -583,6 +696,19 @@ describe('toasts', () => {
   });
 });
 
+describe('a write refused because the board does not parse', () => {
+  it('does not toast, since the banner says it', async () => {
+    const { api, store } = await loaded();
+    const parse = new ApiError(423, 'parse', 'line 12: expected a column', { line: 12 });
+    api.move.mockRejectedValue(parse);
+    api.board.mockRejectedValue(parse);
+    await store.move('A', 'doing', 0);
+    await settle();
+    expect(store.readonly).toBe(true);
+    expect(toasts.items).toEqual([]);
+  });
+});
+
 describe('other writes', () => {
   it('adds a created card, and removes a deleted one', async () => {
     const { api, store } = await loaded();
@@ -639,6 +765,22 @@ describe('settings', () => {
     await expect(store.updateSettings(change)).rejects.toMatchObject({ status: 409 });
     expect(api.board).toHaveBeenCalledTimes(1);
     expect(store.settingsHash).toBe('sh-9');
+  });
+});
+
+describe('settings queued behind other settings', () => {
+  it('sends the hash the earlier save left, read when the job runs', async () => {
+    const { api, store } = await loaded();
+    const first = deferred<BoardResponse>();
+    api.putProjectSettings.mockReturnValueOnce(first.promise).mockResolvedValueOnce(response(start, 'sh-3'));
+
+    const p1 = store.updateSettings({ settings });
+    const p2 = store.updateSettings({ settings });
+    await settle();
+    first.resolve(response(start, 'sh-2'));
+    await Promise.all([p1, p2]);
+
+    expect(api.putProjectSettings.mock.calls.map((c) => c[1].if_match)).toEqual(['sh-1', 'sh-2']);
   });
 });
 

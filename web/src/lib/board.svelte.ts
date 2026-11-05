@@ -57,6 +57,8 @@ export interface BoardStore {
 }
 
 const QUERY_DEBOUNCE_MS = 120;
+const RETRY_FIRST_MS = 500;
+const RETRY_MAX_MS = 10_000;
 
 function messageOf(e: unknown): string {
   return e instanceof Error && e.message !== '' ? e.message : 'Something went wrong';
@@ -101,6 +103,31 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
   let wanted = false;
   let waiters: Array<() => void> = [];
   let inFlight: object | null = null;
+
+  // True from a failed write or refresh until a board lands: what is on screen
+  // may be a guess, and no event is coming to correct it.
+  let stale = false;
+  let retryDelay = RETRY_FIRST_MS;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Tries the refresh again after a backoff, unless a try is already waiting. */
+  function retryLater() {
+    stale = true;
+    if (destroyed || retryTimer !== undefined) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = undefined;
+      wanted = true;
+      pump();
+    }, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
+  }
+
+  function markFresh() {
+    stale = false;
+    retryDelay = RETRY_FIRST_MS;
+    clearTimeout(retryTimer);
+    retryTimer = undefined;
+  }
 
   /** Asks for a refresh. Calls made while one is in flight share one more. */
   function refresh(): Promise<void> {
@@ -148,9 +175,10 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
       } else if (e instanceof ApiError && e.status === 423) {
         offline = false;
         parseError = e.line === undefined ? { message: e.message } : { line: e.line, message: e.message };
-      } else {
-        toasts.push(messageOf(e));
+      } else if (!stale) {
+        toasts.push(messageOf(e)); // once: the retries that follow stay quiet
       }
+      retryLater();
       return false;
     }
     if (destroyed || seq !== fetchSeq) return false; // a newer fetch has been made
@@ -159,6 +187,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
       wanted = true; // a write began meanwhile: this board may predate it
       return true;
     }
+    markFresh();
     offline = false;
     parseError = null;
     view = res.board;
@@ -230,8 +259,9 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
   /**
    * Runs one write in the queue. On failure it undoes the optimistic change
    * with `rollback`, toasts the server's message, and asks for a refresh so the
-   * server's board wins. It does not wait for that refresh: it is held back
-   * until the queue is empty, and this job is in the queue.
+   * server's board wins, retrying until one lands. It does not wait for that
+   * refresh: it is held back until the queue is empty, and this job is in the
+   * queue. A 423 is not toasted, because the banner already says it.
    */
   function write<T>(job: () => Promise<T>, onFail: (e: unknown) => void = () => {}): Promise<T> {
     writeSeq++;
@@ -241,10 +271,12 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
       } catch (e) {
         if (!destroyed) {
           onFail(e);
-          if (e instanceof ApiError && e.status === 423) {
+          const parse = e instanceof ApiError && e.status === 423;
+          if (parse) {
             parseError = e.line === undefined ? { message: e.message } : { line: e.line, message: e.message };
           }
-          if (!(e instanceof ApiError && e.status === 409 && e.current)) toasts.push(messageOf(e));
+          if (!parse && !(e instanceof ApiError && e.status === 409 && e.current)) toasts.push(messageOf(e));
+          stale = true;
           void refresh();
         }
         throw e;
@@ -377,14 +409,14 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
   async function updateSettings(change: Omit<ProjectSettingsChange, 'if_match'>): Promise<void> {
     const refused = refuseIfReadonly();
     if (refused) throw refused;
-    const hash = view?.settings_hash;
-    if (hash === undefined) throw new Error('The board has not loaded yet');
+    if (!view) throw new Error('The board has not loaded yet');
 
     let conflict: Promise<void> | null = null;
     try {
       await write(async () => {
         try {
-          const res = await client.putProjectSettings(project, { ...change, if_match: hash });
+          // Read now, not at the call: a save queued ahead of this one moves the hash.
+          const res = await client.putProjectSettings(project, { ...change, if_match: view!.settings_hash });
           if (!destroyed) {
             offline = false;
             view = res.board;
@@ -411,6 +443,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
   function destroy() {
     destroyed = true;
     clearTimeout(debounce);
+    clearTimeout(retryTimer);
     wanted = false;
     const batch = waiters;
     waiters = [];
