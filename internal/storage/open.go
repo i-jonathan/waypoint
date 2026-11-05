@@ -2,8 +2,8 @@
 package storage
 
 import (
-	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -11,11 +11,35 @@ import (
 	"waypoint/internal/config"
 	"waypoint/internal/domain"
 	"waypoint/internal/storage/markdown"
+	"waypoint/internal/storage/sqlite"
 )
 
-// ErrSQLite is returned for a project registered with sqlite storage, which
-// is not built yet.
-var ErrSQLite = errors.New("sqlite storage arrives in a later version")
+// sqliteMagic starts every SQLite database file.
+const sqliteMagic = "SQLite format 3\x00"
+
+// Sniff says what kind of board file is at path, by its content and not its
+// name: "sqlite" for a SQLite database, otherwise "markdown". A missing file
+// gives os.ErrNotExist and an empty one domain.ErrInvalid. It does not check
+// that the file is a Waypoint board; opening it does.
+func Sniff(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	head := make([]byte, len(sqliteMagic))
+	n, err := io.ReadFull(f, head)
+	switch {
+	case n == 0 && (err == io.EOF || err == nil):
+		return "", fmt.Errorf("%w: %s is empty", domain.ErrInvalid, path)
+	case err != nil && err != io.ErrUnexpectedEOF:
+		return "", err
+	}
+	if string(head[:n]) == sqliteMagic {
+		return "sqlite", nil
+	}
+	return "markdown", nil
+}
 
 // Open returns the repository for an existing board. It does not read or
 // write the board.
@@ -24,7 +48,7 @@ func Open(ref config.ProjectRef) (app.Repository, error) {
 	case "markdown":
 		return markdown.New(ref.Path), nil
 	case "sqlite":
-		return nil, ErrSQLite
+		return sqlite.New(ref.Path), nil
 	default:
 		return nil, fmt.Errorf("%w: project %q has unknown storage %q", domain.ErrInvalid, ref.Name, ref.Storage)
 	}
@@ -45,7 +69,14 @@ func Create(ref config.ProjectRef, s domain.Settings) (app.Repository, error) {
 		}
 		return repo, nil
 	case "sqlite":
-		return nil, ErrSQLite
+		if err := os.MkdirAll(filepath.Dir(ref.Path), 0o755); err != nil {
+			return nil, fmt.Errorf("create directory for %s: %w", ref.Path, err)
+		}
+		repo, err := sqlite.Create(ref.Path, s)
+		if err != nil {
+			return nil, err
+		}
+		return repo, nil
 	default:
 		return nil, fmt.Errorf("%w: project %q has unknown storage %q", domain.ErrInvalid, ref.Name, ref.Storage)
 	}

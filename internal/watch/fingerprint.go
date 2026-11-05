@@ -26,11 +26,13 @@ func (s fileState) same(o fileState) bool {
 	return os.SameFile(s.info, o.info) && s.info.Size() == o.info.Size() && s.info.ModTime().Equal(o.info.ModTime())
 }
 
-// fingerprint is the state of a board and its archive.
-type fingerprint struct{ board, archive fileState }
+// fingerprint is the state of a board, its archive and its write-ahead log. Only a
+// SQLite database has a log; while another program keeps the database open, a
+// save lives in the log and the database file itself does not change.
+type fingerprint struct{ board, archive, wal fileState }
 
 func (f fingerprint) same(o fingerprint) bool {
-	return f.board.same(o.board) && f.archive.same(o.archive)
+	return f.board.same(o.board) && f.archive.same(o.archive) && f.wal.same(o.wal)
 }
 
 // boardFiles says where a project's files are. board is the path as registered,
@@ -45,5 +47,5 @@ func filesOf(t Target) boardFiles {
 }
 
 func (b boardFiles) fingerprint() fingerprint {
-	return fingerprint{stateOf(b.board), stateOf(b.archive)}
+	return fingerprint{stateOf(b.board), stateOf(b.archive), stateOf(b.board + "-wal")}
 }

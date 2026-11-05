@@ -10,7 +10,6 @@ import (
 	"waypoint/internal/app"
 	"waypoint/internal/config"
 	"waypoint/internal/errcode"
-	"waypoint/internal/storage"
 )
 
 // errorBody is the JSON shape of every error: the CLI's {"error","code","line"?}
@@ -98,9 +97,6 @@ func (a *api) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	case errors.As(err, &le): // the Detail, so the response holds no path of the server's own
 		a.writeJSON(w, r, http.StatusInternalServerError, errorBody{Error: "the config file has a mistake: " + le.Detail, Code: "config"})
-		return
-	case errors.Is(err, storage.ErrSQLite):
-		a.writeJSON(w, r, http.StatusUnprocessableEntity, errorBody{Error: err.Error(), Code: "invalid"})
 		return
 	case errors.Is(err, fs.ErrNotExist):
 		a.writeJSON(w, r, http.StatusNotFound, errorBody{Error: "the project's file was not found", Code: "not_found"})

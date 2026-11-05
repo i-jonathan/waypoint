@@ -169,16 +169,15 @@ func TestProjectAddNotABoardJSONHasNoLine(t *testing.T) {
 	assertNotContains(t, stdout, `"line"`)
 }
 
-func TestProjectAddSQLiteRefused(t *testing.T) {
+func TestProjectAddSQLite(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"a.db", "a.sqlite", "a.sqlite3"} {
 		path := filepath.Join(dir, name)
-		_, stderr, code := runCLI(t, dir, "project", "add", "S", "--path", path)
-		assertEq(t, code, 1)
-		assertContains(t, stderr, "sqlite storage arrives in a later version")
-		mustNotExist(t, path)
+		stdout, _, code := runCLI(t, dir, "project", "add", "S"+name, "--path", path)
+		assertEq(t, code, 0)
+		assertContains(t, stdout, "(sqlite)")
+		mustExist(t, path)
 	}
-	mustNotExist(t, sandboxFor(t).config)
 }
 
 func TestProjectAddDuplicateCreatesNoFile(t *testing.T) {

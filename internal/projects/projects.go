@@ -40,7 +40,7 @@ type AddOptions struct {
 // The order is: validate, then under the config lock check the registry, create
 // or open the board, and only then write the config. A failure before the last
 // step leaves the config as it was. A path already registered, even through a
-// symlink, is refused, and so is a sqlite path (sqlite storage is not built).
+// symlink, is refused.
 // If the board was created but the config could not be saved, the error says
 // the new file was left behind.
 func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOptions) (config.ProjectRef, error) {
@@ -69,13 +69,13 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 			}
 			return fmt.Errorf("%w: %s is already registered as %q", domain.ErrInvalid, path, q.Name)
 		}
-		if config.StorageFor(path) == "sqlite" {
-			return storage.ErrSQLite
+		kind := storageOf(path)
+		if kind == "markdown" {
+			if err := checkArchive(cfg, path); err != nil {
+				return err
+			}
 		}
-		if err := checkArchive(cfg, path); err != nil {
-			return err
-		}
-		if err := cfg.Add(config.ProjectRef{Name: name, Path: path}); err != nil {
+		if err := cfg.Add(config.ProjectRef{Name: name, Path: path, Storage: kind}); err != nil {
 			return err
 		}
 		ref = cfg.Projects[len(cfg.Projects)-1]
@@ -89,6 +89,17 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 		return config.ProjectRef{}, err
 	}
 	return ref, nil
+}
+
+// storageOf says which storage a board path uses: an existing file by its
+// content, a path with nothing there yet by its extension. A file that cannot be
+// sniffed (empty, unreadable) falls back to its extension, and opening it then
+// reports what is wrong.
+func storageOf(path string) string {
+	if kind, err := storage.Sniff(path); err == nil {
+		return kind
+	}
+	return config.StorageFor(path)
 }
 
 // openOrCreate makes sure a board exists at ref. An existing file is loaded
@@ -160,7 +171,7 @@ func checkArchive(cfg *config.Config, path string) error {
 	}
 	_, mine := markdown.New(path).Files()
 	for _, q := range cfg.Projects {
-		if config.StorageFor(q.Path) != "markdown" {
+		if q.Storage != "markdown" {
 			continue
 		}
 		board, archive := markdown.New(q.Path).Files()
@@ -202,16 +213,14 @@ func (e *EntryError) Error() string { return e.Msg }
 func (e *EntryError) Unwrap() error { return e.Kind }
 
 // Validate checks a registry entry without reading the board: a path that is
-// not absolute, an unknown storage, sqlite storage, a missing file or a
+// not absolute, an unknown storage, a missing file or a
 // directory. It returns nil when the entry looks openable.
 func Validate(ref config.ProjectRef) error {
 	if !filepath.IsAbs(ref.Path) {
 		return &EntryError{fmt.Sprintf("Path %q is not absolute", ref.Path), domain.ErrInvalid}
 	}
 	switch ref.Storage {
-	case "markdown":
-	case "sqlite":
-		return storage.ErrSQLite
+	case "markdown", "sqlite":
 	default:
 		return &EntryError{fmt.Sprintf("Unknown storage %q", ref.Storage), domain.ErrInvalid}
 	}

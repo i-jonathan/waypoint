@@ -448,7 +448,7 @@ func TestProjectListValidatesEachEntry(t *testing.T) {
 	assertEq(t, byName["Good"].Error, "")
 	assertContains(t, byName["Relative"].Error, "not absolute")
 	assertContains(t, byName["Mongo"].Error, `Unknown storage "mongo"`)
-	assertContains(t, byName["Lite"].Error, "sqlite")
+	assertContains(t, byName["Lite"].Error, "File not found")
 	assertContains(t, byName["Bad"].Error, "not a Waypoint board")
 	for _, name := range []string{"Relative", "Mongo", "Lite"} {
 		assertEq(t, byName[name].Accent != "", true)
@@ -457,7 +457,7 @@ func TestProjectListValidatesEachEntry(t *testing.T) {
 	f.do("GET", "/api/projects/Good/board", nil).want(200)
 	f.do("GET", "/api/projects/Relative/board", nil).wantCode(422, "invalid")
 	f.do("GET", "/api/projects/Mongo/board", nil).wantCode(422, "invalid")
-	f.do("GET", "/api/projects/Lite/board", nil).wantCode(422, "invalid")
+	f.do("GET", "/api/projects/Lite/board", nil).wantCode(404, "not_found")
 	f.do("GET", "/api/projects/Bad/board", nil).wantCode(423, "parse")
 }
 
@@ -723,9 +723,12 @@ func TestProjectAddAndRemove(t *testing.T) {
 	e := f.do("POST", "/api/projects", map[string]any{"name": "Other", "path": link}).wantCode(422, "invalid")
 	assertContains(t, e.Error, `already registered as "Alpha"`)
 	f.do("POST", "/api/projects", map[string]any{"name": "alpha", "path": filepath.Join(f.dir, "z.md")}).wantCode(422, "invalid")
-	// Read-only sqlite storage and relative paths are refused.
-	f.do("POST", "/api/projects", map[string]any{"name": "Lite", "path": filepath.Join(f.dir, "x.db")}).wantCode(422, "invalid")
-	// Only markdown files can be created from the web.
+	// A database can be created from the web too.
+	f.do("POST", "/api/projects", map[string]any{"name": "Lite", "path": filepath.Join(f.dir, "x.db")}).want(201)
+	if _, err := os.Stat(filepath.Join(f.dir, "x.db")); err != nil {
+		t.Fatal(err)
+	}
+	// Only markdown files and databases can be created from the web.
 	for _, bad := range []string{"notes.txt", "board", "board.md.txt", ".hidden"} {
 		f.do("POST", "/api/projects", map[string]any{"name": "Ext", "path": filepath.Join(f.dir, bad)}).wantCode(422, "invalid")
 		if _, err := os.Stat(filepath.Join(f.dir, bad)); err == nil {
@@ -737,14 +740,14 @@ func TestProjectAddAndRemove(t *testing.T) {
 	f.do("POST", "/api/projects", map[string]any{"name": "Rel", "path": "boards/rel.md"}).wantCode(422, "invalid")
 	f.do("POST", "/api/projects", map[string]any{"name": "Home", "path": "~/x.md"}).wantCode(422, "invalid")
 	f.do("POST", "/api/projects", map[string]any{"name": "  "}).wantCode(422, "invalid")
-	assertEq(t, len(f.config().Projects), 5)
+	assertEq(t, len(f.config().Projects), 6)
 	if _, err := os.Stat(filepath.Join(f.dir, "boards", "rel.md")); err == nil {
 		t.Fatal("a relative path reached the filesystem")
 	}
 
 	f.do("DELETE", "/api/projects/Gamma", nil).want(204)
 	assertEq(t, receive(t, events), Event{Type: "projects"})
-	assertEq(t, len(f.config().Projects), 4)
+	assertEq(t, len(f.config().Projects), 5)
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("removing a project deleted its file: %v", err)
 	}

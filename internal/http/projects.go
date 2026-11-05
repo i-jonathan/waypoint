@@ -52,11 +52,11 @@ func (a *api) listProjects(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// isMarkdownFile reports whether path names a markdown file, so a web client
-// cannot make Waypoint create a board at an arbitrary kind of file.
-func isMarkdownFile(path string) bool {
+// isBoardFile reports whether path has an extension Waypoint boards use, so a web
+// client cannot make Waypoint create a board at an arbitrary kind of file.
+func isBoardFile(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
-	case ".md", ".markdown":
+	case ".md", ".markdown", ".db", ".sqlite", ".sqlite3":
 		return true
 	}
 	return false
@@ -77,8 +77,8 @@ func (a *api) createProject(w http.ResponseWriter, r *http.Request) error {
 	if in.Path != "" && !filepath.IsAbs(in.Path) {
 		return invalidRequest("path must be an absolute path")
 	}
-	if in.Path != "" && !isMarkdownFile(in.Path) {
-		return invalidRequest("path must end in .md or .markdown")
+	if in.Path != "" && !isBoardFile(in.Path) {
+		return invalidRequest("path must end in .md, .markdown, .db, .sqlite or .sqlite3")
 	}
 	if in.Existing {
 		if in.Path == "" {
