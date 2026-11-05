@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -19,6 +21,10 @@ type Service struct {
 	repo Repository
 	now  Clock
 }
+
+// saveRetries is how many times apply starts again after the file changed under
+// a save.
+const saveRetries = 5
 
 // NewService returns a Service over r. A nil now means time.Now.
 func NewService(r Repository, now Clock) *Service {
@@ -108,6 +114,11 @@ func (v viewer) find(id domain.CardID) (CardView, error) {
 // normalise what fn wrote, and every view and hash a caller gets must match
 // the file, so after saving it loads again while still holding the lock. An
 // unlock failure is reported only when nothing else failed.
+//
+// If something outside Waypoint writes the file during the save, apply starts
+// again from the load, still under the lock, so the operation lands on top of
+// that edit. fn can therefore run more than once: it must set what it reports,
+// never add to it.
 func (s *Service) apply(ctx context.Context, fn func(*domain.Board) error) (b *domain.Board, err error) {
 	unlock, err := s.repo.Lock(ctx)
 	if err != nil {
@@ -119,6 +130,40 @@ func (s *Service) apply(ctx context.Context, fn func(*domain.Board) error) (b *d
 		}
 	}()
 
+	for retry := 0; ; retry++ {
+		b, err = s.applyOnce(ctx, fn)
+		if !errors.Is(err, ErrChangedDuringWrite) {
+			return b, err
+		}
+		if retry == saveRetries {
+			return nil, fmt.Errorf("%w: it is being written too often to save this change, which was not made; try again", ErrChangedDuringWrite)
+		}
+		if err := sleep(ctx, retryDelay(retry)); err != nil {
+			return nil, err
+		}
+	}
+}
+
+// retryDelay grows with each retry and is jittered, so that a save does not fall
+// into step with whatever keeps writing the file.
+func retryDelay(retry int) time.Duration {
+	step := 10 * time.Millisecond
+	return time.Duration(retry+1)*step + rand.N(step)
+}
+
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// applyOnce is one attempt of apply, with the lock held.
+func (s *Service) applyOnce(ctx context.Context, fn func(*domain.Board) error) (*domain.Board, error) {
 	b, assigned, err := s.repo.Load(ctx)
 	if err != nil {
 		return nil, err
@@ -223,9 +268,9 @@ func (s *Service) UpdateSettings(ctx context.Context, ch domain.SettingsChange, 
 // and returns their ids. Reads do not archive, so an interface calls this when
 // it opens a board. It saves nothing when nothing is due.
 func (s *Service) AutoArchive(ctx context.Context) ([]domain.CardID, error) {
-	ids := []domain.CardID{}
+	var ids []domain.CardID
 	_, err := s.apply(ctx, func(b *domain.Board) error {
-		ids = append(ids, b.DueForArchive(s.now())...)
+		ids = append([]domain.CardID{}, b.DueForArchive(s.now())...)
 		return nil // apply archives what is due after fn returns
 	})
 	if err != nil {
@@ -341,12 +386,12 @@ func (s *Service) DeleteCard(ctx context.Context, id domain.CardID) error {
 // ArchiveDone archives every card in a done column. It is refused when the
 // archive mode is off.
 func (s *Service) ArchiveDone(ctx context.Context) ([]domain.CardID, error) {
-	ids := []domain.CardID{}
+	var ids []domain.CardID
 	_, err := s.apply(ctx, func(b *domain.Board) error {
 		if b.Settings.Archive.Mode == domain.ArchiveOff {
 			return fmt.Errorf("%w: archiving is off for this board", domain.ErrInvalid)
 		}
-		ids = append(ids, b.DoneCards()...)
+		ids = append([]domain.CardID{}, b.DoneCards()...)
 		return b.Archive(ids, s.now())
 	})
 	if err != nil {

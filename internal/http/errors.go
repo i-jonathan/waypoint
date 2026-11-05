@@ -51,6 +51,7 @@ var statuses = map[string]int{
 	"unknown_priority": http.StatusUnprocessableEntity,
 	"move_not_allowed": http.StatusUnprocessableEntity,
 	"wip_limit":        http.StatusUnprocessableEntity,
+	"busy":             http.StatusServiceUnavailable, // nothing was changed; the caller may try again
 }
 
 // writeJSON writes v as the response. It encodes first, so an encoding failure

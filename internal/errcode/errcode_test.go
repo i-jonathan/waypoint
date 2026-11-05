@@ -43,3 +43,9 @@ func TestLine(t *testing.T) {
 		t.Fatalf("Line = %d, want 0", got)
 	}
 }
+
+func TestChangedDuringWriteIsBusy(t *testing.T) {
+	if got := Code(fmt.Errorf("x: %w", app.ErrChangedDuringWrite)); got != "busy" {
+		t.Fatalf("got %q", got)
+	}
+}

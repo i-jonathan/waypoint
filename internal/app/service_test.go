@@ -865,3 +865,90 @@ func TestBoardMatchingFiltersCardsOnly(t *testing.T) {
 	equal(t, got.Settings, all.Settings)
 	equal(t, got.SettingsHash, all.SettingsHash)
 }
+
+// changingRepo fails the next fails saves as if the file changed under them.
+type changingRepo struct {
+	app.Repository
+	fails, saves, locks int
+	onSave              func()
+}
+
+func (r *changingRepo) Save(ctx context.Context, b *domain.Board) error {
+	r.saves++
+	if r.onSave != nil {
+		r.onSave()
+	}
+	if r.fails > 0 {
+		r.fails--
+		return fmt.Errorf("%w: test", app.ErrChangedDuringWrite)
+	}
+	return r.Repository.Save(ctx, b)
+}
+
+func (r *changingRepo) Lock(ctx context.Context) (func() error, error) {
+	r.locks++
+	return r.Repository.Lock(ctx)
+}
+
+func TestSaveRetriesFiveTimesUnderOneLock(t *testing.T) {
+	e := newEnv(t)
+	repo := &changingRepo{Repository: e.repo, fails: 5}
+	svc := app.NewService(repo, func() time.Time { return e.now })
+
+	cv, err := svc.CreateCard(context.Background(), domain.NewCard{Title: "Lands"})
+	noErr(t, err)
+	if repo.saves != 6 || repo.locks != 1 {
+		t.Fatalf("saves %d locks %d, want 6 and 1", repo.saves, repo.locks)
+	}
+	if !strings.Contains(e.file(), "Lands") || cv.Title != "Lands" {
+		t.Fatalf("the card did not land:\n%s", e.file())
+	}
+}
+
+func TestSaveGivesUpWithAClearError(t *testing.T) {
+	e := newEnv(t)
+	repo := &changingRepo{Repository: e.repo, fails: 100}
+	svc := app.NewService(repo, func() time.Time { return e.now })
+
+	_, err := svc.CreateCard(context.Background(), domain.NewCard{Title: "Never"})
+	if !errors.Is(err, app.ErrChangedDuringWrite) || !strings.Contains(err.Error(), "try again") {
+		t.Fatalf("got %v", err)
+	}
+	if repo.saves != 6 {
+		t.Fatalf("saves %d, want 6", repo.saves)
+	}
+	if strings.Contains(e.file(), "Never") {
+		t.Fatalf("a failed change reached the file:\n%s", e.file())
+	}
+}
+
+func TestSaveRetryStopsWithTheContext(t *testing.T) {
+	e := newEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	repo := &changingRepo{Repository: e.repo, fails: 100, onSave: cancel}
+	svc := app.NewService(repo, func() time.Time { return e.now })
+
+	if _, err := svc.CreateCard(ctx, domain.NewCard{Title: "Never"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
+	}
+	if repo.saves != 1 {
+		t.Fatalf("saves %d, want 1", repo.saves)
+	}
+}
+
+func TestRetriedAutoArchiveReportsEachCardOnce(t *testing.T) {
+	e := newEnv(t, withArchive(domain.ArchiveAuto, 1))
+	a, err := e.svc.CreateCard(context.Background(), domain.NewCard{Title: "Old"})
+	noErr(t, err)
+	_, err = e.svc.Done(context.Background(), a.ID)
+	noErr(t, err)
+	e.now = e.now.Add(72 * time.Hour)
+	repo := &changingRepo{Repository: e.repo, fails: 2}
+	svc := app.NewService(repo, func() time.Time { return e.now })
+
+	ids, err := svc.AutoArchive(context.Background())
+	noErr(t, err)
+	if !reflect.DeepEqual(ids, []domain.CardID{a.ID}) {
+		t.Fatalf("got %v, want just %s", ids, a.ID)
+	}
+}
