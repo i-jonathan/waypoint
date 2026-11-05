@@ -171,8 +171,13 @@
     white-space: nowrap;
   }
 
+  /* An accent fill with its own ink, which is readable on the head colour in every theme and preset. */
   .count.wip {
-    color: var(--acc);
+    margin-right: -3px;
+    padding: 1px 6px;
+    border-radius: var(--r-chip);
+    background: var(--acc);
+    color: var(--acc-ink);
     font-weight: 600;
     opacity: 1;
   }

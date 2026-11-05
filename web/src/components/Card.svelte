@@ -173,11 +173,12 @@
     color: var(--acc);
   }
 
+  /* The accent as a fill with its own ink: accent text on the head colour is as low as 1.3:1 in dark. */
   .p0 {
     padding: 1px 5px;
     border-radius: var(--r-chip);
-    background: var(--head);
-    color: var(--acc);
+    background: var(--acc);
+    color: var(--acc-ink);
     font-size: 10.5px;
     font-weight: 600;
   }

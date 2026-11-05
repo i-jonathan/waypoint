@@ -1,5 +1,5 @@
 import { ApiError, type api } from './api';
-import { anchorsIn, placeCard, placeOf, type Place } from './cardOrder';
+import { anchorsAmong, anchorsIn, columnOrder, placeCard, placeOf } from './cardOrder';
 import { toggleItem } from './checklist';
 import { toasts } from './events.svelte';
 import type {
@@ -78,7 +78,18 @@ function parseErrorOf(e: ApiError): ParseError {
 interface PendingMove {
   id: string;
   /** Where to put the card back if this move fails. */
-  prev: Place;
+  prev: Restore;
+}
+
+/**
+ * A card's place on the whole board: its column, the column's ids without it,
+ * and how many of them came before it. A filtered view shows only some of those
+ * ids, so each list works out its own neighbours from this when the card goes back.
+ */
+interface Restore {
+  column: string;
+  order: string[];
+  at: number;
 }
 
 export function createBoardStore(client: BoardApi, project: string): BoardStore {
@@ -314,12 +325,13 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
     const refused = refuseIfReadonly();
     if (refused) return Promise.reject(refused);
 
-    const prev = view ? placeOf(view.cards, id) : null;
+    const whole = (baseline ?? view)?.cards;
+    const was = whole ? placeOf(whole, id) : null;
+    const prev: Restore | null = was && whole ? { column: was.column, order: columnOrder(whole, was.column, id), at: was.index } : null;
     if (prev) {
       // The index is in the whole column. A filtered view shows only some of it, so
       // each list is told which of its own cards the card goes between.
-      const whole = (baseline ?? view)!.cards;
-      setCards((cards) => placeCard(cards, id, anchorsIn(cards, whole, id, column, index)));
+      setCards((cards) => placeCard(cards, id, anchorsIn(cards, whole!, id, column, index)));
     }
     const entry: PendingMove | null = prev ? { id, prev } : null;
     if (entry) moves.push(entry);
@@ -338,7 +350,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
         moves.splice(at, 1);
         const later = moves.slice(at).find((m) => m.id === id);
         if (later) later.prev = entry.prev; // the next move starts from where this one began
-        else setCards((cards) => placeCard(cards, id, entry.prev));
+        else setCards((cards) => placeCard(cards, id, anchorsAmong(cards, entry.prev.column, entry.prev.order, entry.prev.at)));
       },
     ).catch(() => {
       release(id); // the failure was handled by write(): rolled back, toasted, refresh asked

@@ -156,6 +156,26 @@ describe('move', () => {
     expect(order(store)).toEqual(['B', 'C', 'D']);
   });
 
+  it('rolls a card back to its place in the whole column on a filtered board, not the view\'s', async () => {
+    // The whole todo column is A X B C. The filter hides X.
+    const whole = [card('A', 'todo'), card('X', 'todo'), card('B', 'todo'), card('C', 'todo'), card('D', 'doing')];
+    const api = fakeApi();
+    api.board.mockImplementation(async (_p, q) => response(q ? whole.filter((c) => c.id !== 'X') : whole));
+    const store = createBoardStore(api, 'Home');
+    await store.refresh();
+    store.setQuery('hide x');
+    await vi.advanceTimersByTimeAsync(200);
+    expect(order(store, 'todo')).toEqual(['A', 'B', 'C']);
+
+    api.move.mockRejectedValue(new ApiError(422, 'wip_limit', 'doing is at its WIP limit (1/1)'));
+    api.board.mockReturnValue(deferred<BoardResponse>().promise); // the refresh has not landed yet
+    await store.move('A', 'doing', 0);
+    const ids = (b: { cards: CardView[] } | null, column: string) => b!.cards.filter((c) => c.column === column).map((c) => c.id);
+    expect(ids(store.view, 'todo')).toEqual(['A', 'B', 'C']);
+    // The whole board has A back in front of X, not after it.
+    expect(ids(store.baseline, 'todo')).toEqual(['A', 'X', 'B', 'C']);
+  });
+
   it('sends writes one at a time, in order', async () => {
     const { api, store } = await loaded();
     const first = deferred<CardView>();

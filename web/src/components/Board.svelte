@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import type { BoardStore } from '../lib/board.svelte';
   import { groupColor } from '../lib/colors';
-  import { canDrop, columnIds, createDrag, dropIndex, type DragState, type DropTarget } from '../lib/dnd';
+  import { toasts } from '../lib/events.svelte';
+  import { createDrag, type DragState, type DropTarget } from '../lib/dnd';
+  import { canDrop, columnIds, dropIndex } from '../lib/moveRules';
   import { adjacentColumn, focusTarget, readKey, stepTarget, type NavGrid } from '../lib/keys';
   import { createLayout, laneKeyOf, loadCollapsed, saveCollapsed, zoneId, type LaneMode, type Layout } from '../lib/lanes';
   import { href, navigate } from '../lib/router.svelte';
@@ -119,10 +121,59 @@
     cardEl(id)?.focus({ preventScroll: false });
   }
 
+  // The focused card and its neighbours, so focus can be kept when the board changes under it.
+  let focusCtx: { id: string; near: string[] } | null = null;
+
+  function noteFocus(id: string) {
+    const grid = navGrid();
+    const near: string[] = [];
+    for (const dir of ['up', 'down', 'left', 'right'] as const) {
+      const to = focusTarget(grid, id, dir);
+      if (to !== null) near.push(to);
+    }
+    focusCtx = { id, near };
+  }
+
   function onFocusIn(e: FocusEvent) {
     const id = e.target instanceof HTMLElement ? e.target.dataset.cardId : undefined;
-    if (id !== undefined) rover = id;
+    if (id === undefined) return;
+    rover = id;
+    noteFocus(id);
   }
+
+  function onFocusOut(e: FocusEvent) {
+    const el = e.target;
+    if (!(el instanceof HTMLElement) || el.dataset.cardId === undefined) return;
+    // A card that is rebuilt loses focus too, but it is gone from the page by now. One that is still
+    // there and no longer focused was left on purpose, and nothing may take focus back for it.
+    queueMicrotask(() => {
+      if (el.isConnected && !boardEl?.contains(document.activeElement)) focusCtx = null;
+    });
+  }
+
+  /** After the board is drawn: a focused card that was rebuilt or moved gets focus back, or its nearest neighbour does. */
+  function restoreFocus() {
+    const ctx = focusCtx;
+    if (!ctx) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) {
+      if (active instanceof HTMLElement && active.dataset.cardId !== undefined && boardEl?.contains(active)) noteFocus(active.dataset.cardId);
+      return; // focus is somewhere, and is not ours to move
+    }
+    for (const id of [ctx.id, ...ctx.near]) {
+      const el = cardEl(id);
+      if (!el) continue;
+      el.focus();
+      noteFocus(id);
+      return;
+    }
+  }
+
+  $effect(() => {
+    void layout;
+    void collapsed;
+    untrack(restoreFocus);
+  });
 
   // ----- Announcements for screen readers -----
   let announcement = $state('');
@@ -192,6 +243,22 @@
     onChange: (s) => (dragState = s),
   });
 
+  // The board refreshed while a card is in hand: what was measured is stale, and the card may be gone.
+  $effect(() => {
+    void layout;
+    const present = whole;
+    untrack(() => {
+      if (!drag.active) return;
+      const id = dragId;
+      if (id !== null && present && !present.cards.some((c) => c.id === id && !c.archived)) {
+        drag.cancel();
+        toasts.push(`${id} was removed`);
+        return;
+      }
+      void tick().then(() => drag.invalidate()); // once the new cards are on the page
+    });
+  });
+
   // A board that goes away mid-drag (another project was chosen) must not leave its copy of the card behind.
   $effect(() => () => drag.cancel());
 
@@ -241,6 +308,14 @@
     return columns.filter((c) => c.name !== card.column && refusal(card.id, c.name) === null).map((c) => c.name);
   });
 
+  const menuLanes = $derived.by(() => {
+    if (!menu || !whole || !mode) return [];
+    const card = whole.cards.find((c) => c.id === menu!.id);
+    if (!card) return [];
+    const own = laneKeyOf(card, mode);
+    return layout.lanes.filter((l) => l.key !== own).map((l) => ({ key: l.key, name: l.name }));
+  });
+
   function openMenu(id: string, el: HTMLElement) {
     const r = el.getBoundingClientRect();
     menu = { id, anchor: { left: r.left, top: r.top } };
@@ -261,6 +336,15 @@
     const n = columnIds(whole.cards, target).length;
     const bottom = target === card.column ? n - 1 : n; // not counting the card itself
     void relocate(id, target, where === 'top' ? 0 : bottom);
+  }
+
+  function menuLane(key: string) {
+    const id = menu?.id;
+    const card = whole?.cards.find((c) => c.id === id);
+    closeMenu(false);
+    if (!whole || !card || id === undefined) return;
+    // Its place in the column does not change, so this is the group (or priority) change and nothing else.
+    void relocate(id, card.column, columnIds(whole.cards, card.column).indexOf(id), key);
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -304,6 +388,7 @@
   style:--n={columns.length}
   onkeydown={onKeydown}
   onfocusin={onFocusIn}
+  onfocusout={onFocusOut}
 >
   {#if view}
     {#if mode === null}
@@ -359,8 +444,10 @@
   <MoveMenu
     cardId={menu.id}
     columns={menuColumns}
+    lanes={menuLanes}
     anchor={menu.anchor}
     onColumn={(c) => menuMove(c, 'bottom')}
+    onLane={menuLane}
     onTop={() => menuMove(null, 'top')}
     onBottom={() => menuMove(null, 'bottom')}
     onClose={() => closeMenu()}

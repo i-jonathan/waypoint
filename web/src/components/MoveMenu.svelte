@@ -3,28 +3,33 @@
   import ArrowLineDown from 'phosphor-svelte/lib/ArrowLineDown';
   import ArrowLineUp from 'phosphor-svelte/lib/ArrowLineUp';
   import ArrowRight from 'phosphor-svelte/lib/ArrowRight';
+  import Rows from 'phosphor-svelte/lib/Rows';
 
   interface Props {
     /** The card being moved, for the menu's name. */
     cardId: string;
     /** The other columns it may move to; the ones it may not are not listed. */
     columns: readonly string[];
+    /** In swimlanes, the other lanes the card may go to (its own is not listed). */
+    lanes?: ReadonlyArray<{ key: string; name: string }>;
     /** Where the card is on screen, in viewport pixels. */
     anchor: { left: number; top: number };
     onColumn: (column: string) => void;
+    /** Changes the card's lane (its group or priority) and leaves it in its place. */
+    onLane?: (key: string) => void;
     onTop: () => void;
     onBottom: () => void;
     /** Closes the menu; focus goes back to the card. */
     onClose: () => void;
   }
 
-  let { cardId, columns, anchor, onColumn, onTop, onBottom, onClose }: Props = $props();
+  let { cardId, columns, lanes = [], anchor, onColumn, onLane, onTop, onBottom, onClose }: Props = $props();
 
   let menu: HTMLDivElement | undefined = $state();
 
   const WIDTH = 224;
   const left = $derived(Math.max(8, Math.min(anchor.left + 12, (typeof innerWidth === 'number' ? innerWidth : 1024) - WIDTH - 8)));
-  const top = $derived(Math.max(8, Math.min(anchor.top + 36, (typeof innerHeight === 'number' ? innerHeight : 768) - (columns.length + 2) * 34 - 24)));
+  const top = $derived(Math.max(8, Math.min(anchor.top + 36, (typeof innerHeight === 'number' ? innerHeight : 768) - (columns.length + lanes.length + 2) * 34 - 24)));
 
   function items(): HTMLButtonElement[] {
     return menu ? [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')] : [];
@@ -75,7 +80,13 @@
       <span>Move to {column}</span>
     </button>
   {/each}
-  {#if columns.length > 0}<div class="rule" role="separator"></div>{/if}
+  {#each lanes as lane (lane.key)}
+    <button role="menuitem" tabindex="-1" onclick={() => onLane?.(lane.key)}>
+      <Rows size={14} weight="bold" aria-hidden="true" />
+      <span>Move to lane: {lane.name}</span>
+    </button>
+  {/each}
+  {#if columns.length + lanes.length > 0}<div class="rule" role="separator"></div>{/if}
   <button role="menuitem" tabindex="-1" onclick={onTop}>
     <ArrowLineUp size={14} weight="bold" aria-hidden="true" />
     <span>Top of column</span>

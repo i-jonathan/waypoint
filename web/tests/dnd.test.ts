@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { canDrop, columnIds, createDrag, dropIndex, type DragState } from '../src/lib/dnd';
+import { createDrag, type DragState } from '../src/lib/dnd';
+import { canDrop, columnIds, dropIndex } from '../src/lib/moveRules';
 import { adjacentColumn, focusTarget, readKey, stepTarget, type NavGrid } from '../src/lib/keys';
 import { createLayout, lanesOf, loadCollapsed, saveCollapsed, zoneId } from '../src/lib/lanes';
 import { anchorsIn, placeCard } from '../src/lib/cardOrder';

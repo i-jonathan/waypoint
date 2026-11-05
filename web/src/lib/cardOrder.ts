@@ -54,30 +54,41 @@ export function placeCard(cards: readonly CardView[], id: string, to: Place): Ca
 
 /**
  * Where a card goes in `cards`, a list that may show only some of the board,
- * given an index in `whole`, the board with every card. The index counts the
- * column of `whole` without the card, as the server does. The place is
- * described by the nearest cards that `cards` shows, so a filtered view puts
- * the card where the whole board does, not at the same index among fewer cards.
+ * given `order`, the ids of the column on the whole board without the card, and
+ * `at`, how many of them come before the card. The place is described by the
+ * nearest cards that `cards` shows, so a filtered view puts the card where the
+ * whole board does, not at the same index among fewer cards.
  */
-export function anchorsIn(cards: readonly CardView[], whole: readonly CardView[], id: string, column: string, index: number): Place {
+export function anchorsAmong(cards: readonly CardView[], column: string, order: readonly string[], at: number): Place {
   const shown = new Set<string>();
-  for (const c of cards) if (c.column === column && c.id !== id) shown.add(c.id);
-  const order = whole.filter((c) => !c.archived && c.column === column && c.id !== id).map((c) => c.id);
-  const at = index < 0 ? order.length : Math.min(index, order.length);
+  for (const c of cards) if (c.column === column) shown.add(c.id);
+  const cut = at < 0 ? order.length : Math.min(at, order.length);
   let after: string | null = null;
   let seen = 0;
-  for (let i = 0; i < at; i++) {
+  for (let i = 0; i < cut; i++) {
     if (shown.has(order[i]!)) {
       after = order[i]!;
       seen++;
     }
   }
   let before: string | null = null;
-  for (let i = at; i < order.length; i++) {
+  for (let i = cut; i < order.length; i++) {
     if (shown.has(order[i]!)) {
       before = order[i]!;
       break;
     }
   }
   return { column, after, before, index: seen };
+}
+
+/** The column of `whole` without a card, as ids in rank order. */
+export function columnOrder(whole: readonly CardView[], column: string, without: string): string[] {
+  const ids: string[] = [];
+  for (const c of whole) if (!c.archived && c.column === column && c.id !== without) ids.push(c.id);
+  return ids;
+}
+
+/** `anchorsAmong` for an index in the whole board's column, which counts the column without the card, as the server does. */
+export function anchorsIn(cards: readonly CardView[], whole: readonly CardView[], id: string, column: string, index: number): Place {
+  return anchorsAmong(cards.filter((c) => c.id !== id), column, columnOrder(whole, column, id), index);
 }

@@ -1,59 +1,4 @@
-import type { CardView, Settings } from './types';
-
-// ----- The rules: pure, and shared by the pointer, the keyboard and the menu. -----
-
-/**
- * Why a card cannot go to a column, or null when it can. It checks what the
- * client knows (moves_to and the WIP limit, counted on the whole board);
- * the server stays the authority and refuses what this lets through.
- * Moving within a column only reorders, and is always allowed.
- */
-export function canDrop(settings: Pick<Settings, 'columns'>, cards: readonly CardView[], cardId: string, to: string): string | null {
-  const card = cards.find((c) => c.id === cardId);
-  if (!card) return 'That card is no longer on the board';
-  if (card.column === to) return null;
-  const dest = settings.columns.find((c) => c.name === to);
-  if (!dest) return `There is no column called ${to}`;
-  const src = settings.columns.find((c) => c.name === card.column);
-  if (!src || !src.moves_to.includes(to)) return `${card.column} cannot move to ${to}`;
-  if (dest.wip > 0) {
-    let n = 0;
-    for (const c of cards) if (!c.archived && c.column === to) n++;
-    if (n >= dest.wip) return `${to} is at its WIP limit (${n}/${dest.wip})`;
-  }
-  return null;
-}
-
-/** The ids of a column's live cards, in rank order. */
-export function columnIds(cards: readonly CardView[], column: string): string[] {
-  const ids: string[] = [];
-  for (const c of cards) if (!c.archived && c.column === column) ids.push(c.id);
-  return ids;
-}
-
-/**
- * The index to send for a drop, in the column's FULL rank order, whatever the
- * board is filtered to. `fullIds` is the whole column, `after` is the visible
- * card just above the drop and `before` the visible card just below.
- *
- * The card lands right after `after` in the full order; with nothing above it,
- * right before `before`; with neither, at the bottom. Like the server's, the
- * index counts the column without the moving card.
- */
-export function dropIndex(fullIds: readonly string[], movingId: string, after: string | null, before: string | null): number {
-  const rest = fullIds.filter((id) => id !== movingId);
-  if (after !== null) {
-    const at = rest.indexOf(after);
-    if (at >= 0) return at + 1;
-  }
-  if (before !== null) {
-    const at = rest.indexOf(before);
-    if (at >= 0) return at;
-  }
-  return rest.length;
-}
-
-// ----- The pointer drag -----
+// The pointer drag. The rules of a move (canDrop, dropIndex) are in moveRules.ts.
 
 /**
  * The page markup the drag reads. Nothing here is queried while the pointer
@@ -103,8 +48,10 @@ export interface DragOptions {
 export interface Drag {
   /** Call from a card's pointerdown. The drag starts once the pointer has moved. */
   begin(e: PointerEvent, cardId: string, el: HTMLElement): void;
-  /** Stops a drag (or a pending one) without dropping. */
+  /** Stops a drag (or a pending one) without dropping, and takes the lifted copy away at once. */
   cancel(): void;
+  /** The page changed under a drag (a refresh added, removed or resized cards): measure again before the next move. */
+  invalidate(): void;
   readonly active: boolean;
 }
 
@@ -297,7 +244,13 @@ export function createDrag(opts: DragOptions): Drag {
     const same =
       nextOver === over &&
       ((next === null && target === null) ||
-        (next !== null && target !== null && next.zone === target.zone && next.index === target.index && next.slotY === target.slotY));
+        (next !== null &&
+          target !== null &&
+          next.zone === target.zone &&
+          next.index === target.index &&
+          next.slotY === target.slotY &&
+          next.after === target.after &&
+          next.before === target.before));
     if (same) return;
     target = next;
     over = nextOver;
@@ -442,7 +395,7 @@ export function createDrag(opts: DragOptions): Drag {
     if (wasDragging) emit();
   }
 
-  function finish(drop: boolean) {
+  function finish(drop: boolean, instant = false) {
     if (phase === 'idle') return;
     if (phase === 'pending') return reset();
 
@@ -453,7 +406,7 @@ export function createDrag(opts: DragOptions): Drag {
     if (drop && landing && zone) {
       removeClone({ left: zone.listLeft, top: zone.listTop - zone.listScroll + landing.slotY });
     } else {
-      removeClone({ left: startBox.left, top: startBox.top });
+      removeClone(instant ? null : { left: startBox.left, top: startBox.top });
     }
     reset();
     swallowNextClick();
@@ -554,7 +507,12 @@ export function createDrag(opts: DragOptions): Drag {
       }
     },
     cancel() {
-      finish(false);
+      finish(false, true);
+    },
+    invalidate() {
+      if (phase !== 'dragging') return;
+      dirty = true;
+      schedule();
     },
     get active() {
       return phase === 'dragging';

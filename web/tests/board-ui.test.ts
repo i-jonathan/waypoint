@@ -129,6 +129,27 @@ function syncFrames(cb: FrameRequestCallback): number {
   return 1;
 }
 
+/** Like layOut, but worked out from the DOM at every call, so cards that appear later have boxes too. */
+function autoLayOut(laneKeys: string[] | null) {
+  const box = (left: number, top: number, width: number, height: number) =>
+    ({ left, top, right: left + width, bottom: top + height, width, height, x: left, y: top }) as DOMRect;
+  return vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    const el = this as HTMLElement;
+    if (el.hasAttribute('data-board')) return box(0, 0, 2000, 2000);
+    const zone = el.closest<HTMLElement>('[data-zone]');
+    if (!zone) return box(0, 0, 0, 0);
+    const col = columns.findIndex((c) => c.name === zone.dataset.column);
+    const row = laneKeys === null ? 0 : laneKeys.indexOf(zone.dataset.lane ?? '');
+    const left = col * 220;
+    const top = row * 400;
+    if (el.hasAttribute('data-card-id')) {
+      const at = [...zone.querySelectorAll('[data-card-id]')].indexOf(el);
+      return box(left, top + 10 + at * 110, 200, 100);
+    }
+    return box(left, top, 200, 380);
+  });
+}
+
 function pointer(type: string, x: number, y: number, init: PointerEventInit = {}): PointerEvent {
   return new PointerEvent(type, { clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, bubbles: true, cancelable: true, ...init });
 }
@@ -152,6 +173,7 @@ afterEach(() => {
   store?.destroy();
   store = null;
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   toasts.clear();
   localStorage.clear();
   document.body.className = '';
@@ -690,5 +712,186 @@ describe('swimlanes', () => {
     await fireEvent.keyDown(el, { key: 'ArrowRight', shiftKey: true });
     expect(api.patch).not.toHaveBeenCalled();
     expect(api.move).toHaveBeenCalledWith('Home', 'A', 'In progress', 0);
+  });
+});
+
+// ----- Lanes by keyboard and menu -----
+
+describe('moving between lanes without a pointer', () => {
+  const cards = () => [card('A', 'Todo', { group: 'Security' }), card('C', 'Todo', { group: 'Purchasing' }), card('D', 'Todo')];
+
+  it('lists the other lanes in the move menu, with No group last, and not the card\'s own', async () => {
+    await mount(fakeApi(cards()), 'group');
+    const el = screen.getByRole('button', { name: /^A / });
+    el.focus();
+    await fireEvent.keyDown(el, { key: 'm' });
+    const menu = await screen.findByRole('menu');
+    const items = within(menu).getAllByRole('menuitem').map((i) => i.textContent?.trim());
+    expect(items).toContain('Move to lane: Purchasing');
+    expect(items).toContain('Move to lane: No group');
+    expect(items).not.toContain('Move to lane: Security');
+    expect(items.indexOf('Move to lane: Purchasing')).toBeLessThan(items.indexOf('Move to lane: No group'));
+  });
+
+  it('changes the group with the same patch a cross-lane drop sends, and does not move a card that stays put', async () => {
+    const api = fakeApi(cards());
+    await mount(api, 'group');
+    const el = screen.getByRole('button', { name: /^A / });
+    el.focus();
+    await fireEvent.keyDown(el, { key: 'm' });
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Move to lane: Purchasing' }));
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith('Home', 'A', { group: 'Purchasing' }, undefined));
+    expect(api.move).not.toHaveBeenCalled();
+    expect(screen.getByRole('log', { name: 'Moves' })).toHaveTextContent('A moved to Purchasing');
+    await waitFor(() => expect(screen.getByRole('button', { name: /^A / })).toHaveFocus());
+  });
+
+  it('clears the group for No group, and changes priority in priority lanes', async () => {
+    const api = fakeApi(cards());
+    await mount(api, 'group');
+    const el = screen.getByRole('button', { name: /^A / });
+    el.focus();
+    await fireEvent.keyDown(el, { key: 'm' });
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Move to lane: No group' }));
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith('Home', 'A', { group: '' }, undefined));
+
+    cleanup();
+    store?.destroy();
+    const api2 = fakeApi([card('A', 'Todo', { priority: 'P0' })]);
+    await mount(api2, 'priority');
+    const b = screen.getByRole('button', { name: /^A / });
+    b.focus();
+    await fireEvent.keyDown(b, { key: 'm' });
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).getByRole('menuitem', { name: 'Move to lane: No priority' })).toBeInTheDocument();
+    await fireEvent.click(within(menu).getByRole('menuitem', { name: 'Move to lane: P1' }));
+    await waitFor(() => expect(api2.patch).toHaveBeenCalledWith('Home', 'A', { priority: 'P1' }, undefined));
+  });
+
+  it('shows the reason and does nothing more when the group change fails', async () => {
+    const api = fakeApi(cards());
+    api.patch.mockRejectedValue(new ApiError(422, 'unknown_group', 'No group called Purchasing'));
+    await mount(api, 'group');
+    const el = screen.getByRole('button', { name: /^A / });
+    el.focus();
+    await fireEvent.keyDown(el, { key: 'm' });
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Move to lane: Purchasing' }));
+    await waitFor(() => expect(toasts.items.map((t) => t.msg)).toContain('No group called Purchasing'));
+    expect(api.move).not.toHaveBeenCalled();
+  });
+
+  it('has no lane items outside swimlanes', async () => {
+    await mount(fakeApi(cards()), 'none');
+    const el = screen.getByRole('button', { name: /^A / });
+    el.focus();
+    await fireEvent.keyDown(el, { key: 'm' });
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).queryByRole('menuitem', { name: /lane/ })).toBeNull();
+  });
+});
+
+// ----- Focus when the board changes under it -----
+
+describe('focus across a refresh', () => {
+  it('stays on a card that another client moved to a new column, though its element is rebuilt', async () => {
+    const api = fakeApi([card('T-1', 'Todo'), card('T-2', 'Todo')]);
+    const { store } = await mount(api);
+    const el = screen.getByRole('button', { name: /^T-1 / });
+    el.focus();
+    api.board.mockResolvedValue(response([card('T-1', 'Done'), card('T-2', 'Todo')]));
+    await store.refresh();
+    await waitFor(() => expect(names(zoneOf('Done'))).toEqual(['T-1']));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^T-1 / })).toHaveFocus());
+  });
+
+  it('goes to the nearest neighbour when the focused card is gone', async () => {
+    const api = fakeApi([card('T-1', 'Todo'), card('T-2', 'Todo'), card('T-3', 'Todo')]);
+    const { store } = await mount(api);
+    screen.getByRole('button', { name: /^T-2 / }).focus();
+    api.board.mockResolvedValue(response([card('T-1', 'Todo'), card('T-3', 'Todo')]));
+    await store.refresh();
+    await waitFor(() => expect(screen.getByRole('button', { name: /^T-1 / })).toHaveFocus());
+  });
+
+  it('does not take focus back from someone who left the board on purpose', async () => {
+    const api = fakeApi([card('T-1', 'Todo'), card('T-2', 'Todo')]);
+    const { store } = await mount(api);
+    const el = screen.getByRole('button', { name: /^T-1 / });
+    el.focus();
+    el.blur();
+    await new Promise((r) => setTimeout(r, 0));
+    api.board.mockResolvedValue(response([card('T-1', 'Done'), card('T-2', 'Todo')]));
+    await store.refresh();
+    await waitFor(() => expect(names(zoneOf('Done'))).toEqual(['T-1']));
+    expect(document.body).toHaveFocus();
+  });
+
+  it('leaves focus alone when it is in the filter box', async () => {
+    const api = fakeApi([card('T-1', 'Todo')]);
+    const { store } = await mount(api);
+    const input = document.createElement('input');
+    document.body.append(input);
+    screen.getByRole('button', { name: /^T-1 / }).focus();
+    input.focus();
+    api.board.mockResolvedValue(response([card('T-1', 'Done')]));
+    await store.refresh();
+    await waitFor(() => expect(names(zoneOf('Done'))).toEqual(['T-1']));
+    expect(input).toHaveFocus();
+    input.remove();
+  });
+});
+
+// ----- A drag while the board refreshes -----
+
+describe('a refresh during a drag', () => {
+  it('measures again, so the drop lands by the new layout', async () => {
+    const api = fakeApi([card('A', 'Todo'), card('D', 'Done'), card('E', 'Done')]);
+    const { store } = await mount(api);
+    autoLayOut(null);
+    const el = screen.getByRole('button', { name: /^A / });
+    el.dispatchEvent(pointer('pointerdown', 40, 40));
+    window.dispatchEvent(pointer('pointermove', 60, 50));
+    // Between D (10..110) and E (120..220) of Done: after D.
+    window.dispatchEvent(pointer('pointermove', 2 * 220 + 50, 115));
+    // Meanwhile another client adds N at the top of Done: it is now N D E, and y=115 is between N and D.
+    api.board.mockResolvedValue(response([card('A', 'Todo'), card('N', 'Done'), card('D', 'Done'), card('E', 'Done')]));
+    await store.refresh();
+    await waitFor(() => expect(names(zoneOf('Done'))).toEqual(['N', 'D', 'E']));
+    await new Promise((r) => setTimeout(r, 0)); // the board has had its turn after the refresh
+    window.dispatchEvent(pointer('pointerup', 2 * 220 + 50, 115));
+    await waitFor(() => expect(api.move).toHaveBeenCalledWith('Home', 'A', 'Done', 1));
+  });
+
+  it('cancels and says so when the dragged card was removed elsewhere', async () => {
+    const api = fakeApi([card('A', 'Todo'), card('B', 'Todo'), card('D', 'Done')]);
+    const { store } = await mount(api);
+    autoLayOut(null);
+    const el = screen.getByRole('button', { name: /^A / });
+    el.dispatchEvent(pointer('pointerdown', 40, 40));
+    window.dispatchEvent(pointer('pointermove', 60, 50));
+    window.dispatchEvent(pointer('pointermove', 2 * 220 + 50, 300));
+    expect(document.querySelector('.drag-clone')).not.toBeNull();
+    api.board.mockResolvedValue(response([card('B', 'Todo'), card('D', 'Done')]));
+    await store.refresh();
+    await waitFor(() => expect(toasts.items.map((t) => t.msg)).toContain('A was removed'));
+    expect(document.querySelector('.drag-clone')).toBeNull();
+    window.dispatchEvent(pointer('pointerup', 2 * 220 + 50, 300));
+    expect(api.move).not.toHaveBeenCalled();
+    expect(document.body.classList.contains('wp-dragging')).toBe(false);
+  });
+
+  it('does not cancel when a filter, not a removal, hides the dragged card', async () => {
+    const whole = [card('A', 'Todo'), card('B', 'Todo'), card('D', 'Done')];
+    const api = fakeApi(whole, () => [whole[1]!, whole[2]!]);
+    const { store } = await mount(api);
+    autoLayOut(null);
+    const el = screen.getByRole('button', { name: /^A / });
+    el.dispatchEvent(pointer('pointerdown', 40, 40));
+    window.dispatchEvent(pointer('pointermove', 60, 50));
+    window.dispatchEvent(pointer('pointermove', 2 * 220 + 50, 300));
+    store.setQuery('not a');
+    await waitFor(() => expect(store.view!.cards).toHaveLength(2));
+    expect(toasts.items.map((t) => t.msg)).not.toContain('A was removed');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   });
 });
