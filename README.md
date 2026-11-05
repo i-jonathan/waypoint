@@ -110,6 +110,8 @@ Each project is stored in one of two ways, and new projects use SQLite unless yo
 
 Pick one with `--storage sqlite|markdown` on `waypoint init` and `waypoint project add`, or with the Storage choice in the New project dialog. Opening an existing file works out its kind from its content. Existing Markdown boards keep working as they are.
 
+To change your mind later, run `waypoint project convert NAME --to sqlite` (or `--to markdown`, optionally with `--path FILE`). Waypoint writes the board and its archive to the new file, reads it back and checks that every card, id, order, body and setting matches, and only then points the project at it. The old files are renamed to `<name>.bak-YYYYMMDD` and never deleted, so a conversion can always be undone. If a card could not be stored exactly as written, the conversion stops and tells you which card, with nothing changed.
+
 ## The Markdown board file
 
 A Markdown board, such as `BOARD.md`, is plain Markdown. The columns and settings sit in a short header, and each card is a heading with text under it. You can edit the file in any editor. A card heading without an id gets one the next time Waypoint reads the file. Dates are stored as UTC timestamps such as `2026-11-04T23:52:10Z` and shown in your local time; a plain date such as `2026-10-26` also works and stays as written. Run `waypoint help format` for the full description of the format.
@@ -134,5 +136,5 @@ Run `waypoint agents` and paste the output into your project's `AGENTS.md` or `C
 
 ## What is coming
 
-- Converting a project between SQLite and Markdown, and import and export.
+- Converting a project from the web UI, and import and export.
 - An MCP server, so agents can use the board as a tool.

@@ -503,3 +503,60 @@ func TestUnregisteredMarkdownHereSuggestsTheFlag(t *testing.T) {
 	assertEq(t, code, 1)
 	assertContains(t, stderr, `BOARD.md here isn't registered; run "waypoint init --storage markdown"`)
 }
+
+func TestProjectConvertThereAndBack(t *testing.T) {
+	dir := t.TempDir()
+	runCLI(t, dir, "init", "--storage", "markdown", "Reno")
+	runCLI(t, dir, "add", "Measure every room")
+	runCLI(t, dir, "add", "Paint the hallway", "--depends", "T-1")
+
+	stdout, stderr, code := runCLI(t, dir, "project", "convert", "Reno", "--to", "sqlite")
+	assertEq(t, code, 0)
+	assertEq(t, stderr, "")
+	assertContains(t, stdout, "Converted Reno to sqlite at "+filepath.Join(dir, "BOARD.db"))
+	assertContains(t, stdout, "BOARD.md.bak-")
+	mustExist(t, filepath.Join(dir, "BOARD.db"))
+	mustNotExist(t, filepath.Join(dir, "BOARD.md"))
+
+	// The project carries on from the new file: same cards, same blocked state.
+	stdout, _, code = runCLI(t, dir, "ls", "--project", "Reno")
+	assertEq(t, code, 0)
+	assertContains(t, stdout, "T-1  Todo  Measure every room")
+	assertContains(t, stdout, "[BLOCKED by T-1]")
+	stdout, _, _ = runCLI(t, dir, "project", "ls")
+	assertContains(t, stdout, "sqlite")
+
+	_, _, code = runCLI(t, dir, "project", "convert", "Reno", "--to", "markdown", "--path", "back.md")
+	assertEq(t, code, 0)
+	mustExist(t, filepath.Join(dir, "back.md"))
+	stdout, _, _ = runCLI(t, dir, "ls", "--project", "Reno")
+	assertContains(t, stdout, "Paint the hallway")
+}
+
+func TestProjectConvertJSON(t *testing.T) {
+	dir := t.TempDir()
+	runCLI(t, dir, "init", "Reno")
+	stdout, _, code := runCLI(t, dir, "project", "convert", "Reno", "--to", "markdown", "--json")
+	assertEq(t, code, 0)
+	assertContains(t, stdout, `"storage":"markdown"`)
+	assertContains(t, stdout, `"backups":[`)
+	assertContains(t, stdout, "waypoint.db.bak-")
+}
+
+func TestProjectConvertRefusals(t *testing.T) {
+	dir := t.TempDir()
+	runCLI(t, dir, "init", "Reno")
+	for name, args := range map[string][]string{
+		"already that storage": {"project", "convert", "Reno", "--to", "sqlite"},
+		"no --to":              {"project", "convert", "Reno"},
+		"unknown --to":         {"project", "convert", "Reno", "--to", "mongo"},
+		"no name":              {"project", "convert", "--to", "markdown"},
+		"unknown project":      {"project", "convert", "Nope", "--to", "markdown"},
+	} {
+		_, stderr, code := runCLI(t, dir, args...)
+		if code == 0 || stderr == "" {
+			t.Errorf("%s: exit %d, stderr %q; want a failure with a message", name, code, stderr)
+		}
+	}
+	mustExist(t, filepath.Join(dir, "waypoint.db"))
+}
