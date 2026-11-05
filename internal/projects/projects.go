@@ -27,6 +27,9 @@ type AddOptions struct {
 	// Prefix is the card id prefix and must be valid: Add applies no default,
 	// so an empty one is refused. Callers pass DefaultPrefix when they mean it.
 	Prefix string
+	// Storage is "sqlite" or "markdown". Empty means: what an existing file is,
+	// else what the path's extension says, else sqlite.
+	Storage string
 	// Cwd resolves a relative Path. With Cwd empty a relative Path is refused.
 	Cwd string
 	// FromInit words the "already registered" error for "waypoint init".
@@ -59,7 +62,7 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 	var ref config.ProjectRef
 	var created bool
 	err := config.Update(cfgPath, env, func(cfg *config.Config) error {
-		path, err := boardPath(cfg, name, o.Path, o.Cwd)
+		path, err := boardPath(cfg, name, o.Path, o.Cwd, o.Storage)
 		if err != nil {
 			return err
 		}
@@ -69,7 +72,10 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 			}
 			return fmt.Errorf("%w: %s is already registered as %q", domain.ErrInvalid, path, q.Name)
 		}
-		kind := storageOf(path)
+		kind, err := chooseStorage(path, o.Storage)
+		if err != nil {
+			return err
+		}
 		if kind == "markdown" {
 			if err := checkArchive(cfg, path); err != nil {
 				return err
@@ -91,15 +97,42 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 	return ref, nil
 }
 
-// storageOf says which storage a board path uses: an existing file by its
-// content, a path with nothing there yet by its extension. A file that cannot be
-// sniffed (empty, unreadable) falls back to its extension, and opening it then
-// reports what is wrong.
-func storageOf(path string) string {
-	if kind, err := storage.Sniff(path); err == nil {
-		return kind
+// chooseStorage decides which storage a project at path uses. An existing file
+// is what its content says; a path with nothing there yet follows want, then its
+// extension, then the default, sqlite. A want that contradicts the file or the
+// extension is domain.ErrInvalid, so a board never ends up in a file named for
+// the other kind.
+func chooseStorage(path, want string) (string, error) {
+	switch want {
+	case "", "markdown", "sqlite":
+	default:
+		return "", fmt.Errorf("%w: storage %q must be sqlite or markdown", domain.ErrInvalid, want)
 	}
-	return config.StorageFor(path)
+	if kind, err := storage.Sniff(path); err == nil {
+		if want != "" && want != kind {
+			return "", fmt.Errorf("%w: %s is a %s file, not %s", domain.ErrInvalid, path, kind, want)
+		}
+		return kind, nil
+	}
+	if _, err := os.Stat(path); err == nil { // there, but empty or unreadable: opening it says why
+		return config.StorageFor(path), nil
+	}
+	implied := ""
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".markdown":
+		implied = "markdown"
+	case ".db", ".sqlite", ".sqlite3":
+		implied = "sqlite"
+	}
+	switch {
+	case want != "" && implied != "" && want != implied:
+		return "", fmt.Errorf("%w: %s ends in %s, which is a %s file, not %s", domain.ErrInvalid, path, filepath.Ext(path), implied, want)
+	case want != "":
+		return want, nil
+	case implied != "":
+		return implied, nil
+	}
+	return "sqlite", nil
 }
 
 // openOrCreate makes sure a board exists at ref. An existing file is loaded
@@ -124,14 +157,18 @@ func openOrCreate(ctx context.Context, ref config.ProjectRef, settings domain.Se
 }
 
 // boardPath is where a new project's board lives: path resolved against cwd, or
-// <data_dir>/<slug of name>.md when path is empty.
-func boardPath(cfg *config.Config, name, path, cwd string) (string, error) {
+// <data_dir>/<slug of name>.db (.md for markdown storage) when path is empty.
+func boardPath(cfg *config.Config, name, path, cwd, storageWanted string) (string, error) {
 	if path == "" {
 		s := slug(name)
 		if s == "" {
 			return "", fmt.Errorf("%w: cannot make a file name from %q; use --path", domain.ErrInvalid, name)
 		}
-		return filepath.Join(cfg.DataDir, s+".md"), nil
+		ext := ".db"
+		if storageWanted == "markdown" {
+			ext = ".md"
+		}
+		return filepath.Join(cfg.DataDir, s+ext), nil
 	}
 	if filepath.IsAbs(path) {
 		return filepath.Clean(path), nil

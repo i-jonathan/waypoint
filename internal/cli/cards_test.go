@@ -14,7 +14,7 @@ import (
 func newProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if _, stderr, code := runCLI(t, dir, "init", "demo"); code != 0 {
+	if _, stderr, code := runCLI(t, dir, "init", "--storage", "markdown", "demo"); code != 0 {
 		t.Fatalf("init: %d %s", code, stderr)
 	}
 	path := filepath.Join(dir, "BOARD.md")

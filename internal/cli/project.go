@@ -14,13 +14,15 @@ import (
 
 const (
 	usageProject = "waypoint project add|ls|rm ..."
-	usageAdd     = "waypoint project add NAME [--path FILE] [--prefix T] [--json]"
+	usageAdd     = "waypoint project add NAME [--path FILE] [--storage sqlite|markdown] [--prefix T] [--json]"
 	usageLs      = "waypoint project ls [--json]"
 	usageRm      = "waypoint project rm NAME [--json]"
-	usageInit    = "waypoint init [NAME] [--prefix T] [--json]"
+	usageInit    = "waypoint init [NAME] [--storage sqlite|markdown] [--prefix T] [--json]"
 
 	defaultPrefix = projects.DefaultPrefix
-	initBoardFile = "BOARD.md"
+	// What "waypoint init" creates in the current folder, by storage.
+	initSQLiteFile   = "waypoint.db"
+	initMarkdownFile = "BOARD.md"
 )
 
 // projectJSON is the JSON shape of a registered project.
@@ -49,9 +51,10 @@ func (r *runner) cmdProject(args []string) int {
 }
 
 func (r *runner) cmdProjectAdd(args []string) int {
-	var path, prefix string
+	var path, prefix, storageFlag string
 	pos, code, done := r.parse(usageAdd, args, func(fs *flag.FlagSet) {
 		fs.StringVar(&path, "path", "", "")
+		fs.StringVar(&storageFlag, "storage", "", "")
 		fs.StringVar(&prefix, "prefix", defaultPrefix, "")
 	})
 	if done {
@@ -60,12 +63,13 @@ func (r *runner) cmdProjectAdd(args []string) int {
 	if len(pos) != 1 {
 		return r.usageError("expected one project NAME", usageAdd)
 	}
-	return r.addProject(pos[0], path, prefix, false)
+	return r.addProject(pos[0], path, prefix, storageFlag, "")
 }
 
 func (r *runner) cmdInit(args []string) int {
-	var prefix string
+	var prefix, storageFlag string
 	pos, code, done := r.parse(usageInit, args, func(fs *flag.FlagSet) {
+		fs.StringVar(&storageFlag, "storage", "", "")
 		fs.StringVar(&prefix, "prefix", defaultPrefix, "")
 	})
 	if done {
@@ -81,21 +85,25 @@ func (r *runner) cmdInit(args []string) int {
 	if len(pos) == 1 {
 		name = pos[0]
 	}
-	return r.addProject(name, filepath.Join(r.env.Cwd, initBoardFile), prefix, true)
+	file := initSQLiteFile
+	if storageFlag == "markdown" {
+		file = initMarkdownFile
+	}
+	return r.addProject(name, filepath.Join(r.env.Cwd, file), prefix, storageFlag, file)
 }
 
 // addProject registers a project and prints the result. pathFlag is the
-// --path value ("" for the default under data_dir); with fromInit it is the
-// absolute path of ./BOARD.md instead. The work is shared with the web API
-// (projects.Add).
-func (r *runner) addProject(name, pathFlag, prefix string, fromInit bool) int {
+// --path value ("" for the default under data_dir); for "waypoint init" it is
+// the absolute path of the board file in the current folder, and initFile is that
+// file's name. The work is shared with the web API (projects.Add).
+func (r *runner) addProject(name, pathFlag, prefix, storageFlag, initFile string) int {
 	cfgPath, err := config.DefaultPath(r.env.Getenv)
 	if err != nil {
 		return r.fail(err)
 	}
 	ref, err := projects.Add(r.ctx, cfgPath, r.env.Getenv, projects.AddOptions{
 		Name: name, Path: pathFlag, Prefix: prefix, Cwd: r.env.Cwd,
-		FromInit: fromInit, InitFile: initBoardFile,
+		Storage: storageFlag, FromInit: initFile != "", InitFile: initFile,
 	})
 	if err != nil {
 		return r.fail(err)

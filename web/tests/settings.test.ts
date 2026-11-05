@@ -662,16 +662,17 @@ describe('NewProjectDialog', () => {
     await type(field('Prefix'), 'K');
     await submit('Create project');
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('Kitchen (2)'));
-    expect(createProject).toHaveBeenCalledWith({ name: 'Kitchen', prefix: 'K' });
+    expect(createProject).toHaveBeenCalledWith({ name: 'Kitchen', prefix: 'K', storage: 'sqlite' });
   });
 
   it('sends the location when one is given', async () => {
     const { createProject } = open();
     await type(field('Name'), 'Kitchen');
+    await fireEvent.click(screen.getByRole('radio', { name: /Markdown file/ }));
     await type(field('Location'), '/home/me/kitchen.md');
     await submit('Create project');
     await waitFor(() => expect(createProject).toHaveBeenCalled());
-    expect(createProject).toHaveBeenCalledWith({ name: 'Kitchen', path: '/home/me/kitchen.md', prefix: 'T' });
+    expect(createProject).toHaveBeenCalledWith({ name: 'Kitchen', path: '/home/me/kitchen.md', prefix: 'T', storage: 'markdown' });
   });
 
   it('refuses a prefix that is not letters and numbers starting with a letter', async () => {
@@ -685,15 +686,39 @@ describe('NewProjectDialog', () => {
     expect(field('Prefix')).toHaveAttribute('aria-invalid', 'true');
   });
 
+  it('offers SQLite first and selected, and Markdown as the other choice', () => {
+    open();
+    const sqlite = screen.getByRole('radio', { name: /SQLite database/ });
+    const markdown = screen.getByRole('radio', { name: /Markdown file/ });
+    expect(sqlite).toBeChecked();
+    expect(markdown).not.toBeChecked();
+    expect(field('Location')).toHaveAttribute('placeholder', '/path/to/board.db');
+  });
+
+  it('checks the location against the chosen storage', async () => {
+    const { createProject } = open();
+    await type(field('Name'), 'Kitchen');
+    await type(field('Location'), '/home/me/kitchen.md');
+    await submit('Create project');
+    expect(screen.getByText('A SQLite database path must end in .db, .sqlite or .sqlite3')).toBeInTheDocument();
+    expect(createProject).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('radio', { name: /Markdown file/ }));
+    expect(field('Location')).toHaveAttribute('placeholder', '/path/to/board.md');
+    expect(screen.queryByText('A SQLite database path must end in .db, .sqlite or .sqlite3')).toBeNull();
+    await submit('Create project');
+    await waitFor(() => expect(createProject).toHaveBeenCalled());
+  });
+
   it('wants a name, and a path that ends in .md or .markdown when one is given', async () => {
     const { createProject } = open();
     await submit('Create project');
     expect(field('Name')).toHaveFocus();
     expect(screen.getByText('Give the project a name')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('radio', { name: /Markdown file/ }));
     await type(field('Name'), 'Kitchen');
     await type(field('Location'), '/home/me/kitchen.txt');
     await submit('Create project');
-    expect(screen.getByText('The path must end in .md or .markdown')).toBeInTheDocument();
+    expect(screen.getByText('A Markdown path must end in .md or .markdown')).toBeInTheDocument();
     expect(field('Location')).toHaveFocus();
     expect(createProject).not.toHaveBeenCalled();
     await type(field('Location'), '/home/me/kitchen.MARKDOWN');
@@ -714,6 +739,23 @@ describe('NewProjectDialog', () => {
     expect(field('Path')).toHaveValue('/data/x.md');
     expect(onCreated).not.toHaveBeenCalled();
     await waitFor(() => expect(field('Path')).toHaveFocus());
+  });
+
+  it('opens an existing database under a name taken from the file, and sends no storage', async () => {
+    const { createProject, onCreated } = open('open');
+    await type(field('Path'), '/home/me/Home reno.db');
+    expect(field('Name')).toHaveValue('Home reno');
+    await submit('Open file');
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('Home reno'));
+    expect(createProject).toHaveBeenCalledWith({ name: 'Home reno', path: '/home/me/Home reno.db', existing: true });
+  });
+
+  it('refuses an existing path that is neither a board nor a database name', async () => {
+    const { createProject } = open('open');
+    await type(field('Path'), '/home/me/notes.txt');
+    await submit('Open file');
+    expect(screen.getByText('The path must end in .md, .markdown, .db, .sqlite or .sqlite3')).toBeInTheDocument();
+    expect(createProject).not.toHaveBeenCalled();
   });
 
   it('opens an existing file under a name taken from the file, without a prefix', async () => {

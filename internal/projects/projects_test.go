@@ -11,6 +11,7 @@ import (
 
 	"waypoint/internal/config"
 	"waypoint/internal/domain"
+	"waypoint/internal/storage"
 	"waypoint/internal/storage/sqlite"
 )
 
@@ -262,5 +263,66 @@ func TestValidateAcceptsSQLiteEntry(t *testing.T) {
 	missing := config.ProjectRef{Name: "L", Storage: "sqlite", Path: filepath.Join(t.TempDir(), "gone.db")}
 	if err := Validate(missing); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("Validate of a missing database = %v, want domain.ErrNotFound", err)
+	}
+}
+
+func TestAddDefaultsToSQLite(t *testing.T) {
+	cfgPath, env := sandbox(t)
+	ref, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "Home Reno", Prefix: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Storage != "sqlite" || filepath.Base(ref.Path) != "home-reno.db" {
+		t.Fatalf("ref = %+v, want sqlite storage in home-reno.db", ref)
+	}
+}
+
+func TestAddMarkdownStillWorks(t *testing.T) {
+	cfgPath, env := sandbox(t)
+	ref, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "Home Reno", Prefix: "T", Storage: "markdown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Storage != "markdown" || filepath.Base(ref.Path) != "home-reno.md" {
+		t.Fatalf("ref = %+v, want markdown storage in home-reno.md", ref)
+	}
+}
+
+func TestStorageAndPathMustAgree(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "old.md")
+	if _, err := storage.Create(config.ProjectRef{Name: "O", Storage: "markdown", Path: existing}, domain.NewBoard("O", "T").Settings); err != nil {
+		t.Fatal(err)
+	}
+	for name, o := range map[string]AddOptions{
+		"markdown asked, .db path":      {Path: filepath.Join(dir, "x.db"), Storage: "markdown"},
+		"sqlite asked, .md path":        {Path: filepath.Join(dir, "x.md"), Storage: "sqlite"},
+		"sqlite asked, markdown file":   {Path: existing, Storage: "sqlite"},
+		"a storage that does not exist": {Path: filepath.Join(dir, "y.db"), Storage: "mongo"},
+	} {
+		cfgPath, env := sandbox(t)
+		o.Name, o.Prefix = "N", "T"
+		if _, err := Add(context.Background(), cfgPath, env, o); !errors.Is(err, domain.ErrInvalid) {
+			t.Errorf("%s: %v, want domain.ErrInvalid", name, err)
+		}
+		if _, err := os.Stat(cfgPath); err == nil {
+			t.Errorf("%s: a refused add wrote the config", name)
+		}
+	}
+	for _, name := range []string{"x.db", "x.md", "y.db"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			t.Errorf("%s was created by a refused add", name)
+		}
+	}
+}
+
+func TestAddPathWithoutExtensionFollowsStorage(t *testing.T) {
+	dir := t.TempDir()
+	for storageWanted, want := range map[string]string{"": "sqlite", "markdown": "markdown", "sqlite": "sqlite"} {
+		cfgPath, env := sandbox(t)
+		ref, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "N", Prefix: "T", Storage: storageWanted, Path: filepath.Join(dir, "board-"+want+storageWanted)})
+		if err != nil || ref.Storage != want {
+			t.Errorf("storage %q: %+v, %v; want %s", storageWanted, ref, err, want)
+		}
 	}
 }

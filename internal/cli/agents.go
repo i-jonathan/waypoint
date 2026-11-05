@@ -24,11 +24,11 @@ This project's board is managed by Waypoint. Prefer the CLI over editing the boa
 - Finish a card: ` + "`waypoint done <ID>`" + `
 - ` + "`waypoint ls --json`" + ` and ` + "`waypoint show <ID> --json`" + ` for reading all cards and one card.
 
-If you edit the board file directly, follow the format printed by "waypoint help format"; a card heading without an id gets one automatically.
+If the board is a Markdown file such as BOARD.md and you edit it directly, follow the format printed by "waypoint help format"; a card heading without an id gets one automatically. Never edit a SQLite board (a .db file) directly: use the CLI.
 
 Run waypoint from inside this project's folder, or pass --project NAME. "waypoint project ls" shows the board file's path.
 
-Groups, priorities and columns must already exist on the board: read them from the board file's front matter before using them.
+Groups, priorities and columns must already exist on the board. On a Markdown board, read them from the file's front matter before using them.
 `
 
 // cmdAgents prints the AGENTS.md snippet. It needs no project and no config.

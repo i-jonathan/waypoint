@@ -246,32 +246,58 @@ func (e noProjectError) Error() string { return e.msg }
 
 func (noProjectError) Unwrap() error { return domain.ErrNotFound }
 
-// unregisteredHere reports whether the working directory holds a Waypoint board
-// named exactly BOARD.md that is not registered. Any other file or folder of
-// that name is not Waypoint's, and says nothing about which project this is.
-func (r *runner) unregisteredHere(cfg *config.Config) bool {
+// unregisteredHere returns the name of an unregistered Waypoint board in the
+// working directory, or "". Only the two names "waypoint init" makes count:
+// BOARD.md and waypoint.db. Any other file or folder of those names is not
+// Waypoint's, and says nothing about which project this is.
+func (r *runner) unregisteredHere(cfg *config.Config) string {
 	// The directory listing has the real name; on a case-insensitive disk a
 	// Stat would also find board.md.
 	entries, err := os.ReadDir(r.env.Cwd)
-	if err != nil || !slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Name() == initBoardFile }) {
+	if err != nil {
+		return ""
+	}
+	for _, name := range []string{initMarkdownFile, initSQLiteFile} {
+		if !slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Name() == name }) {
+			continue
+		}
+		here := filepath.Join(r.env.Cwd, name)
+		if info, err := os.Stat(here); err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if !isWaypointBoard(r.ctx, here) {
+			continue
+		}
+		if _, registered := projects.RegisteredAt(cfg, here); !registered {
+			return name
+		}
+	}
+	return ""
+}
+
+// isWaypointBoard says whether the file at path is a Waypoint board of either
+// storage. It reads and never writes.
+func isWaypointBoard(ctx context.Context, path string) bool {
+	kind, err := storage.Sniff(path)
+	if err != nil {
 		return false
 	}
-	here := filepath.Join(r.env.Cwd, initBoardFile)
-	if info, err := os.Stat(here); err != nil || !info.Mode().IsRegular() {
+	if kind == "markdown" {
+		data, err := os.ReadFile(path)
+		return err == nil && markdown.IsBoard(data)
+	}
+	repo, err := storage.Open(config.ProjectRef{Name: "here", Storage: kind, Path: path})
+	if err != nil {
 		return false
 	}
-	data, err := os.ReadFile(here)
-	if err != nil || !markdown.IsBoard(data) {
-		return false
-	}
-	_, registered := projects.RegisteredAt(cfg, here)
-	return !registered
+	_, _, err = repo.Load(ctx)
+	return err == nil
 }
 
 // resolveProject picks the project a command acts on: name (the --project
 // value) if given, else $WAYPOINT_PROJECT, else the project found from the
 // working directory (see config.FindByDir). An unregistered Waypoint board at
-// ./BOARD.md stops that search, because a board in the working directory is the
+// ./BOARD.md or ./waypoint.db stops that search, because a board in the working directory is the
 // one the user means, whatever is registered above it. Anything else is an error,
 // so a card never lands on a board the user did not mean. A named project that
 // does not exist is an error, not a fall-through.
@@ -287,8 +313,12 @@ func (r *runner) resolveProject(cfg *config.Config, name string) (config.Project
 		return ref, nil
 	}
 	if r.env.Cwd != "" {
-		if r.unregisteredHere(cfg) {
-			return config.ProjectRef{}, noProjectError{initBoardFile + ` here isn't registered; run "waypoint init"`}
+		if name := r.unregisteredHere(cfg); name != "" {
+			hint := `waypoint init`
+			if name == initMarkdownFile {
+				hint += ` --storage markdown`
+			}
+			return config.ProjectRef{}, noProjectError{name + ` here isn't registered; run "` + hint + `"`}
 		}
 		if ref, ok := cfg.FindByDir(r.env.Cwd); ok {
 			return ref, nil

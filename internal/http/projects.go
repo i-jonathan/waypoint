@@ -67,6 +67,9 @@ func (a *api) createProject(w http.ResponseWriter, r *http.Request) error {
 		Name   string `json:"name"`
 		Path   string `json:"path"`
 		Prefix string `json:"prefix"`
+		// Storage is "sqlite" (the default) or "markdown". It is checked against an
+		// existing file, which must match.
+		Storage string `json:"storage"`
 		// Existing means open a board that is already there, so a mistyped path is an error
 		// rather than a new file.
 		Existing bool `json:"existing"`
@@ -92,7 +95,7 @@ func (a *api) createProject(w http.ResponseWriter, r *http.Request) error {
 		in.Prefix = projects.DefaultPrefix
 	}
 	ref, err := projects.Add(r.Context(), a.d.ConfigPath, a.d.Getenv, projects.AddOptions{
-		Name: in.Name, Path: in.Path, Prefix: in.Prefix,
+		Name: in.Name, Path: in.Path, Prefix: in.Prefix, Storage: in.Storage,
 	})
 	if err != nil {
 		return err

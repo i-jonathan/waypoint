@@ -713,7 +713,7 @@ func TestProjectAddAndRemove(t *testing.T) {
 
 	// Default path goes under data_dir, which is the sandbox's, not the real one.
 	f.do("POST", "/api/projects", map[string]any{"name": "Delta Force"}).want(201).decode(&p)
-	assertEq(t, p.Path, filepath.Join(f.config().DataDir, "delta-force.md"))
+	assertEq(t, p.Path, filepath.Join(f.config().DataDir, "delta-force.db"))
 
 	// The same file, even through a symlink, and a taken name are refused.
 	link := filepath.Join(f.dir, "link.md")
@@ -1221,4 +1221,18 @@ func TestBusyBoardIsA503(t *testing.T) {
 	assertEq(t, rec.Code, 503)
 	assertContains(t, rec.Body.String(), `"code":"busy"`)
 	assertContains(t, rec.Body.String(), "try again")
+}
+
+func TestCreateProjectStorageChoice(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	var made projectJSON
+	f.do("POST", "/api/projects", map[string]any{"name": "Default"}).want(201).decode(&made)
+	assertEq(t, made.Storage, "sqlite")
+	assertEq(t, strings.HasSuffix(made.Path, ".db"), true)
+	f.do("POST", "/api/projects", map[string]any{"name": "Plain", "storage": "markdown"}).want(201).decode(&made)
+	assertEq(t, made.Storage, "markdown")
+	assertEq(t, strings.HasSuffix(made.Path, ".md"), true)
+	f.do("POST", "/api/projects", map[string]any{"name": "Clash", "storage": "markdown", "path": filepath.Join(f.dir, "c.db")}).wantCode(422, "invalid")
+	f.do("POST", "/api/projects", map[string]any{"name": "Odd", "storage": "mongo"}).wantCode(422, "invalid")
+	f.do("GET", "/api/projects/Default/board", nil).want(200)
 }

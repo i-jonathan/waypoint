@@ -176,9 +176,11 @@ export interface GlobalSettingsChange {
 
 export interface NewProject {
   name: string;
-  /** Absolute, ending in .md or .markdown. Omit to let the server choose. */
+  /** Absolute, ending in .db, .sqlite, .sqlite3, .md or .markdown. Omit to let the server choose. */
   path?: string;
   prefix?: string;
+  /** What to create. The server defaults to sqlite. An existing file is what it is. */
+  storage?: 'sqlite' | 'markdown';
   /** Open a board that is already there: a missing file is refused, not created. */
   existing?: boolean;
 }

@@ -134,3 +134,23 @@ test('five hidden tabs leave a connection free for writes', async ({ context, pa
   await page.keyboard.press('Shift+ArrowRight');
   await expect.poll(() => section(wp.read(), 'In progress'), { timeout: 3000 }).toContain('Many tabs');
 });
+
+test('a project made from the dialog with the defaults is a working SQLite board', async ({ page, wp }) => {
+  await page.goto(wp.boardURL);
+  await page.getByRole('button', { name: /Switch project/ }).click();
+  await page.getByRole('menuitem', { name: 'New project' }).click();
+
+  const dialog = page.getByRole('dialog', { name: 'New project' });
+  await expect(dialog.getByRole('radio', { name: /SQLite database/ })).toBeChecked();
+  await dialog.getByLabel('Name').fill('Lite');
+  await dialog.getByRole('button', { name: 'Create project' }).click();
+
+  await expect(page).toHaveURL(/\/p\/Lite/);
+  await page.keyboard.press('n');
+  await page.keyboard.type('Made in a database');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('[data-card-id="T-1"]')).toBeVisible();
+
+  expect(await wp.cli('project', 'ls')).toMatch(/Lite\s+sqlite\s+\S+lite\.db/);
+  expect(await wp.cli('ls', '--project', 'Lite')).toContain('Made in a database');
+});
