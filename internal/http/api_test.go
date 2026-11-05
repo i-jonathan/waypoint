@@ -676,6 +676,27 @@ func TestGlobalSettingsValidation(t *testing.T) {
 	f.do("PUT", "/api/settings", base(func(m map[string]any) { m["tls"] = "on" })).want(200)
 }
 
+func TestOpenExistingFile(t *testing.T) {
+	f := newFixture(t, "Alpha")
+
+	// A typed path that isn't there is refused, and nothing appears on disk or in the registry.
+	missing := filepath.Join(f.dir, "nodir", "x.md")
+	e := f.do("POST", "/api/projects", map[string]any{"name": "Typo", "path": missing, "existing": true}).wantCode(422, "invalid")
+	assertContains(t, e.Error, "no file at")
+	if _, err := os.Stat(filepath.Dir(missing)); err == nil {
+		t.Fatal("the folder was created")
+	}
+	assertEq(t, len(f.config().Projects), 1)
+
+	f.do("POST", "/api/projects", map[string]any{"name": "NoPath", "existing": true}).wantCode(422, "invalid")
+
+	// A real board opens.
+	real := filepath.Join(f.dir, "real.md")
+	f.do("POST", "/api/projects", map[string]any{"name": "Real", "path": real, "prefix": "R"}).want(201)
+	f.do("DELETE", "/api/projects/Real", nil).want(204)
+	f.do("POST", "/api/projects", map[string]any{"name": "Real", "path": real, "existing": true}).want(201)
+}
+
 func TestProjectAddAndRemove(t *testing.T) {
 	f := newFixture(t, "Alpha")
 	events, cancel := f.broker.Subscribe()

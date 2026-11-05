@@ -179,6 +179,8 @@ export interface NewProject {
   /** Absolute, ending in .md or .markdown. Omit to let the server choose. */
   path?: string;
   prefix?: string;
+  /** Open a board that is already there: a missing file is refused, not created. */
+  existing?: boolean;
 }
 
 export interface NewCard {

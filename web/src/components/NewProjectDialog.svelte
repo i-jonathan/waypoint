@@ -110,7 +110,7 @@
     const body: NewProject =
       tab === 'create'
         ? { name: name.trim(), ...(location.trim() !== '' ? { path: location.trim() } : {}), prefix }
-        : { name: openName.trim(), path: path.trim() };
+        : { name: openName.trim(), path: path.trim(), existing: true };
     working = true;
     try {
       const made = await client.createProject(body);

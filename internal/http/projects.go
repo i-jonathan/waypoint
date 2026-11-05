@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -65,6 +67,9 @@ func (a *api) createProject(w http.ResponseWriter, r *http.Request) error {
 		Name   string `json:"name"`
 		Path   string `json:"path"`
 		Prefix string `json:"prefix"`
+		// Existing means open a board that is already there, so a mistyped path is an error
+		// rather than a new file.
+		Existing bool `json:"existing"`
 	}
 	if err := decodeBody(w, r, &in, false); err != nil {
 		return err
@@ -74,6 +79,14 @@ func (a *api) createProject(w http.ResponseWriter, r *http.Request) error {
 	}
 	if in.Path != "" && !isMarkdownFile(in.Path) {
 		return invalidRequest("path must end in .md or .markdown")
+	}
+	if in.Existing {
+		if in.Path == "" {
+			return invalidRequest("path is required to open a file")
+		}
+		if _, err := os.Stat(in.Path); errors.Is(err, os.ErrNotExist) {
+			return invalidRequest("no file at " + in.Path)
+		}
 	}
 	if in.Prefix == "" {
 		in.Prefix = projects.DefaultPrefix
