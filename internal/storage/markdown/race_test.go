@@ -308,3 +308,26 @@ func TestRestoreStillWritesTheArchiveTwice(t *testing.T) {
 		t.Fatalf("%s is not on the board:\n%s", ids[0], got)
 	}
 }
+
+// A file with nothing to install is not renamed, so a change to it while the
+// other file is written cannot be a lost write, and must not fail the save.
+func TestSaveDoesNotRetryOverAFileItDoesNotWrite(t *testing.T) {
+	r, _, board, archive := boardWithArchive(t)
+	b := mustLoad(t, r)
+	b.Archived[0].Title = "Finished, renamed"
+	hook, tries := editOnce(board, func() { inPlaceEdit(t, board, "name: Contract", "name: By hand") })
+	markdown.SetBeforeRename(r, hook)
+
+	if err := r.Save(context.Background(), b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if *tries != 1 {
+		t.Fatalf("the board was reached %d times, want 1", *tries)
+	}
+	if !strings.Contains(readFile(t, archive), "Finished, renamed") {
+		t.Fatal("the archive was not written")
+	}
+	if !strings.Contains(readFile(t, board), "name: By hand") {
+		t.Fatal("the edit of the board was lost")
+	}
+}

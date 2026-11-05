@@ -302,8 +302,12 @@ func (r *Repo) commit(writes ...fileWrite) error {
 		if r.beforeRename != nil {
 			r.beforeRename(f.path)
 		}
-		if err := r.checkUnchanged(); err != nil {
-			return err
+		// A file with nothing to rename is not at risk of losing a write, and a
+		// change to it must not fail an operation whose other files are done.
+		if f.tmp != "" {
+			if err := r.checkUnchanged(); err != nil {
+				return err
+			}
 		}
 		if err := f.install(); err != nil {
 			return fmt.Errorf("write %s: %w", writes[i].name, err)
