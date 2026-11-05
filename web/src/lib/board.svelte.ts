@@ -1,5 +1,5 @@
 import { ApiError, type api } from './api';
-import { placeCard, placeOf, type Place } from './cardOrder';
+import { anchorsIn, placeCard, placeOf, type Place } from './cardOrder';
 import { toggleItem } from './checklist';
 import { toasts } from './events.svelte';
 import type {
@@ -316,7 +316,10 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
 
     const prev = view ? placeOf(view.cards, id) : null;
     if (prev) {
-      setCards((cards) => placeCard(cards, id, { column, after: null, before: null, index }));
+      // The index is in the whole column. A filtered view shows only some of it, so
+      // each list is told which of its own cards the card goes between.
+      const whole = (baseline ?? view)!.cards;
+      setCards((cards) => placeCard(cards, id, anchorsIn(cards, whole, id, column, index)));
     }
     const entry: PendingMove | null = prev ? { id, prev } : null;
     if (entry) moves.push(entry);

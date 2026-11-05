@@ -249,17 +249,18 @@ describe('navigation and landmarks', () => {
 
   it('shows the board at /, which is the first project', async () => {
     mountApp([reno, garden], '/');
-    const list = await screen.findByRole('list', { name: 'Columns' });
-    await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(3));
+    const board = await screen.findByRole('group', { name: 'Board' });
+    await waitFor(() => expect(within(board).getAllByRole('heading', { level: 2 })).toHaveLength(3));
     const nav = screen.getByRole('navigation', { name: 'Project' });
     expect(within(nav).getByRole('link', { name: /Board/ })).toHaveAttribute('aria-current', 'page');
   });
 
-  it('lists the columns as a stand-in for the board', async () => {
+  it('shows the columns of the board, each with its cards', async () => {
     mountApp();
-    const list = await screen.findByRole('list', { name: 'Columns' });
-    await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(3));
-    expect(list).toHaveTextContent('In progress');
+    const board = await screen.findByRole('group', { name: 'Board' });
+    await waitFor(() => expect(within(board).getAllByRole('heading', { level: 2 })).toHaveLength(3));
+    expect(board).toHaveTextContent('In progress');
+    expect(await within(board).findAllByRole('button', { name: /^H-\d Card H-\d/ })).toHaveLength(4);
   });
 
   it('has icon-only buttons with a name and a title', async () => {

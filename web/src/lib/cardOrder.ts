@@ -51,3 +51,33 @@ export function placeCard(cards: readonly CardView[], id: string, to: Place): Ca
 
   return [...rest.slice(0, at), { ...card, column: to.column }, ...rest.slice(at)];
 }
+
+/**
+ * Where a card goes in `cards`, a list that may show only some of the board,
+ * given an index in `whole`, the board with every card. The index counts the
+ * column of `whole` without the card, as the server does. The place is
+ * described by the nearest cards that `cards` shows, so a filtered view puts
+ * the card where the whole board does, not at the same index among fewer cards.
+ */
+export function anchorsIn(cards: readonly CardView[], whole: readonly CardView[], id: string, column: string, index: number): Place {
+  const shown = new Set<string>();
+  for (const c of cards) if (c.column === column && c.id !== id) shown.add(c.id);
+  const order = whole.filter((c) => !c.archived && c.column === column && c.id !== id).map((c) => c.id);
+  const at = index < 0 ? order.length : Math.min(index, order.length);
+  let after: string | null = null;
+  let seen = 0;
+  for (let i = 0; i < at; i++) {
+    if (shown.has(order[i]!)) {
+      after = order[i]!;
+      seen++;
+    }
+  }
+  let before: string | null = null;
+  for (let i = at; i < order.length; i++) {
+    if (shown.has(order[i]!)) {
+      before = order[i]!;
+      break;
+    }
+  }
+  return { column, after, before, index: seen };
+}

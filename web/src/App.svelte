@@ -4,6 +4,7 @@
   import MapPin from 'phosphor-svelte/lib/MapPin';
   import PlugsConnected from 'phosphor-svelte/lib/PlugsConnected';
   import Question from 'phosphor-svelte/lib/Question';
+  import Board from './components/Board.svelte';
   import Notice from './components/Notice.svelte';
   import ParseBanner from './components/ParseBanner.svelte';
   import Sidebar from './components/Sidebar.svelte';
@@ -116,7 +117,7 @@
     store?.setQuery(toggleGroupTerm(query, name));
   }
 
-  // ----- Swimlane mode (the board is built in the next task; this holds the choice) -----
+  // ----- Swimlane mode -----
   let lane = $state<Swimlane>('none');
   const laneSetting = $derived(store?.appearance?.swimlane ?? 'none');
   $effect(() => {
@@ -162,16 +163,8 @@
     navigate('/settings');
   }
   function newCard() {
-    // The card panel arrives with the board.
+    // Quick add and the card panel arrive with the next task.
   }
-
-  const counts = $derived.by(() => {
-    const v = store?.view;
-    if (!v) return new Map<string, number>();
-    const m = new Map<string, number>();
-    for (const c of v.cards) m.set(c.column, (m.get(c.column) ?? 0) + 1);
-    return m;
-  });
 
   const viewTitle: Partial<Record<string, string>> = { next: 'Next up', blocked: 'Blocked', archive: 'Archive' };
 </script>
@@ -244,15 +237,7 @@
         <h1 class="sr-only">{current.name}</h1>
         {#if store.parseError}<ParseBanner error={store.parseError} />{/if}
         {#if route.name === 'home' || route.name === 'board' || route.name === 'card'}
-          <!-- A stand-in for the board, which is built in the next task. -->
-          <ul class="cols" aria-label="Columns">
-            {#each store.view?.settings.columns ?? [] as col (col.name)}
-              <li>
-                <span class="sign colsign">{col.name}</span>
-                <span class="mono count">{counts.get(col.name) ?? 0}</span>
-              </li>
-            {/each}
-          </ul>
+          <Board {store} project={current.name} {lane} onAddCard={newCard} />
         {:else}
           <h1 class="page">{viewTitle[route.name] ?? ''}</h1>
         {/if}
@@ -306,6 +291,10 @@
     gap: 16px;
     overflow-y: auto;
     overflow-x: hidden;
+    /* The board scrolls sideways inside this, and its columns need a little room for their
+       focus rings and hard edges: the box is widened by 8px each side and padded back. */
+    margin-inline: -8px;
+    padding-inline: 8px;
   }
 
   main:focus {
@@ -339,34 +328,6 @@
   .where {
     margin-top: 6px;
     font-size: 12px;
-  }
-
-  .cols {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: var(--col-gap);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .cols li {
-    display: flex;
-    align-items: center;
-    padding: 7px 11px 6px;
-    border-radius: var(--r-sign);
-    background: var(--head);
-    color: var(--headtext);
-  }
-
-  .colsign {
-    font-size: 22px;
-  }
-
-  .count {
-    margin-left: auto;
-    font-size: 11px;
-    opacity: 0.75;
   }
 
   @media (min-width: 720px) {
