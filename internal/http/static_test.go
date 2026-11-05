@@ -81,14 +81,29 @@ func TestStaticAssets(t *testing.T) {
 	}
 }
 
-func TestMissingFileWithExtensionIs404(t *testing.T) {
+// A path is a file only if dist has it. A route may hold a dot, because a project
+// name may: a hard reload there has to get the app.
+func TestAnythingNotInDistIsARoute(t *testing.T) {
 	h := UI(uiFS())
-	for _, p := range []string{"/assets/missing.js", "/nope.png", "/assets"} {
+	for _, p := range []string{"/p/my.project", "/p/v1.2/card/T-1", "/p/index.html", "/assets", "/assets/missing.js", "/nope.png"} {
 		rec := getUI(t, h, "GET", p)
-		wantIndex := p == "/assets" // no extension: a client-side route
-		if wantIndex != (rec.Code == 200) {
-			t.Fatalf("%s: status %d", p, rec.Code)
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), "INDEX") {
+			t.Fatalf("%s: status %d body %q", p, rec.Code, rec.Body.String())
 		}
+		if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+			t.Fatalf("%s: Cache-Control = %q", p, got)
+		}
+	}
+}
+
+func TestAPIPathsAreNeverARoute(t *testing.T) {
+	h := uiHandler(t, uiFS())
+	req := httptest.NewRequest("GET", "/api/no.such.thing", nil)
+	req.Host = "127.0.0.1:4747"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 404 || strings.Contains(rec.Body.String(), "INDEX") {
+		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
 	}
 }
 

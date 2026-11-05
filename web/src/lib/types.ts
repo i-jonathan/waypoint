@@ -3,6 +3,18 @@
 // internal/config/appearance.go and internal/http. tests/contract.test.ts
 // checks these types against real server output.
 
+/** The body of every error response. */
+export interface ApiErrorBody {
+  error: string;
+  code: string;
+  /** The line of the board file a `parse` error points at. */
+  line?: number;
+  /** A `parse` error's text alone, with no path or line prefix. */
+  message?: string;
+  /** On a 409: the card, or the board for a settings change. */
+  current?: CardView | BoardView;
+}
+
 /** An extra card field that the board file keeps verbatim, in its original order. */
 export interface ExtraField {
   key: string;
@@ -158,7 +170,8 @@ export interface GlobalSettingsChange {
   port?: number;
   open_browser?: boolean;
   tls?: TlsMode;
-  appearance?: Appearance;
+  /** A field left out is kept; an empty one goes back to inheriting. */
+  appearance?: Partial<Appearance>;
 }
 
 export interface NewProject {

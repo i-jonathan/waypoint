@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -1067,4 +1069,132 @@ func TestDeleteAnArchivedCardWithAStaleHash(t *testing.T) {
 	}
 	f.do("DELETE", "/api/projects/Alpha/cards/T-1", map[string]any{"if_match": c.Hash}).wantCode(409, "conflict")
 	assertContains(t, readFile(t, path), "edited")
+}
+
+const wantCSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+func TestSecurityHeadersOnEveryResponse(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	foreign := f.request("GET", "/api/projects", nil)
+	foreign.Host = "evil.example"
+	unmarked := f.request("POST", "/api/projects", map[string]any{})
+	unmarked.Header.Del("X-Waypoint")
+	for name, r := range map[string]reply{
+		"api":      f.do("GET", "/api/projects", nil),
+		"error":    f.do("GET", "/api/nope", nil),
+		"foreign":  f.send(foreign),
+		"unmarked": f.send(unmarked),
+	} {
+		assertEq(t, r.header.Get("X-Frame-Options"), "DENY")
+		if got := r.header.Get("Content-Security-Policy"); got != wantCSP {
+			t.Fatalf("%s: CSP = %q", name, got)
+		}
+	}
+}
+
+func TestColdReadIsNotHeldByALock(t *testing.T) {
+	defer func(d time.Duration) { autoArchiveWait = d }(autoArchiveWait)
+	autoArchiveWait = 50 * time.Millisecond
+
+	f := newFixture(t)
+	f.addBoard("Alpha", func(s *domain.Settings) {
+		s.Archive = domain.ArchiveSettings{Mode: domain.ArchiveAuto, AfterDays: 1}
+	})
+	old := f.service("Alpha", fixedNow.Add(-72*time.Hour))
+	c, err := old.CreateCard(context.Background(), domain.NewCard{Title: "Old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Done(context.Background(), c.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	unlock, err := markdown.New(f.boardPath("Alpha")).Lock(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	began := time.Now()
+	assertEq(t, len(f.board("Alpha").Board.Cards), 1)
+	if took := time.Since(began); took > time.Second {
+		t.Fatalf("the read waited %v for the lock", took)
+	}
+	if err := unlock(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The archive it could not do happens on the next read.
+	assertEq(t, len(f.board("Alpha").Board.Cards), 0)
+}
+
+func TestConfigTypoIsExplainedOnEveryRoute(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	if err := os.WriteFile(f.cfgPath, []byte("port: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []reply{
+		f.do("GET", "/api/projects", nil),
+		f.do("GET", "/api/settings", nil),
+		f.do("GET", "/api/projects/Alpha/board", nil),
+		f.do("PUT", "/api/settings", map[string]any{"open_browser": false}),
+	} {
+		body := r.wantCode(500, "config")
+		assertContains(t, body.Error, "yaml")
+		assertNotContains(t, body.Error, f.cfgPath)
+	}
+}
+
+func TestSettingsRefusePortsTheHostCheckCannotServe(t *testing.T) {
+	f := newFixture(t)
+	for _, port := range []int{80, 443} {
+		f.do("PUT", "/api/settings", map[string]any{"port": port}).wantCode(422, "invalid")
+	}
+	assertEq(t, f.config().Port, f.port)
+}
+
+func TestSettingsMergeAPartialAppearance(t *testing.T) {
+	f := newFixture(t)
+	f.do("PUT", "/api/settings", map[string]any{"appearance": map[string]any{"theme": "dark", "accent": "teal"}}).want(200)
+	f.do("PUT", "/api/settings", map[string]any{"appearance": map[string]any{"density": "compact"}}).want(200)
+	got := f.config().Appearance
+	assertEq(t, got, domain.Appearance{Theme: "dark", Accent: "teal", Density: "compact"})
+
+	// An empty value is sent on purpose: it goes back to inheriting.
+	f.do("PUT", "/api/settings", map[string]any{"appearance": map[string]any{"accent": ""}}).want(200)
+	assertEq(t, f.config().Appearance, domain.Appearance{Theme: "dark", Density: "compact"})
+
+	f.do("PUT", "/api/settings", map[string]any{"appearance": map[string]any{"theme": "neon"}}).wantCode(422, "invalid")
+	assertEq(t, f.config().Appearance.Theme, "dark")
+}
+
+func TestParseErrorCarriesABareMessage(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	f.newCard("Alpha", map[string]any{"title": "Card", "column": "Todo"})
+	path := f.boardPath("Alpha")
+	if err := os.WriteFile(path, []byte(strings.Replace(readFile(t, path), "## Todo", "stray text\n\n## Todo", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := f.do("GET", "/api/projects/Alpha/board", nil)
+	r.wantCode(423, "parse")
+	var body struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+		Line    int    `json:"line"`
+	}
+	r.decode(&body)
+	assertContains(t, body.Error, path)
+	assertContains(t, body.Error, "line ")
+	if body.Message == "" || strings.Contains(body.Message, path) || strings.HasPrefix(body.Message, "line ") {
+		t.Fatalf("message = %q", body.Message)
+	}
+	assertContains(t, body.Error, body.Message)
+}
+
+func TestBusyBoardIsA503(t *testing.T) {
+	f := newFixture(t)
+	a := &api{log: slog.New(slog.DiscardHandler)}
+	rec := httptest.NewRecorder()
+	a.writeError(rec, f.request("GET", "/", nil), fmt.Errorf("%w: try again", app.ErrChangedDuringWrite))
+	assertEq(t, rec.Code, 503)
+	assertContains(t, rec.Body.String(), `"code":"busy"`)
+	assertContains(t, rec.Body.String(), "try again")
 }

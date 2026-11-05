@@ -1,12 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"waypoint/internal/app"
 	"waypoint/internal/config"
@@ -26,6 +28,10 @@ type Deps struct {
 	UI         fs.FS               // the built web UI, served for every path outside /api/; nil serves none
 	Logger     *slog.Logger        // nil means slog.Default
 }
+
+// autoArchiveWait limits how long a read waits to archive what is due. A
+// variable only so a test can shorten it.
+var autoArchiveWait = 2 * time.Second
 
 // api holds what the handlers share.
 type api struct {
@@ -129,7 +135,8 @@ func (a *api) changed(p project) { a.publish(Event{Type: "changed", Project: p.r
 
 // autoArchiveOnce archives the cards that are due, the first time a board is
 // opened in this server run. A failure is logged and does not fail the read
-// that triggered it; it is tried again on the next open.
+// that triggered it; it is tried again on the next open. That includes waiting
+// too long for the board's lock: a read must not hang on a slow writer.
 func (a *api) autoArchiveOnce(r *http.Request, p project) {
 	a.mu.Lock()
 	done := a.opened[p.ref.Path]
@@ -138,7 +145,9 @@ func (a *api) autoArchiveOnce(r *http.Request, p project) {
 	if done {
 		return
 	}
-	ids, err := p.svc.AutoArchive(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), autoArchiveWait)
+	defer cancel()
+	ids, err := p.svc.AutoArchive(ctx)
 	if err != nil {
 		a.mu.Lock()
 		delete(a.opened, p.ref.Path)

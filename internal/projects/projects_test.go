@@ -134,3 +134,18 @@ func TestValidateKinds(t *testing.T) {
 		t.Fatalf("missing: %v", err)
 	}
 }
+
+func TestAddRefusesDotNames(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.yaml")
+	env := func(k string) string { return map[string]string{"HOME": dir}[k] }
+	for _, name := range []string{".", "..", " .. "} {
+		_, err := Add(context.Background(), cfg, env, AddOptions{Name: name, Path: filepath.Join(dir, "b.md"), Prefix: "T"})
+		if !errors.Is(err, domain.ErrInvalid) {
+			t.Fatalf("%q: got %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "b.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a board was created: %v", err)
+	}
+}

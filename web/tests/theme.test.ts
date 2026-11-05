@@ -88,11 +88,17 @@ describe('the saved look', () => {
   });
 });
 
-// index.html paints the saved look before first paint with a small inline
-// script. It must land on the same page as applyLook.
-describe('the inline script in index.html', () => {
+// public/look.js paints the saved look before first paint. It must land on the
+// same page as applyLook. It is a file because the Content-Security-Policy allows
+// no inline script.
+describe('the look script', () => {
   const html = readFileSync(join(process.cwd(), 'index.html'), 'utf8');
-  const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
+  const script = readFileSync(join(process.cwd(), 'public/look.js'), 'utf8');
+
+  it('is loaded by index.html, which has no inline script', () => {
+    expect(html).toContain('<script src="/look.js"></script>');
+    expect(html).not.toMatch(/<script>/);
+  });
 
   function paint(): HTMLElement {
     const root = document.documentElement;

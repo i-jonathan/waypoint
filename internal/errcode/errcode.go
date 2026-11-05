@@ -7,18 +7,25 @@ import (
 	"errors"
 
 	"waypoint/internal/app"
+	"waypoint/internal/config"
 	"waypoint/internal/domain"
 	"waypoint/internal/storage/markdown"
 )
 
 // Code names an error: one of not_found, unknown_column, move_not_allowed,
 // wip_limit, conflict, invalid, parse, busy (the board file would not hold still
-// long enough to save), or error for anything else.
+// long enough to save), config (the config file has a mistake), or error for
+// anything else.
 func Code(err error) string {
-	var pe *markdown.ParseError
+	var (
+		pe *markdown.ParseError
+		le *config.LoadError
+	)
 	switch {
 	case errors.As(err, &pe), errors.Is(err, markdown.ErrNotABoard):
 		return "parse"
+	case errors.As(err, &le):
+		return "config"
 	case errors.Is(err, app.ErrChangedDuringWrite):
 		return "busy"
 	case errors.Is(err, domain.ErrNotFound):
@@ -46,4 +53,17 @@ func Line(err error) int {
 		return pe.Line
 	}
 	return 0
+}
+
+// Message is the text of a parse error with no path or line prefix, or "" if err
+// is not one.
+func Message(err error) string {
+	var pe *markdown.ParseError
+	switch {
+	case errors.As(err, &pe):
+		return pe.Msg
+	case errors.Is(err, markdown.ErrNotABoard):
+		return markdown.ErrNotABoard.Error()
+	}
+	return ""
 }

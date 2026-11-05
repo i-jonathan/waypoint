@@ -11,6 +11,8 @@ import type {
   ProjectSettingsChange,
 } from './types';
 
+type ApiErrorExtra = { line?: number; detail?: string; current?: CardView | BoardView };
+
 /**
  * A failed request. `status` is the HTTP status, or 0 when the server could not
  * be reached (code `network`). `code` is the API's error code (`not_found`,
@@ -22,18 +24,21 @@ export class ApiError extends Error {
   code: string;
   /** The line of the board file a `parse` error (423) points at. */
   line?: number;
+  /** A `parse` error's text alone, with no path or line prefix. */
+  detail?: string;
   /**
    * What a 409 carries to merge against: the card for a card change, the board
    * for a settings change.
    */
   current?: CardView | BoardView;
 
-  constructor(status: number, code: string, message: string, extra: { line?: number; current?: CardView | BoardView } = {}) {
+  constructor(status: number, code: string, message: string, extra: ApiErrorExtra = {}) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     if (extra.line !== undefined) this.line = extra.line;
+    if (extra.detail !== undefined) this.detail = extra.detail;
     if (extra.current !== undefined) this.current = extra.current;
   }
 }
@@ -55,8 +60,9 @@ function failure(status: number, statusText: string, body: unknown): ApiError {
   if (!isObject(body)) return new ApiError(status, 'error', fallback);
   const message = typeof body.error === 'string' && body.error !== '' ? body.error : fallback;
   const code = typeof body.code === 'string' && body.code !== '' ? body.code : 'error';
-  const extra: { line?: number; current?: CardView | BoardView } = {};
+  const extra: ApiErrorExtra = {};
   if (typeof body.line === 'number') extra.line = body.line;
+  if (typeof body.message === 'string' && body.message !== '') extra.detail = body.message;
   if (isObject(body.current)) extra.current = body.current as unknown as CardView | BoardView;
   return new ApiError(status, code, message, extra);
 }

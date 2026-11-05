@@ -606,6 +606,18 @@ describe('query', () => {
 describe('a board file that does not parse', () => {
   const parse = () => new ApiError(423, 'parse', 'line 12: expected a column', { line: 12 });
 
+  it('shows the bare message when the server sends one', async () => {
+    const { api, store } = await loaded();
+    api.board.mockRejectedValue(
+      new ApiError(423, 'parse', '/x/board.md: line 12: expected a column', { line: 12, detail: 'expected a column' }),
+    );
+    await store.refresh();
+    expect(store.parseError).toEqual({ line: 12, message: 'expected a column' });
+
+    const refused = await store.check('A', 1).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ status: 423, message: 'expected a column', line: 12 });
+  });
+
   it('sets parseError and read-only, and keeps the last good view', async () => {
     const { api, store } = await loaded();
     api.board.mockRejectedValue(parse());

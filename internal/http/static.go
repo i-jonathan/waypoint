@@ -44,10 +44,11 @@ const (
 	placeholderFile = "placeholder.html"
 )
 
-// UI serves a built single-page app from dist. A path with a file extension is
-// a file (404 when missing); any other path is a client-side route and gets
-// index.html. When index.html is absent (the UI was not built), the route gets
-// placeholder.html instead.
+// UI serves a built single-page app from dist. A path is a file only if dist has
+// that file. Anything else is a client-side route and gets index.html, because a
+// route can hold a dot: /p/my.project is a project page. When index.html is absent
+// (the UI was not built), the route gets placeholder.html instead. Paths under
+// /api/ never reach here: the API answers them itself.
 //
 // Files under /assets/ are content-hashed, so they are cached for a year; the
 // page that names them is never cached.
@@ -59,7 +60,7 @@ func UI(dist fs.FS) http.Handler {
 			return
 		}
 		name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
-		if name != "" && path.Ext(name) != "" {
+		if isFile(dist, name) {
 			serveFile(w, r, dist, name)
 			return
 		}
@@ -69,6 +70,14 @@ func UI(dist fs.FS) http.Handler {
 		}
 		serveFile(w, r, dist, placeholderFile)
 	})
+}
+
+func isFile(dist fs.FS, name string) bool {
+	if name == "" || !fs.ValidPath(name) {
+		return false
+	}
+	info, err := fs.Stat(dist, name)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func serveFile(w http.ResponseWriter, r *http.Request, dist fs.FS, name string) {

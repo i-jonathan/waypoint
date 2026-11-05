@@ -128,15 +128,67 @@ func (a *api) getSettings(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// putSettings changes the global config. A field the body leaves out is kept.
+// appearanceIn is an appearance change. A field left out is kept; an empty one
+// goes back to inheriting.
+type appearanceIn struct {
+	Theme    *string `json:"theme"`
+	Accent   *string `json:"accent"`
+	Density  *string `json:"density"`
+	Swimlane *string `json:"swimlane"`
+	Textures *string `json:"textures"`
+}
+
+// fields pairs each field of the change with its name and its place in a.
+func (in *appearanceIn) fields(a *domain.Appearance) []struct {
+	name string
+	from *string
+	to   *string
+} {
+	return []struct {
+		name string
+		from *string
+		to   *string
+	}{
+		{"theme", in.Theme, &a.Theme},
+		{"accent", in.Accent, &a.Accent},
+		{"density", in.Density, &a.Density},
+		{"swimlane", in.Swimlane, &a.Swimlane},
+		{"textures", in.Textures, &a.Textures},
+	}
+}
+
+// validate checks only the fields sent, so a typo in the file never blocks a
+// change to another field.
+func (in *appearanceIn) validate() error {
+	for _, f := range in.fields(&domain.Appearance{}) {
+		if f.from == nil {
+			continue
+		}
+		if err := domain.CheckAppearanceField(f.name, *f.from); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (in *appearanceIn) mergeInto(a *domain.Appearance) {
+	for _, f := range in.fields(a) {
+		if f.from != nil {
+			*f.to = *f.from
+		}
+	}
+}
+
+// putSettings changes the global config. A field the body leaves out is kept,
+// and that goes for each field of appearance too.
 // The registry and data_dir are not part of it. A new port or tls mode takes
 // effect when the server restarts, and the response says so.
 func (a *api) putSettings(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
-		Port        *int               `json:"port"`
-		OpenBrowser *bool              `json:"open_browser"`
-		TLS         *string            `json:"tls"`
-		Appearance  *domain.Appearance `json:"appearance"`
+		Port        *int          `json:"port"`
+		OpenBrowser *bool         `json:"open_browser"`
+		TLS         *string       `json:"tls"`
+		Appearance  *appearanceIn `json:"appearance"`
 	}
 	if err := decodeBody(w, r, &in, false); err != nil {
 		return err
@@ -144,11 +196,14 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) error {
 	if in.Port != nil && (*in.Port < 1 || *in.Port > 65535) {
 		return invalidRequest(fmt.Sprintf("port %d must be between 1 and 65535", *in.Port))
 	}
+	if in.Port != nil && (*in.Port == 80 || *in.Port == 443) {
+		return invalidRequest(fmt.Sprintf("port %d is not supported: browsers leave it out of the Host header, which Waypoint checks", *in.Port))
+	}
 	if in.TLS != nil && !slices.Contains([]string{"auto", "on", "off"}, *in.TLS) {
 		return invalidRequest(fmt.Sprintf("tls %q must be one of auto, on, off", *in.TLS))
 	}
 	if in.Appearance != nil {
-		if err := domain.ValidateAppearance(*in.Appearance); err != nil {
+		if err := in.Appearance.validate(); err != nil {
 			return err
 		}
 	}
@@ -166,7 +221,7 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) error {
 			cfg.TLS = *in.TLS
 		}
 		if in.Appearance != nil {
-			cfg.Appearance = *in.Appearance
+			in.Appearance.mergeInto(&cfg.Appearance)
 		}
 		out = globalJSON{
 			Port: cfg.Port, OpenBrowser: cfg.OpenBrowser, TLS: cfg.TLS, Appearance: cfg.Appearance,

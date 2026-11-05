@@ -64,6 +64,11 @@ function messageOf(e: unknown): string {
   return e instanceof Error && e.message !== '' ? e.message : 'Something went wrong';
 }
 
+function parseErrorOf(e: ApiError): ParseError {
+  const message = e.detail ?? e.message;
+  return e.line === undefined ? { message } : { line: e.line, message };
+}
+
 /** A move that has been shown but not yet confirmed. */
 interface PendingMove {
   id: string;
@@ -174,7 +179,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
         offline = true; // keep the view; the event stream's own status says the rest
       } else if (e instanceof ApiError && e.status === 423) {
         offline = false;
-        parseError = e.line === undefined ? { message: e.message } : { line: e.line, message: e.message };
+        parseError = parseErrorOf(e);
       } else if (!stale) {
         toasts.push(messageOf(e)); // once: the retries that follow stay quiet
       }
@@ -273,7 +278,7 @@ export function createBoardStore(client: BoardApi, project: string): BoardStore 
           onFail(e);
           const parse = e instanceof ApiError && e.status === 423;
           if (parse) {
-            parseError = e.line === undefined ? { message: e.message } : { line: e.line, message: e.message };
+            parseError = parseErrorOf(e);
           }
           if (!parse && !(e instanceof ApiError && e.status === 409 && e.current)) toasts.push(messageOf(e));
           stale = true;

@@ -8,16 +8,19 @@ import (
 	"net/http"
 
 	"waypoint/internal/app"
+	"waypoint/internal/config"
 	"waypoint/internal/errcode"
 	"waypoint/internal/storage"
 )
 
 // errorBody is the JSON shape of every error: the CLI's {"error","code","line"?}
-// plus, on a conflict, the current state to merge against.
+// plus, on a parse error, the text alone with no path or line prefix, for a
+// banner to show, and on a conflict the current state to merge against.
 type errorBody struct {
 	Error   string `json:"error"`
 	Code    string `json:"code"`
 	Line    int    `json:"line,omitempty"`
+	Message string `json:"message,omitempty"`
 	Current any    `json:"current,omitempty"`
 }
 
@@ -81,6 +84,7 @@ func (a *api) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		re  *requestError
 		ce  *app.ConflictError
 		sce *app.SettingsConflictError
+		le  *config.LoadError
 	)
 	switch {
 	case errors.As(err, &re):
@@ -92,6 +96,9 @@ func (a *api) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &sce):
 		a.writeJSON(w, r, http.StatusConflict, errorBody{Error: sce.Error(), Code: "conflict", Current: sce.Current})
 		return
+	case errors.As(err, &le): // the Detail, so the response holds no path of the server's own
+		a.writeJSON(w, r, http.StatusInternalServerError, errorBody{Error: "the config file has a mistake: " + le.Detail, Code: "config"})
+		return
 	case errors.Is(err, storage.ErrSQLite):
 		a.writeJSON(w, r, http.StatusUnprocessableEntity, errorBody{Error: err.Error(), Code: "invalid"})
 		return
@@ -101,7 +108,7 @@ func (a *api) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	code := errcode.Code(err)
 	if status, ok := statuses[code]; ok {
-		a.writeJSON(w, r, status, errorBody{Error: err.Error(), Code: code, Line: errcode.Line(err)})
+		a.writeJSON(w, r, status, errorBody{Error: err.Error(), Code: code, Line: errcode.Line(err), Message: errcode.Message(err)})
 		return
 	}
 	a.internalError(w, r, err)

@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, api } from '../src/lib/api';
 import type {
+  ApiErrorBody,
   Appearance,
   ArchiveSettings,
   Blocker,
@@ -148,12 +149,15 @@ describe('contract with the Go server', () => {
   });
 
   it('reports a parse error with its line', async () => {
-    const { text } = fixture<{ error: string; code: string; line: number }>('parse-error');
+    const { text, value } = fixture<ApiErrorBody>('parse-error');
+    expectKeys<Required<Omit<ApiErrorBody, 'current'>>>(value, { error: true, code: true, line: true, message: true });
     serve(423, text);
     const err = (await api.board('Garden').catch((e: unknown) => e)) as ApiError;
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(423);
     expect(err.code).toBe('parse');
     expect(err.line).toBe(24);
+    expect(err.detail).toBe(value.message);
+    expect(err.message).toBe(value.error);
   });
 });

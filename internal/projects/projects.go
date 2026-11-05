@@ -47,6 +47,9 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 	if name == "" {
 		return config.ProjectRef{}, fmt.Errorf("%w: project name is empty", domain.ErrInvalid)
 	}
+	if name == "." || name == ".." { // a URL path cleans these away, so the project could never be opened
+		return config.ProjectRef{}, fmt.Errorf("%w: project name %q is not allowed", domain.ErrInvalid, name)
+	}
 	settings := domain.NewBoard(name, o.Prefix).Settings
 	if err := settings.Validate(); err != nil {
 		return config.ProjectRef{}, err

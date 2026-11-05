@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+// contentSecurityPolicy keeps the page to its own origin. Svelte sets style
+// attributes, hence unsafe-inline for styles; scripts get no such exception.
+const contentSecurityPolicy = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
 // guard wraps next with the checks every request passes, in this order:
 //
 //  1. Host must be localhost, 127.0.0.1 or [::1] with the server's port (421
@@ -16,7 +20,8 @@ import (
 //     browser cannot add that header to a cross-origin request without a
 //     preflight, and the server never answers preflights.
 //
-// Every response carries X-Content-Type-Options: nosniff.
+// Every response carries X-Content-Type-Options: nosniff, X-Frame-Options: DENY
+// and the Content-Security-Policy.
 //
 // A panic below is logged and answered with a generic 500.
 func (a *api) guard(next http.Handler) http.Handler {
@@ -37,7 +42,10 @@ func (a *api) guard(next http.Handler) http.Handler {
 			}
 		}()
 
-		w.Header().Set("X-Content-Type-Options", "nosniff")
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
 		if !allowed[strings.ToLower(r.Host)] {
 			a.writeJSON(w, r, http.StatusMisdirectedRequest, errorBody{Error: "Waypoint only answers on localhost", Code: "misdirected"})
 			return
