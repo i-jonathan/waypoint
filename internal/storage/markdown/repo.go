@@ -59,6 +59,15 @@ func New(path string) *Repo {
 	return r
 }
 
+// Files returns the board and archive paths with symlinks resolved, the paths this repository
+// really reads and writes. They are empty when the board path can't be resolved.
+func (r *Repo) Files() (board, archive string) {
+	if r.err != nil {
+		return "", ""
+	}
+	return r.real, r.archive
+}
+
 // ArchiveFile returns the archive path that goes with a board path.
 func ArchiveFile(board string) string {
 	return strings.TrimSuffix(board, filepath.Ext(board)) + archiveSuffix

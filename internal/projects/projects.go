@@ -151,15 +151,20 @@ func slug(s string) string {
 }
 
 // checkArchive refuses a board that would collide with an archive: one project's archive file
-// holding another's cards loses them across projects. Names compare without case, since most
-// Mac disks ignore it; a false refusal is only a rename away.
+// holding another's cards loses them across projects. Paths compare as the repository resolves
+// them, so a symlinked folder is seen through, and without case, since most Mac disks ignore it;
+// a false refusal is only a rename away.
 func checkArchive(cfg *config.Config, path string) error {
 	if markdown.IsArchiveFile(path) {
 		return fmt.Errorf("%w: %s is an archive, not a board", domain.ErrInvalid, path)
 	}
-	mine := filepath.Clean(markdown.ArchiveFile(path))
+	_, mine := markdown.New(path).Files()
 	for _, q := range cfg.Projects {
-		if strings.EqualFold(mine, filepath.Clean(markdown.ArchiveFile(q.Path))) {
+		if config.StorageFor(q.Path) != "markdown" {
+			continue
+		}
+		board, archive := markdown.New(q.Path).Files()
+		if mine != "" && (strings.EqualFold(mine, archive) || strings.EqualFold(mine, board)) {
 			return fmt.Errorf("%w: %s shares an archive with %q; rename the file", domain.ErrInvalid, path, q.Name)
 		}
 	}

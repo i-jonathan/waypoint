@@ -5,17 +5,15 @@ Read this first when resuming. Spec: `docs/superpowers/specs/2026-11-03-waypoint
 ## State
 
 - **Plan 1 (core, CLI, markdown storage):** merged to `main` (PR #1).
-- **Plan 2 (web UI):** on branch `feat/web`, paused.
-  - Tasks 1-11 complete and reviewed. Midpoint whole-branch review and its fixes are complete.
-  - Tasks 12-13 reviewed and their two Important findings fixed.
-  - Task 14 (docs) and Task 15 (`make e2e`, 13 browser tests) committed.
+- **Plan 2 (web UI):** on branch `feat/web`, PR open, waiting for the owner's guided review.
+  - All 15 tasks complete. Midpoint and final whole-branch reviews done, with their fixes and re-reviews.
 - **Plan 3 (SQLite, convert, import/export, MCP, pharmacy migration):** not written.
 
 ## Next steps
 
-1. Final whole-branch review through the real binary, then its fixes and a re-review.
-2. Open a PR for `feat/web`.
-3. Later, with the owner: a guided review of the whole branch, in about 8 sections with the riskiest first.
+1. With the owner: a guided review of the whole branch, in about 8 sections with the riskiest first.
+2. Merge the PR when the owner decides.
+3. Write Plan 3 in small milestones: SQLite first, then convert, the pharmacy migration, import/export and MCP.
 
 - **Plan 4 (proposed):** choose the SQL server per project: SQLite, or Postgres or MySQL, local or remote. One person's data only, even on a remote server. Plan 3's SQL storage must leave room for this.
 

@@ -451,3 +451,21 @@ func TestSettingsJSONShape(t *testing.T) {
 	assertNoErr(t, json.Unmarshal(data, &back))
 	assertEqual(t, back, b.Settings)
 }
+
+func TestSpacedNamesAreRefusedOnSaveButStillLoad(t *testing.T) {
+	for name, edit := range map[string]func(*Settings){
+		"group":    func(s *Settings) { s.Groups = []Group{{Name: "Team "}} },
+		"priority": func(s *Settings) { s.Priorities = []string{" P0"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := NewBoard("B", "T")
+			s := cloneSettings(b.Settings)
+			edit(&s)
+			// A quoted name in a file must not lock the board, so reading it still works.
+			assertNoErr(t, s.Validate())
+			if err := b.ApplySettings(SettingsChange{Settings: s}); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("got %v", err)
+			}
+		})
+	}
+}

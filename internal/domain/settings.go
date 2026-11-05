@@ -95,6 +95,9 @@ func (b *Board) ApplySettings(ch SettingsChange) error {
 	if err := ValidateAppearance(s.Appearance); err != nil {
 		return err
 	}
+	if err := checkNameSpacing(s); err != nil {
+		return err
+	}
 	next.Settings = s
 
 	colMap, err := columnMapping(b.Settings, s, ch.ColumnRenames)
@@ -258,4 +261,21 @@ func cloneSettings(s Settings) Settings {
 	s.Groups = slices.Clone(s.Groups)
 	s.Priorities = slices.Clone(s.Priorities)
 	return s
+}
+
+// checkNameSpacing refuses group and priority names with outer spaces, which a card's field
+// can't keep. It runs on a save and not in Validate, so a board that already has such a name
+// in its file still opens and can be fixed.
+func checkNameSpacing(s Settings) error {
+	for _, g := range s.Groups {
+		if g.Name != strings.TrimSpace(g.Name) {
+			return fmt.Errorf("%w: group name %q has leading or trailing spaces", ErrInvalid, g.Name)
+		}
+	}
+	for _, p := range s.Priorities {
+		if p != strings.TrimSpace(p) {
+			return fmt.Errorf("%w: priority name %q has leading or trailing spaces", ErrInvalid, p)
+		}
+	}
+	return nil
 }

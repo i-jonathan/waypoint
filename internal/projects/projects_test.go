@@ -70,6 +70,39 @@ func TestAddRefusesASharedArchive(t *testing.T) {
 	}
 }
 
+func TestAddSeesThroughSymlinksToAnArchive(t *testing.T) {
+	cfgPath, env := sandbox(t)
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "linkdir")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := Add(ctx, cfgPath, env, AddOptions{Name: "A", Path: filepath.Join(real, "x.md"), Prefix: "T"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Add(ctx, cfgPath, env, AddOptions{Name: "B", Path: filepath.Join(link, "x.markdown"), Prefix: "T"})
+	if !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), `shares an archive with "A"`) {
+		t.Fatalf("through a symlink: %v", err)
+	}
+}
+
+func TestArchiveCheckAgainstHandRegisteredEntries(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{Projects: []config.ProjectRef{
+		{Name: "legacy", Path: filepath.Join(dir, "n.archive.md")},
+		{Name: "db", Path: filepath.Join(dir, "q.db")},
+	}}
+	// n.md would archive into the file registered as a board.
+	if err := checkArchive(cfg, filepath.Join(dir, "n.md")); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("legacy board: %v", err)
+	}
+	// A database has no archive file, so a board of the same name is fine.
+	if err := checkArchive(cfg, filepath.Join(dir, "q.md")); err != nil {
+		t.Fatalf("sqlite neighbour: %v", err)
+	}
+}
+
 func TestAddRefusals(t *testing.T) {
 	cfgPath, env := sandbox(t)
 	dir := t.TempDir()
