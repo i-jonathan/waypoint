@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	_ "modernc.org/sqlite" // registers the "sqlite" driver
+	msqlite "modernc.org/sqlite" // also registers the "sqlite" driver
 
 	"waypoint/internal/app"
 	"waypoint/internal/domain"
@@ -35,8 +35,9 @@ type Repo struct {
 	path string
 
 	mu     sync.Mutex
-	loaded bool  // Load has run, so Save has a revision to compare with
-	rev    int64 // the revision Load saw
+	held   *heldLock // set while this Repo holds Lock
+	loaded bool      // Load has run, so Save has a revision to compare with
+	rev    int64     // the revision Load saw
 }
 
 var _ app.Repository = (*Repo)(nil)
@@ -143,19 +144,14 @@ func inTx(ctx context.Context, db *sql.DB, write bool, fn func(execer) error) (e
 // Load reads the board. Cards without ids cannot exist in a database, so the
 // list of assigned ids is always empty.
 func (r *Repo) Load(ctx context.Context) (*domain.Board, []domain.CardID, error) {
-	db, err := r.open(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer db.Close()
 	var b *domain.Board
 	var rev int64
-	err = inTx(ctx, db, false, func(q execer) (err error) {
+	err := r.run(ctx, false, func(q execer) (err error) {
 		b, rev, err = store.Load(ctx, q)
 		return err
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, r.plain(err)
 	}
 	r.mu.Lock()
 	r.loaded, r.rev = true, rev
@@ -166,16 +162,11 @@ func (r *Repo) Load(ctx context.Context) (*domain.Board, []domain.CardID, error)
 // Save replaces the stored board with b. If the database was saved since this
 // Repo last loaded it, it returns app.ErrChangedDuringWrite and changes nothing.
 func (r *Repo) Save(ctx context.Context, b *domain.Board) error {
-	db, err := r.open(ctx)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
 	r.mu.Lock()
 	loaded, seen := r.loaded, r.rev
 	r.mu.Unlock()
 	var rev int64
-	err = inTx(ctx, db, true, func(q execer) error {
+	err := r.run(ctx, true, func(q execer) (err error) {
 		if loaded {
 			cur, err := store.Revision(ctx, q)
 			if err != nil {
@@ -189,7 +180,7 @@ func (r *Repo) Save(ctx context.Context, b *domain.Board) error {
 		return err
 	})
 	if err != nil {
-		return err
+		return r.plain(err)
 	}
 	r.mu.Lock()
 	r.loaded, r.rev = true, rev
@@ -197,7 +188,42 @@ func (r *Repo) Save(ctx context.Context, b *domain.Board) error {
 	return nil
 }
 
-// Lock is built in the next task.
-func (r *Repo) Lock(ctx context.Context) (func() error, error) {
-	return nil, errors.ErrUnsupported
+// run does fn in a transaction: inside the lock's transaction when this Repo
+// holds the lock, otherwise on a fresh connection that is closed afterwards.
+func (r *Repo) run(ctx context.Context, write bool, fn func(execer) error) error {
+	r.mu.Lock()
+	h := r.held
+	r.mu.Unlock()
+	if h != nil {
+		return h.run(ctx, write, fn)
+	}
+	db, err := r.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return inTx(ctx, db, write, fn)
 }
+
+// plain turns the driver's busy and read-only errors into messages a person
+// can act on. Other errors pass through.
+func (r *Repo) plain(err error) error {
+	var se *msqlite.Error
+	if !errors.As(err, &se) {
+		return err
+	}
+	switch se.Code() & 0xff {
+	case sqliteBusy, sqliteLocked:
+		return fmt.Errorf("the project database is busy: another program has it locked: %w", err)
+	case sqliteReadonly:
+		return fmt.Errorf("the project database %s is read-only: check the file's permissions: %w", r.path, err)
+	}
+	return err
+}
+
+// Primary SQLite result codes.
+const (
+	sqliteBusy     = 5
+	sqliteLocked   = 6
+	sqliteReadonly = 8
+)

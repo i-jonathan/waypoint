@@ -31,7 +31,7 @@ func TestSQLiteRepoContract(t *testing.T) {
 	storagetest.RunContract(t, func(t *testing.T) app.Repository {
 		r, _ := newDB(t)
 		return r
-	}, storagetest.SkipLock())
+	})
 }
 
 func sum(t *testing.T, path string) [32]byte {
