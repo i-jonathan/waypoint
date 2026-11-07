@@ -47,3 +47,9 @@ Read this first when resuming. Spec: `docs/superpowers/specs/2026-11-03-waypoint
 - A read of a read-only SQLite database can leave a read-only `-shm` file beside it. A markdown conversion leaves a `.lock` file beside the old board.
 - Migrations run only when a SQLite database is created; whoever adds migration 002 must run them on open too.
 - A CSV import can move cards between columns without the column's move rules or WIP limit, as a hand edit can. A card the file mentions moves to the end of its column.
+- `waypoint mcp` resolves the project once, when it starts. After the project is converted, restart it. A line that is not JSON ends the session without a reply.
+- A snapshot or CSV with a card id that has another prefix than the board (`X-3` on a `T` board) imports into SQLite but cannot be converted to Markdown, and the refusal's wording is unclear.
+- Two columns whose names differ only in case can exist in SQLite, but a Markdown file cannot tell them apart. Avoid them.
+- A CSV export writes cells that start with `=`, `+`, `-` or `@` as they are, so a spreadsheet may read one as a formula. Nothing is escaped, to keep the export lossless.
+- The web import dialog checks a file and then imports it; a change made to the project between the two can make the result differ from the preview.
+- Conversion to a different disk is covered by a test across folders only.

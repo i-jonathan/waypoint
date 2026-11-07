@@ -579,3 +579,55 @@ func TestHasShallowHeading(t *testing.T) {
 		}
 	}
 }
+
+func TestConvertToMarkdownNormalizesBodyEdgesInOlderSQLiteBoards(t *testing.T) {
+	fixedDay(t)
+	cfgPath, env := sandbox(t)
+	dir := t.TempDir()
+	ref, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "Lite", Path: filepath.Join(dir, "lite.db"), Prefix: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Bodies as an older Waypoint, or a program writing the database, left them.
+	repo, _ := storage.Open(ref)
+	b, _, _ := repo.Load(context.Background())
+	b.Cards = []domain.Card{
+		{ID: "T-1", Title: "From stdin", Column: "Todo", Created: novAt, Body: "notes\n"},
+		{ID: "T-2", Title: "Fenced", Column: "Todo", Created: novAt, Body: "a\n```\n### T-1 x\n```\n"},
+		{ID: "T-3", Title: "Windows", Column: "Todo", Created: novAt, Body: "\nlead\r\nline\r\n"},
+	}
+	b.Settings.NextID = 4
+	if err := repo.Save(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Convert(context.Background(), cfgPath, env, "Lite", "markdown", ""); err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	got := loadRef(t, registered(t, cfgPath, env, "Lite"))
+	want := []string{"notes", "a\n```\n### T-1 x\n```", "lead\nline"}
+	for i, w := range want {
+		if got.Cards[i].Body != w {
+			t.Errorf("card %d body = %q, want %q", i+1, got.Cards[i].Body, w)
+		}
+	}
+}
+
+func TestConvertToAnUnwritablePlaceIsARefusalNotAServerError(t *testing.T) {
+	fixedDay(t)
+	cfgPath, env := sandbox(t)
+	dir := t.TempDir()
+	richProject(t, cfgPath, env, dir)
+	file := filepath.Join(dir, "a-file")
+	os.WriteFile(file, []byte("x"), 0o644)
+
+	cfgBefore, _ := os.ReadFile(cfgPath)
+	_, err := Convert(context.Background(), cfgPath, env, "Rich", "sqlite", filepath.Join(file, "sub", "x.db"))
+	if !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("Convert = %v, want domain.ErrInvalid", err)
+	}
+	cfgAfter, _ := os.ReadFile(cfgPath)
+	if string(cfgBefore) != string(cfgAfter) {
+		t.Error("the registry changed")
+	}
+}

@@ -32,6 +32,9 @@ func (b *Board) Validate() error {
 		if !ValidCardID(string(c.ID)) {
 			return fmt.Errorf("%w: %q is not a card id (expected a prefix, a dash and a number, like T-1)", ErrInvalid, c.ID)
 		}
+		if _, ok := CardNumber(c.ID); !ok {
+			return fmt.Errorf("%w: %q: the number in the id is too large (the most is %d)", ErrInvalid, c.ID, MaxCardNumber)
+		}
 		if prefix, _, _ := strings.Cut(string(c.ID), "-"); prefix != b.Settings.Prefix && strings.EqualFold(prefix, b.Settings.Prefix) {
 			return fail("the id must be spelled %s-<number> to match the board's prefix", b.Settings.Prefix)
 		}
@@ -48,6 +51,8 @@ func (b *Board) Validate() error {
 			if _, ok := b.Column(c.Column); !ok {
 				return fail("the column %q is not on the board", c.Column)
 			}
+		} else if c.Done.IsZero() {
+			return fail("an archived card needs a done date, which the archive is sorted by")
 		}
 		if c.Group != "" && !hasGroup(b.Settings.Groups, c.Group) {
 			return fail("the group %q is not one of the board's groups", c.Group)

@@ -100,6 +100,17 @@ func Convert(ctx context.Context, cfgPath string, env func(string) string, name,
 	if err != nil {
 		return ConvertResult{}, err
 	}
+	if to == "markdown" {
+		// Markdown drops blank lines at both ends of a body, so a board made by an
+		// older Waypoint, or by a program, could never match its copy. Leave them
+		// out of the copy and the comparison: nothing but those blank lines changes.
+		board = board.Clone()
+		for _, list := range [][]domain.Card{board.Cards, board.Archived} {
+			for i := range list {
+				list[i].Body = domain.NormalizeBody(list[i].Body)
+			}
+		}
+	}
 
 	var res ConvertResult
 	var removeCopy func()
@@ -175,8 +186,8 @@ func convertTarget(cfg *config.Config, ref config.ProjectRef, to, newPath string
 	newPath = filepath.Clean(newPath)
 	if _, err := os.Lstat(newPath); err == nil {
 		return "", fmt.Errorf("%w: %s already exists; choose a path with nothing there", domain.ErrInvalid, newPath)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
+	} else if !errors.Is(err, os.ErrNotExist) { // for example, a folder of the path is a file
+		return "", fmt.Errorf("%w: cannot use %s: %v", domain.ErrInvalid, newPath, err)
 	}
 	if _, err := chooseStorage(newPath, to); err != nil {
 		return "", err
@@ -211,7 +222,7 @@ func writeCopy(ctx context.Context, dst config.ProjectRef, board *domain.Board) 
 
 	repo, err := storage.Create(tmp, board.Settings)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: cannot create the converted copy in %s: %v", domain.ErrInvalid, filepath.Dir(dst.Path), err)
 	}
 	if err := repo.Save(ctx, board); err != nil {
 		return err

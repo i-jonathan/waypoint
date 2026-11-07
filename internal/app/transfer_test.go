@@ -182,7 +182,7 @@ func TestImportRaisesNextIDPastEveryCard(t *testing.T) {
 	s := app.Snapshot{Format: 1, Settings: domain.NewBoard("N", "T").Settings}
 	s.Settings.NextID = 1
 	s.Cards = []app.SnapshotCard{{ID: "T-7", Title: "Seven", Column: "Todo"}}
-	s.Archived = []app.SnapshotCard{{ID: "T-12", Title: "Twelve"}}
+	s.Archived = []app.SnapshotCard{{ID: "T-12", Title: "Twelve", Done: "2026-10-01"}}
 	_, err := dst.ImportSnapshot(context.Background(), s, app.ImportOptions{})
 	noErr(t, err)
 	b, _, _ := repo.Load(context.Background())
@@ -228,4 +228,15 @@ func TestSnapshotDryRunReportsWithoutWriting(t *testing.T) {
 	if _, err := dst.ImportSnapshot(context.Background(), snap, app.ImportOptions{DryRun: true}); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("a dry run into a non-empty project = %v, want the refusal a real import gives", err)
 	}
+}
+
+func TestSnapshotImportNormalizesBodyEdges(t *testing.T) {
+	dst, repo := newLiteService(t)
+	s := app.Snapshot{Format: 1, Settings: domain.NewBoard("N", "T").Settings}
+	s.Settings.NextID = 2
+	s.Cards = []app.SnapshotCard{{ID: "T-1", Title: "One", Column: "Todo", Body: "from an agent\r\n\n"}}
+	_, err := dst.ImportSnapshot(context.Background(), s, app.ImportOptions{})
+	noErr(t, err)
+	b, _, _ := repo.Load(context.Background())
+	equal(t, b.Cards[0].Body, "from an agent")
 }

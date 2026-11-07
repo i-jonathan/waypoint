@@ -284,3 +284,62 @@ func TestCSVDryRunStillRefusesWhatARealRunWould(t *testing.T) {
 	}
 	equal(t, e.file(), before)
 }
+
+func TestCSVBodyEdgeWhitespaceIsNormalized(t *testing.T) {
+	e := newEnv(t)
+	_, err := importCSV(e, "title,body\nA,\"notes\n\"\nB,\"\n\nlead\"\nC,\"a\r\nb\"\n", false)
+	noErr(t, err)
+	b := wholeBoard(t, e)
+	equal(t, b.Cards[0].Body, "notes")
+	equal(t, b.Cards[1].Body, "lead")
+	equal(t, b.Cards[2].Body, "a\nb")
+}
+
+func TestCSVExactColumnNamesWinOverCaseVariants(t *testing.T) {
+	// SQLite can hold two columns whose names differ only in case; a markdown file
+	// cannot tell them apart, so this is tested on a database.
+	dst, repo := newLiteService(t)
+	b, _, err := repo.Load(context.Background())
+	noErr(t, err)
+	b.Settings.Columns = append(b.Settings.Columns, domain.Column{Name: "todo", MovesTo: []string{"Todo"}})
+	noErr(t, repo.Save(context.Background(), b))
+
+	_, err = dst.ImportCSV(context.Background(), strings.NewReader("title,column\nUpper,Todo\nLower,todo\nOther,TODO\n"), app.CSVOptions{})
+	noErr(t, err)
+	got, _, err := repo.Load(context.Background())
+	noErr(t, err)
+	byTitle := map[string]string{}
+	for _, c := range got.Cards {
+		byTitle[c.Title] = c.Column
+	}
+	equal(t, byTitle["Upper"], "Todo")
+	equal(t, byTitle["Lower"], "todo")
+	equal(t, byTitle["Other"], "Todo") // no exact match: the first that matches ignoring case
+}
+
+func TestCSVRefusesAnIdTooBigToCountPast(t *testing.T) {
+	e := newEnv(t)
+	before := e.file()
+	_, err := importCSV(e, "id,title\nT-9223372036854775807,a\nT-9223372036854775806,b\n", false)
+	mustInvalid(t, err, "T-9223372036854775807", "too large")
+	equal(t, e.file(), before)
+	_, err = e.svc.CreateCard(context.Background(), domain.NewCard{Title: "still works"})
+	noErr(t, err)
+}
+
+func TestSnapshotRefusesAnIdTooBigToCountPast(t *testing.T) {
+	dst, _ := newLiteService(t)
+	s := app.Snapshot{Format: 1, Settings: domain.NewBoard("N", "T").Settings}
+	s.Cards = []app.SnapshotCard{{ID: "T-99999999999999999999", Title: "Big", Column: "Todo"}}
+	_, err := dst.ImportSnapshot(context.Background(), s, app.ImportOptions{})
+	mustInvalid(t, err, "T-99999999999999999999", "too large")
+}
+
+func TestSnapshotRefusesAnArchivedCardWithNoDoneDate(t *testing.T) {
+	dst, _ := newLiteService(t)
+	s := app.Snapshot{Format: 1, Settings: domain.NewBoard("N", "T").Settings}
+	s.Settings.NextID = 2
+	s.Archived = []app.SnapshotCard{{ID: "T-1", Title: "Undated"}}
+	_, err := dst.ImportSnapshot(context.Background(), s, app.ImportOptions{})
+	mustInvalid(t, err, "T-1", "done date")
+}

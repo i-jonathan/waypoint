@@ -228,7 +228,7 @@ func TestUpdatePatch(t *testing.T) {
 	c, _, _ := b.Find(id)
 	assertEqual(t, c.Title, "New")
 	assertEqual(t, c.Priority, "P1")
-	assertEqual(t, c.Body, "hello\n")
+	assertEqual(t, c.Body, "hello") // edge blank lines are not kept, in any storage
 	assertEqual(t, c.Depends, []CardID{"T-5", "T-6"})
 	assertEqual(t, c.Extra, []Field{{"a", "1"}, {"b", "20"}, {"c", "3"}, {"owner", "me"}})
 
@@ -354,7 +354,7 @@ func TestTitleMustBeSingleLine(t *testing.T) {
 
 	// Bodies are multi-line by design.
 	c := mustAdd(t, b, NewCard{Title: "A", Body: "line1\nline2\n"})
-	assertEqual(t, c.Body, "line1\nline2\n")
+	assertEqual(t, c.Body, "line1\nline2")
 }
 
 func TestDependsMustBeWellFormedIDs(t *testing.T) {

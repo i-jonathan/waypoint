@@ -296,6 +296,9 @@ func importRows(b *domain.Board, t csvTable, o CSVOptions, now time.Time) (CSVRe
 			if !domain.ValidCardID(id) {
 				return res, invalidf("line %d: %q is not a card id (expected a prefix, a dash and a number, like %s-1)", r.line, id, b.Settings.Prefix)
 			}
+			if _, ok := domain.CardNumber(domain.CardID(id)); !ok {
+				return res, invalidf("line %d: the number in %s is too large (the most is %d)", r.line, id, domain.MaxCardNumber)
+			}
 			if first, dup := idLine[id]; dup {
 				return res, invalidf("line %d: the id %s is also on line %d", r.line, id, first)
 			}
@@ -390,7 +393,7 @@ func importRows(b *domain.Board, t csvTable, o CSVOptions, now time.Time) (CSVRe
 			}
 		}
 		if v, ok := t.body(r); ok {
-			c.Body = v
+			c.Body = domain.NormalizeBody(v)
 		}
 		for _, h := range t.header {
 			if slices.Contains(csvKnown, h) {
@@ -528,6 +531,11 @@ func nextGroupColor(groups []domain.Group) string {
 
 // columnNamed returns the spelling of the column called name, ignoring case, or "".
 func columnNamed(s *domain.Settings, name string) string {
+	for _, c := range s.Columns { // an exact match wins over one that differs in case
+		if c.Name == name {
+			return c.Name
+		}
+	}
 	for _, c := range s.Columns {
 		if strings.EqualFold(c.Name, name) {
 			return c.Name
@@ -538,6 +546,11 @@ func columnNamed(s *domain.Settings, name string) string {
 
 // groupNamed returns the spelling of the group called name, ignoring case, or "".
 func groupNamed(s *domain.Settings, name string) string {
+	for _, g := range s.Groups {
+		if g.Name == name {
+			return g.Name
+		}
+	}
 	for _, g := range s.Groups {
 		if strings.EqualFold(g.Name, name) {
 			return g.Name

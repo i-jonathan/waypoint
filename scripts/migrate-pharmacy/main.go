@@ -48,8 +48,10 @@ type card struct {
 }
 
 var (
-	columnHeading = regexp.MustCompile(`^## +(.+?) *$`)
-	cardHeading   = regexp.MustCompile(`^### +([A-Za-z]+-[0-9]+) +(\S.*?) *$`)
+	columnHeading = regexp.MustCompile(`^##[ \t]+(\S.*?)[ \t]*$`)
+	cardHeading   = regexp.MustCompile(`^###[ \t]+([A-Za-z]+-[0-9]+)[ \t]+(\S.*?)[ \t]*$`)
+	anyH3         = regexp.MustCompile(`^###([ \t]|$)`)
+	monthHeading  = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}$`)
 	fieldLine     = regexp.MustCompile(`^- ([A-Za-z][A-Za-z0-9_-]*): *(.*?) *$`)
 	nextIDComment = regexp.MustCompile(`<!--\s*next-id:\s*[A-Za-z]+-([0-9]+)\s*-->`)
 	validKey      = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
@@ -181,42 +183,97 @@ func (c card) row(extras []string) ([]string, error) {
 	return row, nil
 }
 
+// boardColumns are the columns the pharmacy board uses. Any other "##" heading
+// in BOARD.md stops the run: it is either a column this tool does not know or
+// text in a card body that would be read as one.
+var boardColumns = []string{"In Progress", "Up Next", "Backlog"}
+
+// fence is an open code fence: the character it is made of and how many.
+type fence struct {
+	ch byte
+	n  int
+}
+
+// opensFence reports whether line opens a code fence, the way Markdown reads one:
+// up to three spaces, then three or more backticks or tildes, and for backticks an
+// info string without a backtick (so a one-line ```code``` is not a fence).
+func opensFence(line string) (fence, bool) {
+	t := strings.TrimLeft(line, " ")
+	if len(line)-len(t) > 3 || len(t) < 3 || (t[0] != '`' && t[0] != '~') {
+		return fence{}, false
+	}
+	n := 0
+	for n < len(t) && t[n] == t[0] {
+		n++
+	}
+	if n < 3 || (t[0] == '`' && strings.Contains(t[n:], "`")) {
+		return fence{}, false
+	}
+	return fence{t[0], n}, true
+}
+
+// closes reports whether line closes the fence: the same character, at least as
+// many, and nothing else on the line.
+func (f fence) closes(line string) bool {
+	t := strings.TrimLeft(line, " ")
+	if len(line)-len(t) > 3 {
+		return false
+	}
+	n := 0
+	for n < len(t) && t[n] == f.ch {
+		n++
+	}
+	return n >= f.n && strings.TrimSpace(t[n:]) == ""
+}
+
 // parseCards reads the cards of one file. A "## heading" sets the column (or, in
 // the done file, every card is Archived); a "### ID Title" outside a code fence
-// starts a card; lines in a fence are never headings.
+// starts a card; nothing inside a fence is a heading. A heading that is neither a
+// known column nor a card, and a fence still open at the end, are errors with their
+// line, so that nothing is dropped or swallowed without a word.
 func parseCards(r io.Reader, archived bool) ([]card, error) {
 	var (
 		cards   []card
 		current *card
 		lines   []string
 		column  string
-		inFence bool
+		open    *fence
+		openAt  int
 		n       int
 	)
-	flush := func() error {
+	flush := func() {
 		if current == nil {
-			return nil
+			return
 		}
 		c := *current
 		c.fields, c.body = split(lines)
 		cards = append(cards, c)
 		current, lines = nil, nil
-		return nil
 	}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
 	for sc.Scan() {
 		n++
 		line := sc.Text()
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			inFence = !inFence
-		}
-		if !inFence && !strings.HasPrefix(strings.TrimSpace(line), "```") {
-			if m := columnHeading.FindStringSubmatch(line); m != nil && !strings.HasPrefix(line, "###") {
+		switch {
+		case open != nil:
+			if open.closes(line) {
+				open = nil
+			}
+		default:
+			if f, ok := opensFence(line); ok {
+				open, openAt = &f, n
+				break
+			}
+			if m := columnHeading.FindStringSubmatch(line); m != nil {
 				flush()
-				column = m[1]
-				if archived {
+				switch {
+				case archived && monthHeading.MatchString(m[1]):
 					column = "Archived"
+				case !archived && slices.Contains(boardColumns, m[1]):
+					column = m[1]
+				default:
+					return nil, fmt.Errorf("line %d: the heading %q is not a column this tool knows (%s); if it is text inside a card, change it so it is not a ## line", n, m[1], knownHeadings(archived))
 				}
 				continue
 			}
@@ -228,6 +285,9 @@ func parseCards(r io.Reader, archived bool) ([]card, error) {
 				current = &card{id: m[1], title: m[2], column: column, line: n}
 				continue
 			}
+			if anyH3.MatchString(line) {
+				return nil, fmt.Errorf("line %d: %q is a ### heading but not a card heading (### ID Title); it would be lost", n, strings.TrimSpace(line))
+			}
 		}
 		if current != nil {
 			lines = append(lines, line)
@@ -236,8 +296,18 @@ func parseCards(r io.Reader, archived bool) ([]card, error) {
 	if err := sc.Err(); err != nil {
 		return nil, err
 	}
+	if open != nil {
+		return nil, fmt.Errorf("a code fence opened on line %d is never closed, so everything after it would be swallowed", openAt)
+	}
 	flush()
 	return cards, nil
+}
+
+func knownHeadings(archived bool) string {
+	if archived {
+		return "a month such as 2026-10"
+	}
+	return strings.Join(boardColumns, ", ")
 }
 
 // split separates a card's lines into its field lines (the "- key: value" lines

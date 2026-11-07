@@ -198,7 +198,7 @@ func (snap Snapshot) board() (*domain.Board, error) {
 
 func (sc SnapshotCard) card(live bool) (domain.Card, error) {
 	c := domain.Card{
-		ID: domain.CardID(sc.ID), Title: sc.Title, Group: sc.Group, Priority: sc.Priority, Body: sc.Body,
+		ID: domain.CardID(sc.ID), Title: sc.Title, Group: sc.Group, Priority: sc.Priority, Body: domain.NormalizeBody(sc.Body),
 	}
 	if live {
 		c.Column = sc.Column
