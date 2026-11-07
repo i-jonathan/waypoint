@@ -64,6 +64,8 @@ Commands:
   archive              Archive every card in a done column
   restore ID           Bring an archived card back (--column X)
   rm ID                Delete a card
+  export               Write the whole project as JSON (--out FILE; to the screen without it)
+  import FILE          Put a JSON export into an empty project (--replace to swap everything)
   agents               Print a snippet to paste into AGENTS.md or CLAUDE.md
   help format          Print the board file format guide
 
@@ -124,6 +126,10 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return r.cmdRestore(args[1:])
 	case "rm":
 		return r.cmdRm(args[1:])
+	case "export":
+		return r.cmdExport(args[1:])
+	case "import":
+		return r.cmdImport(args[1:])
 	}
 	return r.usageError(fmt.Sprintf("unknown command %q", args[0]), "waypoint <command> [flags], see waypoint --help")
 }

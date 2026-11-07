@@ -118,6 +118,10 @@ A Markdown board, such as `BOARD.md`, is plain Markdown. The columns and setting
 
 While it writes, Waypoint keeps a small `.lock` file beside the board, for example `BOARD.md.lock`. It is safe to ignore and safe to delete when nothing is running; add `*.lock` to your `.gitignore` to keep it out of version control, or `BOARD.md.lock` if the repository tracks other lock files such as `Cargo.lock`.
 
+## Export and import
+
+`waypoint export` writes the whole project (settings, cards and archive) as JSON, to the screen or with `--out FILE`. It never overwrites a file that exists. `waypoint import FILE.json` puts that export into a project, which must be empty unless you add `--replace`. The file is checked before anything is changed: an unknown key, a newer format, a card in a column that does not exist, a repeated id or a bad date all stop the import with a message that names the card. Use it for backups, for moving a project between machines, or to hand a board to a script.
+
 ## Configuration
 
 Waypoint keeps a registry of your projects in a small config file. It is found in this order:
@@ -136,5 +140,5 @@ Run `waypoint agents` and paste the output into your project's `AGENTS.md` or `C
 
 ## What is coming
 
-- Import and export.
+- CSV import and export, and a Markdown export.
 - An MCP server, so agents can use the board as a tool.
