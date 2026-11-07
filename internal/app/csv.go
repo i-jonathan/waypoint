@@ -50,6 +50,9 @@ func (s *Service) ExportCSV(ctx context.Context, w io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := checkArchivedColumn(&b.Settings); err != nil {
+		return err
+	}
 	var extras []string
 	for _, list := range [][]domain.Card{b.Cards, b.Archived} {
 		for _, c := range list {
@@ -202,6 +205,29 @@ func readCSV(r io.Reader) (csvTable, error) {
 	return t, nil
 }
 
+// body returns the body cell as written. Unlike every other cell it is not
+// trimmed, because a body may start with indentation that means something
+// (a code block). A cell of only spaces and line breaks is no body.
+func (t csvTable) body(r csvRow) (string, bool) {
+	i := slices.Index(t.header, "body")
+	if i < 0 {
+		return "", false
+	}
+	if i >= len(r.cells) || strings.TrimSpace(r.cells[i]) == "" {
+		return "", true
+	}
+	return r.cells[i], true
+}
+
+// checkArchivedColumn refuses a project with a column named like the marker
+// that CSV files use for archived cards, since a file could not tell them apart.
+func checkArchivedColumn(s *domain.Settings) error {
+	if name := columnNamed(s, ArchivedColumn); name != "" {
+		return invalidf("this project has a column called %q, which CSV files use to mark archived cards; rename the column first", name)
+	}
+	return nil
+}
+
 // cell returns the trimmed value of a column in a row, and whether the file has
 // that column at all.
 func (t csvTable) cell(r csvRow, name string) (string, bool) {
@@ -244,6 +270,9 @@ func (s *Service) ImportCSV(ctx context.Context, r io.Reader, o CSVOptions) (CSV
 // to it, because apply can run it again.
 func importRows(b *domain.Board, t csvTable, o CSVOptions, now time.Time) (CSVResult, error) {
 	res := CSVResult{Created: []domain.CardID{}, Updated: []domain.CardID{}, NewColumns: []string{}, NewGroups: []string{}}
+	if err := checkArchivedColumn(&b.Settings); err != nil {
+		return res, err
+	}
 	lineOf := map[domain.CardID]int{}
 
 	// Pass 1: rows that are not blank, their ids, and the names they need.
@@ -264,7 +293,7 @@ func importRows(b *domain.Board, t csvTable, o CSVOptions, now time.Time) (CSVRe
 			}
 			idLine[id] = r.line
 		}
-		if col, _ := t.cell(r, "column"); col != "" && col != ArchivedColumn && columnNamed(&b.Settings, col) == "" && !slices.ContainsFunc(missingCols, func(m string) bool { return strings.EqualFold(m, col) }) {
+		if col, _ := t.cell(r, "column"); col != "" && !strings.EqualFold(col, ArchivedColumn) && columnNamed(&b.Settings, col) == "" && !slices.ContainsFunc(missingCols, func(m string) bool { return strings.EqualFold(m, col) }) {
 			missingCols = append(missingCols, col)
 		}
 		if g, _ := t.cell(r, "group"); g != "" && groupNamed(&b.Settings, g) == "" && !slices.ContainsFunc(missingGroups, func(m string) bool { return strings.EqualFold(m, g) }) {
@@ -352,7 +381,7 @@ func importRows(b *domain.Board, t csvTable, o CSVOptions, now time.Time) (CSVRe
 				}
 			}
 		}
-		if v, ok := t.cell(r, "body"); ok {
+		if v, ok := t.body(r); ok {
 			c.Body = v
 		}
 		for _, h := range t.header {
@@ -377,7 +406,7 @@ func importRows(b *domain.Board, t csvTable, o CSVOptions, now time.Time) (CSVRe
 		}
 
 		column, _ := t.cell(r, "column")
-		toArchive := column == ArchivedColumn || wasArchived
+		toArchive := strings.EqualFold(column, ArchivedColumn) || wasArchived
 		switch {
 		case toArchive:
 			c.Column = ""

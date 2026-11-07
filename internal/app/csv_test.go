@@ -218,3 +218,40 @@ func TestMarkdownExportParses(t *testing.T) {
 		t.Fatalf("parsed export differs:\n got %#v\nwant %#v", got, want)
 	}
 }
+
+func TestCSVKeepsTheBodyExactlyAsWritten(t *testing.T) {
+	e := newEnv(t)
+	// Storage drops trailing blank lines, as it does for any body; the start must survive.
+	text := "title,body\nKeep my spaces,\"    indented code first\n\n- [ ] step\n\"\n"
+	_, err := importCSV(e, text, false)
+	noErr(t, err)
+	b := wholeBoard(t, e)
+	equal(t, len(b.Cards), 1)
+	equal(t, b.Cards[0].Body, "    indented code first\n\n- [ ] step")
+}
+
+func TestCSVArchivedMarkerIgnoresCase(t *testing.T) {
+	e := newEnv(t)
+	res, err := importCSV(e, "title,column,done\nOld,archived,2026-10-01\n", true)
+	noErr(t, err)
+	equal(t, len(res.NewColumns), 0)
+	b := wholeBoard(t, e)
+	equal(t, len(b.Cards), 0)
+	equal(t, len(b.Archived), 1)
+	for _, c := range b.Settings.Columns {
+		if strings.EqualFold(c.Name, "archived") {
+			t.Fatalf("a column %q was created from the archived marker", c.Name)
+		}
+	}
+}
+
+func TestCSVRefusesABoardWithAColumnCalledArchived(t *testing.T) {
+	e := newEnv(t, func(s *domain.Settings) {
+		s.Columns = append(s.Columns, domain.Column{Name: "Archived", MovesTo: []string{"Todo"}})
+	})
+	_, err := importCSV(e, "title\nOne\n", false)
+	mustInvalid(t, err, "Archived", "rename")
+	var buf bytes.Buffer
+	mustInvalid(t, e.svc.ExportCSV(context.Background(), &buf), "Archived", "rename")
+	equal(t, buf.Len(), 0)
+}
