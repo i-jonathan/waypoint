@@ -23,6 +23,8 @@ func TestAgentsSnippet(t *testing.T) {
 		"`waypoint ls --json` and `waypoint show <ID> --json` for reading all cards and one card.",
 		`Run waypoint from inside this project's folder, or pass --project NAME. "waypoint project ls" shows the board file's path.`,
 		`Groups, priorities and columns must already exist on the board. On a Markdown board, read them from the file's front matter before using them.`,
+		`If your agent speaks MCP and has no shell, run "waypoint mcp" as an MCP server instead; it offers the same board through seven tools. Add it to the agent's MCP config:`,
+		`{"mcpServers":{"waypoint":{"command":"waypoint","args":["mcp"]}}}`,
 	} {
 		assertContains(t, stdout, want)
 	}

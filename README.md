@@ -142,6 +142,12 @@ The file is created the first time something is saved and is never needed just t
 
 Run `waypoint agents` and paste the output into your project's `AGENTS.md` or `CLAUDE.md`. It tells an agent to use the CLI, for example `waypoint ls --next --json` to find the next task, and to follow the board format if it edits the file directly.
 
-## What is coming
+## MCP server
 
-- An MCP server, so agents can use the board as a tool.
+For agents that speak the Model Context Protocol and have no shell, `waypoint mcp [--project NAME]` serves a board over standard input and output. It picks its project the same way the CLI does (`--project`, `$WAYPOINT_PROJECT`, then the nearest registered board), so start it from the project's folder. Add it to the agent's MCP config:
+
+```json
+{"mcpServers":{"waypoint":{"command":"waypoint","args":["mcp"]}}}
+```
+
+The tools are `list_cards`, `get_card`, `create_card`, `move_card`, `update_card`, `next_up` and `list_blocked`. Each returns the same JSON as the matching `--json` command. A refused move, a WIP limit, an unknown card or column, or an `if_match` that no longer matches comes back as a tool error with the reason (and, for `if_match`, the card as it is now), so the agent can adjust. Where a shell is available, the CLI is simpler and does more.

@@ -29,6 +29,12 @@ If the board is a Markdown file such as BOARD.md and you edit it directly, follo
 Run waypoint from inside this project's folder, or pass --project NAME. "waypoint project ls" shows the board file's path.
 
 Groups, priorities and columns must already exist on the board. On a Markdown board, read them from the file's front matter before using them.
+
+If your agent speaks MCP and has no shell, run "waypoint mcp" as an MCP server instead; it offers the same board through seven tools. Add it to the agent's MCP config:
+
+` + "```json" + `
+{"mcpServers":{"waypoint":{"command":"waypoint","args":["mcp"]}}}
+` + "```" + `
 `
 
 // cmdAgents prints the AGENTS.md snippet. It needs no project and no config.

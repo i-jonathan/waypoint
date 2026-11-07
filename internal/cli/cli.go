@@ -68,6 +68,7 @@ Commands:
   import FILE          Put a JSON export into an empty project (--replace to swap everything),
                        or a CSV file into any project (--create adds unknown columns and groups)
   agents               Print a snippet to paste into AGENTS.md or CLAUDE.md
+  mcp                  Serve the board to agents over MCP on stdin and stdout
   help format          Print the board file format guide
 
 Every command accepts --json and --project NAME.
@@ -103,6 +104,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return r.cmdTrust(args[1:])
 	case "agents":
 		return r.cmdAgents(args[1:])
+	case "mcp":
+		return r.cmdMCP(args[1:])
 	case "init":
 		return r.cmdInit(args[1:])
 	case "project":

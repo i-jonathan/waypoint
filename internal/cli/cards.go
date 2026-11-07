@@ -94,33 +94,10 @@ func oneID(pos []string) (domain.CardID, error) {
 	return domain.CardID(pos[0]), nil
 }
 
-// resolveColumn maps what the user typed to a column of the board: an exact
-// name first, then a case-insensitive match that must be unique. An empty
-// name stays empty (the caller's default). Anything else is ErrUnknownColumn.
+// resolveColumn maps what the user typed to a column of the board (see
+// app.Service.ResolveColumn).
 func resolveColumn(ctx context.Context, svc *app.Service, name string) (string, error) {
-	if name == "" {
-		return "", nil
-	}
-	bv, err := svc.Board(ctx)
-	if err != nil {
-		return "", err
-	}
-	var folded []string
-	for _, c := range bv.Settings.Columns {
-		if c.Name == name {
-			return c.Name, nil
-		}
-		if strings.EqualFold(c.Name, name) {
-			folded = append(folded, c.Name)
-		}
-	}
-	switch len(folded) {
-	case 1:
-		return folded[0], nil
-	case 0:
-		return "", fmt.Errorf("%w: %q", domain.ErrUnknownColumn, name)
-	}
-	return "", fmt.Errorf("%w: %q matches %s", domain.ErrUnknownColumn, name, strings.Join(folded, ", "))
+	return svc.ResolveColumn(ctx, name)
 }
 
 // quoteTerm wraps s in quotes when it holds whitespace, so a query term with
