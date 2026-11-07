@@ -9,6 +9,7 @@
   import type { BoardStore } from '../lib/board.svelte';
   import { groupColor } from '../lib/colors';
   import { BUILTIN, lookOf } from '../lib/look';
+  import { exportHref } from '../lib/transfer';
   import { preview } from '../lib/preview.svelte';
   import {
     addGroup,
@@ -23,10 +24,11 @@
     validateDraft,
     type Draft,
   } from '../lib/settingsEdit';
-  import type { Appearance, ArchiveMode, CardView, ConvertedProject, ProjectInfo, Settings } from '../lib/types';
+  import type { Appearance, ArchiveMode, CardView, ConvertedProject, ImportResult, ProjectInfo, Settings } from '../lib/types';
   import AppearanceFields from './AppearanceFields.svelte';
   import ColumnsEditor from './ColumnsEditor.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
+  import ImportDialog from './ImportDialog.svelte';
   import UnsavedGuard from './UnsavedGuard.svelte';
 
   interface Props {
@@ -34,7 +36,7 @@
     project: string;
     info: ProjectInfo;
     /** Reads the app settings, whose appearance is what a project's empty fields inherit. */
-    client?: Pick<typeof api, 'settings' | 'archive' | 'convertProject'>;
+    client?: Pick<typeof api, 'settings' | 'archive' | 'convertProject' | 'importFile'>;
   }
 
   let { store, project, info, client = api }: Props = $props();
@@ -77,6 +79,32 @@
     } finally {
       converting = false;
     }
+  }
+
+  // ----- Import and export -----
+  let picker: HTMLInputElement | undefined = $state();
+  let importing = $state.raw<File | null>(null);
+  let importNote = $state('');
+
+  function chosen(e: Event & { currentTarget: HTMLInputElement }) {
+    const file = e.currentTarget.files?.[0];
+    if (!file) return;
+    importing = file;
+    importNote = '';
+  }
+
+  function imported(file: File, r: ImportResult) {
+    const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+    importNote =
+      r.format === 'csv'
+        ? `Imported ${file.name}: added ${n(r.created.length, 'card', 'cards')} and updated ${n(r.updated.length, 'card', 'cards')}.`
+        : `Imported ${file.name}: ${n(r.cards, 'card', 'cards')} and ${n(r.archived, 'archived card', 'archived cards')}.`;
+    closeImport();
+  }
+
+  function closeImport() {
+    importing = null;
+    if (picker) picker.value = ''; // so the same file can be chosen again
   }
 
   function adopt() {
@@ -453,6 +481,19 @@
       </div>
     </section>
 
+    <section class="sf-section" aria-labelledby="ps-transfer">
+      <h2 id="ps-transfer">Import and export</h2>
+      <p class="sf-hint">Export the whole project, or add cards from a CSV file or a JSON export.</p>
+      <div class="transfer">
+        <a class="btn" href={exportHref(project, 'csv')} download>Export CSV</a>
+        <a class="btn" href={exportHref(project, 'json')} download>Export JSON</a>
+        <a class="btn" href={exportHref(project, 'md')} download>Export Markdown</a>
+        <button type="button" class="btn" onclick={() => picker?.click()}>Import a file</button>
+        <input bind:this={picker} class="picker" type="file" accept=".csv,.json,text/csv,application/json" aria-label="Import file" onchange={chosen} />
+      </div>
+      {#if importNote}<div class="sf-note" role="status" aria-label="Import result"><p>{importNote}</p></div>{/if}
+    </section>
+
     {#if changedElsewhere}
       <div class="sf-note" role="alert">
         <span>These settings changed elsewhere. Reload them?</span>
@@ -474,6 +515,10 @@
 </div>
 
 <UnsavedGuard {dirty} />
+
+{#if importing}
+  <ImportDialog {project} file={importing} {client} onClose={closeImport} onDone={(r) => imported(importing!, r)} />
+{/if}
 
 {#if confirmingConvert}
   <ConfirmDialog
@@ -501,6 +546,17 @@
 {/if}
 
 <style>
+  .transfer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0;
+  }
+
+  .picker {
+    display: none;
+  }
+
   .convert {
     display: flex;
     flex-direction: column;

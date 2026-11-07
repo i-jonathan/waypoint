@@ -31,6 +31,9 @@ var groupPalette = []string{"blue", "amber", "green", "rose", "violet", "teal", 
 type CSVOptions struct {
 	// Create adds unknown columns and groups instead of refusing them.
 	Create bool
+	// DryRun does everything but save: the result says what a real run would do,
+	// and a file a real run would refuse is refused the same way.
+	DryRun bool
 }
 
 // CSVResult says what a CSV import did.
@@ -257,10 +260,15 @@ func (s *Service) ImportCSV(ctx context.Context, r io.Reader, o CSVOptions) (CSV
 	var res CSVResult
 	_, err = s.apply(ctx, func(b *domain.Board) error {
 		var err error
-		res, err = importRows(b, t, o, s.now())
-		return err
+		if res, err = importRows(b, t, o, s.now()); err != nil {
+			return err
+		}
+		if o.DryRun {
+			return errDryRun
+		}
+		return nil
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, errDryRun) {
 		return CSVResult{}, err
 	}
 	return res, nil

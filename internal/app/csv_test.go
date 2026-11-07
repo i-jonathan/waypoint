@@ -255,3 +255,32 @@ func TestCSVRefusesABoardWithAColumnCalledArchived(t *testing.T) {
 	mustInvalid(t, e.svc.ExportCSV(context.Background(), &buf), "Archived", "rename")
 	equal(t, buf.Len(), 0)
 }
+
+func TestCSVDryRunReportsWithoutWriting(t *testing.T) {
+	e := newEnv(t)
+	text := "title,column,group\nOne,Todo,Ops\nTwo,Review,Ops\n"
+	before := e.file()
+
+	dry, err := e.svc.ImportCSV(context.Background(), strings.NewReader(text), app.CSVOptions{Create: true, DryRun: true})
+	noErr(t, err)
+	equal(t, e.file(), before)
+
+	real, err := e.svc.ImportCSV(context.Background(), strings.NewReader(text), app.CSVOptions{Create: true})
+	noErr(t, err)
+	equal(t, dry, real)
+	equal(t, dry.NewColumns, []string{"Review"})
+	equal(t, dry.NewGroups, []string{"Ops"})
+	equal(t, len(dry.Created), 2)
+}
+
+func TestCSVDryRunStillRefusesWhatARealRunWould(t *testing.T) {
+	e := newEnv(t)
+	before := e.file()
+	_, err := e.svc.ImportCSV(context.Background(), strings.NewReader("title,column\nOne,Review\n"), app.CSVOptions{DryRun: true})
+	mustInvalid(t, err, "Review", "--create")
+	_, err = e.svc.ImportCSV(context.Background(), strings.NewReader("title\n\n,\nx\n\"\n"), app.CSVOptions{DryRun: true})
+	if err == nil {
+		t.Fatal("a dry run accepted a file that is not valid")
+	}
+	equal(t, e.file(), before)
+}

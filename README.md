@@ -126,6 +126,8 @@ While it writes, Waypoint keeps a small `.lock` file beside the board, for examp
 
 `waypoint export --format csv` writes one row per card, archived cards included (with `column` set to `Archived`), with the columns `id,title,column,group,priority,depends,created,done,body` and then one column for each extra field. `waypoint import FILE.csv` reads the same shape, including files saved from a spreadsheet (a byte order mark, Windows line endings, and short rows are fine). An empty `id` makes a new card; an `id` the project already has, live or archived, updates that card, and an archived card stays archived. Rows keep their file order within each column. A column or group the project does not have stops the import and is listed, unless you add `--create`. Import is all or nothing: any bad row stops it with its line number and the project is not touched. `waypoint export --format md` writes the project in the Markdown board format with the archive after it; it is a copy to read, not something to import. Without `--format`, the file extension of `--out` or of the import file chooses.
 
+The web UI does the same from a project's settings, under Import and export: three download links, and an Import a file button. Before anything is changed, the import dialog checks the file and tells you what it would do: how many cards it adds or updates and which columns and groups it would create. Nothing happens until you confirm, and a file with a mistake is refused with the line to fix.
+
 ## Configuration
 
 Waypoint keeps a registry of your projects in a small config file. It is found in this order:

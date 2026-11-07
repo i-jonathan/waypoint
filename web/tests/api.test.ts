@@ -200,3 +200,36 @@ describe('errors', () => {
     expect(e.code).toBe('error');
   });
 });
+
+describe('import and export', () => {
+  it('links to a download for each format, with the project name encoded', () => {
+    expect(api.exportHref('a/b c', 'csv')).toBe('/api/projects/a%2Fb%20c/export?format=csv');
+    expect(api.exportHref('P', 'md')).toBe('/api/projects/P/export?format=md');
+  });
+
+  it('sends the file as the raw body, with the options in the query', async () => {
+    fetchMock.mockImplementation(async () => reply(200, { format: 'csv', dry_run: true, created: [], updated: [], new_columns: [], new_groups: [] }));
+    const file = new File(['title\nOne\n'], 'cards.csv', { type: 'text/csv' });
+    await api.importFile('P', file, { format: 'csv', create: true, dryRun: true });
+    const { url, init, headers } = lastCall();
+    expect(url).toBe('/api/projects/P/import?format=csv&create=1&dry_run=1');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(file);
+    expect(headers.get('X-Waypoint')).toBe('1');
+    expect(headers.get('Content-Type')).toBe('text/csv');
+  });
+
+  it('leaves out options that are off, and sends json as json', async () => {
+    fetchMock.mockImplementation(async () => reply(200, { format: 'json', dry_run: false, cards: 1, archived: 0 }));
+    await api.importFile('P', new Blob(['{}']), { format: 'json', replace: true });
+    expect(lastCall().url).toBe('/api/projects/P/import?format=json&replace=1');
+    expect(lastCall().headers.get('Content-Type')).toBe('application/json');
+    await api.importFile('P', new Blob(['{}']), { format: 'json' });
+    expect(lastCall().url).toBe('/api/projects/P/import?format=json');
+  });
+
+  it('turns a refusal into an ApiError with the server text', async () => {
+    fetchMock.mockImplementation(async () => reply(422, { error: 'invalid: line 3: the title is empty', code: 'invalid' }));
+    await expect(api.importFile('P', new Blob(['x']), { format: 'csv' })).rejects.toMatchObject({ status: 422, code: 'invalid', message: 'invalid: line 3: the title is empty' });
+  });
+});

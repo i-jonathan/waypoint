@@ -68,6 +68,8 @@ func Handler(d Deps) http.Handler {
 	handle("POST /api/projects", a.createProject)
 	handle("DELETE /api/projects/{p}", a.deleteProject)
 	handle("POST /api/projects/{p}/convert", a.convertProject)
+	handle("GET /api/projects/{p}/export", a.exportProject)
+	handle("POST /api/projects/{p}/import", a.importProject)
 	handle("GET /api/settings", a.getSettings)
 	handle("PUT /api/settings", a.putSettings)
 

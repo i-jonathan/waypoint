@@ -208,3 +208,24 @@ func TestSnapshotJSONShape(t *testing.T) {
 		t.Errorf("snapshot has keys %v, want exactly format, settings, cards, archived", len(top))
 	}
 }
+
+func TestSnapshotDryRunReportsWithoutWriting(t *testing.T) {
+	src := richService(t)
+	snap, err := src.svc.Snapshot(context.Background())
+	noErr(t, err)
+
+	dst, repo := newLiteService(t)
+	dry, err := dst.ImportSnapshot(context.Background(), snap, app.ImportOptions{DryRun: true})
+	noErr(t, err)
+	equal(t, dry.Cards, 2)
+	equal(t, dry.Archived, 1)
+	if b, _, _ := repo.Load(context.Background()); b.Settings.Name != "Blank" || len(b.Cards) != 0 {
+		t.Fatal("a dry run changed the project")
+	}
+
+	_, err = dst.CreateCard(context.Background(), domain.NewCard{Title: "Already here"})
+	noErr(t, err)
+	if _, err := dst.ImportSnapshot(context.Background(), snap, app.ImportOptions{DryRun: true}); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("a dry run into a non-empty project = %v, want the refusal a real import gives", err)
+	}
+}

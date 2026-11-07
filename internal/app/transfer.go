@@ -50,7 +50,14 @@ type ImportOptions struct {
 	// Replace swaps the whole project for the imported one. Without it the
 	// project must be empty.
 	Replace bool
+	// DryRun checks the snapshot and the project, and reports the counts, without
+	// saving anything.
+	DryRun bool
 }
+
+// errDryRun stops an apply before it saves. A dry run is the real import with
+// the save left out, so the two cannot disagree about what is allowed.
+var errDryRun = errors.New("dry run")
 
 // ImportResult counts what an import put in the project.
 type ImportResult struct {
@@ -143,10 +150,13 @@ func (s *Service) ImportSnapshot(ctx context.Context, snap Snapshot, o ImportOpt
 		if !o.Replace && (len(b.Cards) > 0 || len(b.Archived) > 0) {
 			return fmt.Errorf("%w: this project already has cards; import into an empty project, or use replace to swap everything", domain.ErrInvalid)
 		}
+		if o.DryRun {
+			return errDryRun
+		}
 		b.Settings, b.Cards, b.Archived, b.Notices = imported.Settings, imported.Cards, imported.Archived, nil
 		return nil
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, errDryRun) {
 		return ImportResult{}, err
 	}
 	return ImportResult{Cards: len(imported.Cards), Archived: len(imported.Archived)}, nil

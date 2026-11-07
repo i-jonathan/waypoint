@@ -153,6 +153,24 @@ export interface ProjectInfo {
   error?: string;
 }
 
+export type ExportFormat = 'csv' | 'json' | 'md';
+export type ImportFormat = 'csv' | 'json';
+
+/** What an import is asked to do. A dry run only reports. */
+export interface ImportOptions {
+  format: ImportFormat;
+  /** CSV: add the columns and groups the file names that the project lacks. */
+  create?: boolean;
+  /** JSON: replace the whole project instead of needing it to be empty. */
+  replace?: boolean;
+  dryRun?: boolean;
+}
+
+/** What an import (or a dry run of one) did to a project, by file format. */
+export type ImportResult =
+  | { format: 'csv'; dry_run: boolean; created: string[]; updated: string[]; new_columns: string[]; new_groups: string[] }
+  | { format: 'json'; dry_run: boolean; cards: number; archived: number };
+
 /** What converting a project's storage returns: the project as now registered, and the old files' new names. */
 export interface ConvertedProject extends ProjectInfo {
   backups: string[];

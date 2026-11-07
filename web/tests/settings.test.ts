@@ -93,6 +93,7 @@ const globalClient = {
   putSettings: vi.fn(),
   archive: vi.fn(async (): Promise<CardView[]> => []),
   convertProject: vi.fn(),
+  importFile: vi.fn(),
 };
 
 async function mount(settings?: Settings, cards?: CardView[], projectInfo: ProjectInfo = info) {
@@ -522,6 +523,51 @@ describe('converting the storage', () => {
     await type(within(row('Column', 1)).getByLabelText('Name'), 'Backlog');
     expect(screen.getByRole('button', { name: 'Convert to SQLite' })).toBeDisabled();
     expect(screen.getByText('Save or cancel your changes first.')).toBeInTheDocument();
+  });
+});
+
+// ----- Import and export -----
+
+describe('import and export', () => {
+  const csvResult = (dry: boolean) => ({ format: 'csv' as const, dry_run: dry, created: ['T-4', 'T-5'], updated: ['T-1'], new_columns: [], new_groups: [] });
+
+  it('links to a download of each format', async () => {
+    await mount();
+    const section = screen.getByRole('heading', { name: 'Import and export' }).closest('section')!;
+    const link = (name: string) => within(section).getByRole('link', { name }) as HTMLAnchorElement;
+    expect(link('Export CSV')).toHaveAttribute('href', '/api/projects/Home/export?format=csv');
+    expect(link('Export JSON')).toHaveAttribute('href', '/api/projects/Home/export?format=json');
+    expect(link('Export Markdown')).toHaveAttribute('href', '/api/projects/Home/export?format=md');
+    expect(link('Export CSV')).toHaveAttribute('download');
+  });
+
+  it('checks a chosen file, imports it on confirm, and says what happened', async () => {
+    globalClient.importFile.mockImplementation(async (_p: string, _f: Blob, o: { dryRun?: boolean }) => csvResult(!!o.dryRun));
+    await mount();
+    const picker = screen.getByLabelText('Import file') as HTMLInputElement;
+    const file = new File(['title\nOne\n'], 'cards.csv', { type: 'text/csv' });
+    await fireEvent.change(picker, { target: { files: [file] } });
+
+    const dialog = await screen.findByRole('alertdialog', { name: 'Import cards.csv' });
+    expect(await within(dialog).findByText('Adds 2 cards and updates 1 card.')).toBeInTheDocument();
+    expect(globalClient.importFile).toHaveBeenCalledWith('Home', file, { format: 'csv', create: true, dryRun: true });
+
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Import' }));
+    const note = await screen.findByRole('status', { name: 'Import result' });
+    expect(note).toHaveTextContent('Imported cards.csv: added 2 cards and updated 1 card.');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('does nothing when the dialog is cancelled', async () => {
+    globalClient.importFile.mockImplementation(async () => csvResult(true));
+    await mount();
+    await fireEvent.change(screen.getByLabelText('Import file'), { target: { files: [new File(['x'], 'cards.csv')] } });
+    const dialog = await screen.findByRole('alertdialog');
+    await within(dialog).findByText('Adds 2 cards and updates 1 card.');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(globalClient.importFile).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('status', { name: 'Import result' })).toBeNull();
   });
 });
 

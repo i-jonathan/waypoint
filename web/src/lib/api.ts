@@ -1,3 +1,4 @@
+import { exportHref } from './transfer';
 import type {
   BoardResponse,
   BoardView,
@@ -8,6 +9,9 @@ import type {
   NewCard,
   NewProject,
   ConvertedProject,
+  ImportFormat,
+  ImportOptions,
+  ImportResult,
   ProjectInfo,
   ProjectSettingsChange,
 } from './types';
@@ -68,10 +72,19 @@ function failure(status: number, statusText: string, body: unknown): ApiError {
   return new ApiError(status, code, message, extra);
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+/** A request body that is a file as it is, not JSON. */
+interface RawBody {
+  data: Blob | string;
+  type: string;
+}
+
+async function request<T>(method: string, path: string, body?: unknown, raw?: RawBody): Promise<T> {
   const headers: Record<string, string> = { 'X-Waypoint': '1' };
   const init: RequestInit = { method, headers };
-  if (body !== undefined) {
+  if (raw !== undefined) {
+    headers['Content-Type'] = raw.type;
+    init.body = raw.data;
+  } else if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
   }
@@ -106,6 +119,18 @@ export const api = {
   projects: () => request<ProjectInfo[]>('GET', '/api/projects'),
   createProject: (project: NewProject) => request<ProjectInfo>('POST', '/api/projects', project),
   deleteProject: (p: string) => request<void>('DELETE', projectPath(p)),
+  exportHref,
+  /** Sends a csv or json file to be imported, or with `dryRun` to be checked. */
+  importFile: (p: string, file: Blob, o: ImportOptions) => {
+    const q = new URLSearchParams({ format: o.format });
+    if (o.create) q.set('create', '1');
+    if (o.replace) q.set('replace', '1');
+    if (o.dryRun) q.set('dry_run', '1');
+    return request<ImportResult>('POST', `${projectPath(p)}/import?${q.toString()}`, undefined, {
+      data: file,
+      type: o.format === 'csv' ? 'text/csv' : 'application/json',
+    });
+  },
   /** Moves a project to the other storage. The old files are kept. */
   convertProject: (p: string, body: { to: 'sqlite' | 'markdown'; path?: string }) =>
     request<ConvertedProject>('POST', `${projectPath(p)}/convert`, body),

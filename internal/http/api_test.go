@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1310,4 +1311,112 @@ func TestConvertProjectAPIChecksTheExtensionAndMakesNoFolders(t *testing.T) {
 		t.Fatal("a refused conversion created folders")
 	}
 	assertEq(t, f.config().Projects[0].Storage, "markdown")
+}
+
+func TestExportDownloads(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	f.do("POST", "/api/projects/Alpha/cards", map[string]any{"title": "Measure, then paint", "body": "line one\nline two"}).want(201)
+
+	for format, want := range map[string]struct{ ctype, ext, inBody string }{
+		"csv":  {"text/csv; charset=utf-8", ".csv", "Measure, then paint"},
+		"json": {"application/json; charset=utf-8", ".json", `"title": "Measure, then paint"`},
+		"md":   {"text/markdown; charset=utf-8", ".md", "### T-1 Measure, then paint"},
+	} {
+		r := f.do("GET", "/api/projects/Alpha/export?format="+format, nil).want(200)
+		assertEq(t, r.header.Get("Content-Type"), want.ctype)
+		assertEq(t, r.header.Get("Content-Disposition"), `attachment; filename="Alpha`+want.ext+`"`)
+		assertEq(t, r.header.Get("Cache-Control"), "no-store")
+		assertContains(t, string(r.body), want.inBody)
+	}
+	f.do("GET", "/api/projects/Alpha/export?format=yaml", nil).wantCode(422, "invalid")
+	f.do("GET", "/api/projects/Alpha/export", nil).wantCode(422, "invalid")
+	f.do("GET", "/api/projects/Nobody/export?format=csv", nil).wantCode(404, "not_found")
+}
+
+func TestExportFileNameIsSafe(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	f.do("POST", "/api/projects", map[string]any{"name": "Tricky \"name\"; X-Evil: 1/../é"}).want(201)
+	r := f.do("GET", "/api/projects/"+url.PathEscape("Tricky \"name\"; X-Evil: 1/../é")+"/export?format=csv", nil).want(200)
+	disp := r.header.Get("Content-Disposition")
+	assertEq(t, r.header.Get("X-Evil"), "")
+	assertEq(t, disp, `attachment; filename="Tricky--name---X-Evil--1.csv"`)
+	if strings.ContainsAny(disp, "\r\n/") || strings.Count(disp, `"`) != 2 {
+		t.Fatalf("Content-Disposition %q is not a single safe file name", disp)
+	}
+}
+
+func TestImportCSVDryRunThenReal(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	file := "title,column,group\nOne,Todo,Ops\nTwo,Review,Ops\n"
+	path := "/api/projects/Alpha/import?format=csv&create=1"
+
+	var dry struct {
+		Format     string   `json:"format"`
+		DryRun     bool     `json:"dry_run"`
+		Created    []string `json:"created"`
+		NewColumns []string `json:"new_columns"`
+		NewGroups  []string `json:"new_groups"`
+	}
+	f.do("POST", path+"&dry_run=1", file).want(200).decode(&dry)
+	assertEq(t, dry.Format, "csv")
+	assertEq(t, dry.DryRun, true)
+	assertEq(t, len(dry.Created), 2)
+	assertEq(t, strings.Join(dry.NewColumns, ","), "Review")
+	assertEq(t, strings.Join(dry.NewGroups, ","), "Ops")
+	var board struct{ Board struct{ Cards []struct{} } }
+	f.do("GET", "/api/projects/Alpha/board", nil).want(200).decode(&board)
+	assertEq(t, len(board.Board.Cards), 0)
+
+	var real = dry
+	f.do("POST", path, file).want(200).decode(&real)
+	assertEq(t, real.DryRun, false)
+	assertEq(t, strings.Join(real.Created, ","), strings.Join(dry.Created, ","))
+	f.do("GET", "/api/projects/Alpha/board", nil).want(200).decode(&board)
+	assertEq(t, len(board.Board.Cards), 2)
+}
+
+func TestImportCSVWithoutCreateNamesWhatIsMissing(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	e := f.do("POST", "/api/projects/Alpha/import?format=csv", "title,column\nOne,Review\n").wantCode(422, "invalid")
+	assertContains(t, e.Error, "Review")
+}
+
+func TestImportJSONNeedsAnEmptyProjectOrReplace(t *testing.T) {
+	f := newFixture(t, "Alpha", "Beta")
+	f.do("POST", "/api/projects/Alpha/cards", map[string]any{"title": "From alpha"}).want(201)
+	snapshot := f.do("GET", "/api/projects/Alpha/export?format=json", nil).want(200).body
+
+	f.do("POST", "/api/projects/Beta/cards", map[string]any{"title": "Already in beta"}).want(201)
+	e := f.do("POST", "/api/projects/Beta/import?format=json", snapshot).wantCode(422, "invalid")
+	assertContains(t, e.Error, "replace")
+
+	var out struct {
+		Cards    int `json:"cards"`
+		Archived int `json:"archived"`
+	}
+	f.do("POST", "/api/projects/Beta/import?format=json&replace=1&dry_run=1", snapshot).want(200).decode(&out)
+	assertEq(t, out.Cards, 1)
+	f.do("POST", "/api/projects/Beta/import?format=json&replace=1", snapshot).want(200)
+	var board struct {
+		Board struct{ Cards []struct{ Title string } }
+	}
+	f.do("GET", "/api/projects/Beta/board", nil).want(200).decode(&board)
+	assertEq(t, len(board.Board.Cards), 1)
+	assertEq(t, board.Board.Cards[0].Title, "From alpha")
+}
+
+func TestImportRefusals(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	f.do("POST", "/api/projects/Alpha/import", "title\nOne\n").wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Alpha/import?format=yaml", "x").wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Alpha/import?format=json", "not json").wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Nobody/import?format=csv", "title\nOne\n").wantCode(404, "not_found")
+	big := "title\n" + strings.Repeat("x", 10<<20+1)
+	f.do("POST", "/api/projects/Alpha/import?format=csv", big).wantCode(413, "too_large")
+
+	req := f.request("POST", "/api/projects/Alpha/import?format=csv", "title\nOne\n") // no X-Waypoint header
+	f.send(req).wantCode(403, "forbidden")
+	var board struct{ Board struct{ Cards []struct{} } }
+	f.do("GET", "/api/projects/Alpha/board", nil).want(200).decode(&board)
+	assertEq(t, len(board.Board.Cards), 0)
 }
