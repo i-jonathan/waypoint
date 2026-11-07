@@ -122,6 +122,10 @@ While it writes, Waypoint keeps a small `.lock` file beside the board, for examp
 
 `waypoint export` writes the whole project (settings, cards and archive) as JSON, to the screen or with `--out FILE`. It never overwrites a file that exists. `waypoint import FILE.json` puts that export into a project, which must be empty unless you add `--replace`. The file is checked before anything is changed: an unknown key, a newer format, a card in a column that does not exist, a repeated id or a bad date all stop the import with a message that names the card. Use it for backups, for moving a project between machines, or to hand a board to a script.
 
+### CSV and Markdown
+
+`waypoint export --format csv` writes one row per card, archived cards included (with `column` set to `Archived`), with the columns `id,title,column,group,priority,depends,created,done,body` and then one column for each extra field. `waypoint import FILE.csv` reads the same shape, including files saved from a spreadsheet (a byte order mark, Windows line endings, and short rows are fine). An empty `id` makes a new card; an `id` the project already has, live or archived, updates that card, and an archived card stays archived. Rows keep their file order within each column. A column or group the project does not have stops the import and is listed, unless you add `--create`. Import is all or nothing: any bad row stops it with its line number and the project is not touched. `waypoint export --format md` writes the project in the Markdown board format with the archive after it; it is a copy to read, not something to import. Without `--format`, the file extension of `--out` or of the import file chooses.
+
 ## Configuration
 
 Waypoint keeps a registry of your projects in a small config file. It is found in this order:
@@ -140,5 +144,4 @@ Run `waypoint agents` and paste the output into your project's `AGENTS.md` or `C
 
 ## What is coming
 
-- CSV import and export, and a Markdown export.
 - An MCP server, so agents can use the board as a tool.

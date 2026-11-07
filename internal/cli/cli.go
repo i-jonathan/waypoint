@@ -64,8 +64,9 @@ Commands:
   archive              Archive every card in a done column
   restore ID           Bring an archived card back (--column X)
   rm ID                Delete a card
-  export               Write the whole project as JSON (--out FILE; to the screen without it)
-  import FILE          Put a JSON export into an empty project (--replace to swap everything)
+  export               Write the project as JSON, CSV or Markdown (--format json|csv|md, --out FILE; to the screen without it)
+  import FILE          Put a JSON export into an empty project (--replace to swap everything),
+                       or a CSV file into any project (--create adds unknown columns and groups)
   agents               Print a snippet to paste into AGENTS.md or CLAUDE.md
   help format          Print the board file format guide
 
