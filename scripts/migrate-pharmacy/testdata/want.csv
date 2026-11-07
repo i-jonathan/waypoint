@@ -1,0 +1,15 @@
+id,title,column,group,priority,depends,created,done,body,merged,prs
+T-3,Authenticate the /ws socket,Up Next,Security hardening,P0,"T-1,T-2",2026-10-26,,"`/ws` bypasses the middleware stack.
+
+- [ ] step one
+- [x] step two",,
+T-4,Fix money rounding,Up Next,Reliability & operations,P1,,2026-10-27,,"Body with code:
+
+```go
+### T-99 not a card
+x := ""a,b""
+```","T-8, T-9",
+T-5,Notification centre,Backlog,Notifications,P2,,2026-10-28,,"Quoted ""text"", commas, and
+two lines.",,
+T-2,Manual stock management,Archived,Inventory control,,,,2026-10-28,The app had no way to change stock.,,#34
+T-1,First thing,Archived,Point of sale,,,,2026-09-30,    indented first line stays indented,,"#1, #2"
