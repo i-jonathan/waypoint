@@ -21,6 +21,10 @@ type Querier interface {
 // written with ? placeholders.
 type Dialect interface {
 	Rebind(query string) string
+	// ValidText says whether the engine can store s as text. The error says
+	// why not, without naming where s came from. Save calls it on every
+	// string it binds.
+	ValidText(s string) error
 }
 
 // Store reads and writes boards through a Dialect.

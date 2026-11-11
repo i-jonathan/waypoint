@@ -5,6 +5,7 @@
 package dbconn
 
 import (
+	"errors"
 	"net"
 	"regexp"
 	"strings"
@@ -119,3 +120,10 @@ func Scrub(err error, secrets ...string) error {
 	}
 	return &scrubbed{msg: out, err: err}
 }
+
+// ErrUnreachable marks an error from not being able to reach a server at all
+// (nothing listening, a timeout, a DNS failure).
+var ErrUnreachable = errors.New("cannot reach the database server")
+
+// ErrPassword marks an error from the server rejecting the user or password.
+var ErrPassword = errors.New("the database server rejected the user or password")

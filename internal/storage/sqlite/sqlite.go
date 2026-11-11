@@ -24,6 +24,9 @@ type dialect struct{}
 
 func (dialect) Rebind(q string) string { return q }
 
+// ValidText accepts everything: SQLite stores any text.
+func (dialect) ValidText(string) error { return nil }
+
 var store = sqlstore.Store{D: dialect{}}
 
 // execer is what a pinned connection offers a transaction body.
