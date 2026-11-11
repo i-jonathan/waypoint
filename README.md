@@ -2,17 +2,19 @@
 
 Waypoint is a local kanban tracker for any kind of project: a home renovation, a thesis, a product launch, a software release. Your whole board is one file: a SQLite database by default, or a Markdown file that you can read, edit by hand, and keep in version control. A command line tool lets you, or an AI agent working for you, add cards, move them between columns, and see what to work on next. Cards can depend on each other, so Waypoint can tell you which ones are ready and which are still blocked.
 
-Waypoint comes as one program with two faces: a command line for you and your agents, and a web UI that shows the same board in your browser and updates as the file changes. SQLite storage and the MCP server are not in this version yet.
+Waypoint comes as one program with two faces: a command line for you and your agents, and a web UI that shows the same board in your browser and updates as the file changes.
 
 ## Install
 
-You need Go installed. From a checkout of this repository:
+Download the archive for your computer from the [latest release](https://github.com/i-jonathan/waypoint/releases/latest) (macOS, Linux or Windows; Intel or ARM), check it against `SHA256SUMS`, unpack it and copy `waypoint` (`waypoint.exe` on Windows) somewhere on your `PATH`. The Windows build is new and has had less use than the others. `waypoint version` says which version you have.
+
+To build it yourself you need Go and Node installed. From a checkout of this repository:
 
 ```
 make build
 ```
 
-This builds `bin/waypoint`. Copy it somewhere on your `PATH` to use it from anywhere.
+This builds `bin/waypoint`, with the web UI inside it. Copy it somewhere on your `PATH` to use it from anywhere. Maintainers cut a release with `make release VERSION=vX.Y.Z`, which writes the archives and `SHA256SUMS` to `release/`.
 
 ## Quick start
 

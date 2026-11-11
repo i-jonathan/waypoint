@@ -1,4 +1,4 @@
-.PHONY: test test-servers e2e build build-go web vet
+.PHONY: test test-servers e2e build build-go web vet release
 
 test:
 	go test ./...
@@ -24,3 +24,8 @@ web:
 
 vet:
 	go vet ./...
+
+# Release archives for every platform: make release VERSION=v0.1.0
+release:
+	@test -n "$(VERSION)" || (echo "usage: make release VERSION=v0.1.0" >&2; exit 2)
+	scripts/release.sh $(VERSION)
