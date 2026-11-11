@@ -6,7 +6,7 @@ Waypoint comes as one program with two faces: a command line for you and your ag
 
 ## Install
 
-Download the archive for your computer from the [latest release](https://github.com/i-jonathan/waypoint/releases/latest) (macOS or Linux, Intel or ARM), check it against `SHA256SUMS`, unpack it and copy `waypoint` somewhere on your `PATH`. `waypoint version` says which version you have.
+Download the archive for your computer from the [latest release](https://github.com/i-jonathan/waypoint/releases/latest) (macOS, Linux or Windows; Intel or ARM), check it against `SHA256SUMS`, unpack it and copy `waypoint` (`waypoint.exe` on Windows) somewhere on your `PATH`. The Windows build is new and has had less use than the others. `waypoint version` says which version you have.
 
 To build it yourself you need Go and Node installed. From a checkout of this repository:
 

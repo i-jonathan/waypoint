@@ -37,11 +37,15 @@ func main() {
 
 // openURL asks the desktop to open url in the default browser.
 func openURL(url string) error {
-	name := "xdg-open"
-	if runtime.GOOS == "darwin" {
-		name = "open"
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
 	}
-	cmd := exec.Command(name, url)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
