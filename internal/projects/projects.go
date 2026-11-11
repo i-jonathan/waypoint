@@ -199,21 +199,14 @@ func addServer(ctx context.Context, cfgPath string, env func(string) string, nam
 	}
 	// The server can be slow, so nothing here waits on it while holding the
 	// config lock. First look at the registry, then at the server, then register.
-	checkRegistry := func(cfg *config.Config) (config.ProjectRef, error) {
-		check := &config.Config{Projects: slices.Clone(cfg.Projects)}
-		if err := check.Add(want); err != nil {
-			return config.ProjectRef{}, err
-		}
-		return check.Projects[len(check.Projects)-1], nil
-	}
 	cfg, err := config.Load(cfgPath, env)
 	if err != nil {
 		return config.ProjectRef{}, err
 	}
-	ref, err := checkRegistry(cfg)
-	if err != nil {
+	if err := (&config.Config{Projects: slices.Clone(cfg.Projects)}).Add(want); err != nil {
 		return config.ProjectRef{}, err
 	}
+	ref := want
 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -242,12 +235,7 @@ func addServer(ctx context.Context, cfgPath string, env func(string) string, nam
 
 	// Register, under the lock and quickly. The registry may have changed while
 	// the server was answering, so it is checked again.
-	err = config.Update(cfgPath, env, func(cfg *config.Config) error {
-		if _, err := checkRegistry(cfg); err != nil {
-			return err
-		}
-		return cfg.Add(want)
-	})
+	err = config.Update(cfgPath, env, func(cfg *config.Config) error { return cfg.Add(want) })
 	if err != nil {
 		if created { // the board was made but the project cannot be registered: take it back
 			dctx, dcancel := context.WithTimeout(context.Background(), 30*time.Second)

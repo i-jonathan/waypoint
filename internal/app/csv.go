@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -49,12 +48,19 @@ type CSVResult struct {
 // then one column for each extra field any card has, in the order first seen.
 // Archived cards have column Archived.
 func (s *Service) ExportCSV(ctx context.Context, w io.Writer) error {
+	_, _, err := s.ExportCSVCounted(ctx, w)
+	return err
+}
+
+// ExportCSVCounted is ExportCSV that also says how many live and archived cards
+// it wrote, from the same read.
+func (s *Service) ExportCSVCounted(ctx context.Context, w io.Writer) (cards, archived int, err error) {
 	b, err := s.read(ctx)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	if err := checkArchivedColumn(&b.Settings); err != nil {
-		return err
+		return 0, 0, err
 	}
 	var extras []string
 	for _, list := range [][]domain.Card{b.Cards, b.Archived} {
@@ -92,7 +98,7 @@ func (s *Service) ExportCSV(ctx context.Context, w io.Writer) error {
 		row(c, ArchivedColumn)
 	}
 	cw.Flush()
-	return cw.Error()
+	return len(b.Cards), len(b.Archived), cw.Error()
 }
 
 func dateCell(t time.Time) string {
@@ -119,16 +125,23 @@ type MarkdownFormat struct {
 // The formatting is the markdown adapter's, which imports this package, so the
 // caller passes it in (see MarkdownFormat).
 func (s *Service) ExportMarkdown(ctx context.Context, w io.Writer, f MarkdownFormat) error {
+	_, _, err := s.ExportMarkdownCounted(ctx, w, f)
+	return err
+}
+
+// ExportMarkdownCounted is ExportMarkdown that also says how many live and
+// archived cards it wrote, from the same read.
+func (s *Service) ExportMarkdownCounted(ctx context.Context, w io.Writer, f MarkdownFormat) (cards, archived int, err error) {
 	b, err := s.read(ctx)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	out := f.Board(b)
 	if len(b.Archived) > 0 {
 		out = append(append(out, '\n'), f.Archive(b.Archived)...)
 	}
 	_, err = w.Write(out)
-	return err
+	return len(b.Cards), len(b.Archived), err
 }
 
 // csvRow is one data row of a CSV file.
@@ -332,8 +345,7 @@ func importRows(b *domain.Board, t csvTable, o CSVOptions, now time.Time) (CSVRe
 
 	// New ids must not collide with an id the file names.
 	for id := range idLine {
-		prefix, num, _ := strings.Cut(id, "-")
-		if n, err := strconv.Atoi(num); err == nil && prefix == b.Settings.Prefix {
+		if n, ok := domain.CardNumberIn(b.Settings.Prefix, domain.CardID(id)); ok {
 			b.Settings.NextID = max(b.Settings.NextID, n+1)
 		}
 	}

@@ -41,18 +41,20 @@ func formatOf(flagValue, file, def string) string {
 }
 
 // render writes the project in the given format.
-func render(r *runner, svc *app.Service, kind string, w io.Writer) error {
+// render writes the project in the given format and says how many live and
+// archived cards it wrote, from the one read the file is made from.
+func render(r *runner, svc *app.Service, kind string, w io.Writer) (cards, archived int, err error) {
 	switch kind {
 	case "csv":
-		return svc.ExportCSV(r.ctx, w)
+		return svc.ExportCSVCounted(r.ctx, w)
 	case "md":
-		return svc.ExportMarkdown(r.ctx, w, app.MarkdownFormat{Board: markdown.Format, Archive: markdown.FormatArchive})
+		return svc.ExportMarkdownCounted(r.ctx, w, app.MarkdownFormat{Board: markdown.Format, Archive: markdown.FormatArchive})
 	}
 	snap, err := svc.Snapshot(r.ctx)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
-	return app.WriteSnapshot(w, snap)
+	return len(snap.Cards), len(snap.Archived), app.WriteSnapshot(w, snap)
 }
 
 func (r *runner) abs(path string) string {
@@ -85,7 +87,7 @@ func (r *runner) cmdExport(args []string) int {
 	if out == "" {
 		// Rendered first, so a failure prints nothing to stdout.
 		var buf bytes.Buffer
-		if err := render(r, svc, kind, &buf); err != nil {
+		if _, _, err := render(r, svc, kind, &buf); err != nil {
 			return r.fail(err)
 		}
 		if _, err := r.env.Stdout.Write(buf.Bytes()); err != nil {
@@ -94,10 +96,7 @@ func (r *runner) cmdExport(args []string) int {
 		return exitOK
 	}
 	var buf bytes.Buffer
-	if err := render(r, svc, kind, &buf); err != nil {
-		return r.fail(err)
-	}
-	snap, err := svc.Snapshot(r.ctx) // for the counts
+	nCards, nArchived, err := render(r, svc, kind, &buf)
 	if err != nil {
 		return r.fail(err)
 	}
@@ -124,9 +123,9 @@ func (r *runner) cmdExport(args []string) int {
 			File     string `json:"file"`
 			Cards    int    `json:"cards"`
 			Archived int    `json:"archived"`
-		}{path, len(snap.Cards), len(snap.Archived)})
+		}{path, nCards, nArchived})
 	} else {
-		fmt.Fprintf(r.env.Stdout, "Exported %s to %s (%s)\n", ref.Name, path, counts(len(snap.Cards), len(snap.Archived), "and"))
+		fmt.Fprintf(r.env.Stdout, "Exported %s to %s (%s)\n", ref.Name, path, counts(nCards, nArchived, "and"))
 	}
 	return exitOK
 }

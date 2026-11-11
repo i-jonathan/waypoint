@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"waypoint/internal/domain"
 )
@@ -78,8 +76,7 @@ func (s Store) Load(ctx context.Context, q Querier) (*domain.Board, int64, error
 func keepNextIDPastCards(b *domain.Board) {
 	for _, list := range [][]domain.Card{b.Cards, b.Archived} {
 		for _, c := range list {
-			prefix, num, _ := strings.Cut(string(c.ID), "-")
-			if n, err := strconv.Atoi(num); err == nil && prefix == b.Settings.Prefix {
+			if n, ok := domain.CardNumberIn(b.Settings.Prefix, c.ID); ok {
 				b.Settings.NextID = max(b.Settings.NextID, n+1)
 			}
 		}
