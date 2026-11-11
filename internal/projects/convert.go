@@ -256,7 +256,7 @@ func Convert(ctx context.Context, cfgPath string, env func(string) string, name 
 	if len(problems) > 0 {
 		if ref.IsServer() && retireFailed {
 			return res, fmt.Errorf("project %q now uses %s, but the old database %s could not be marked retired (%s), so it is still a live board that nothing uses. To retire it, run: %s",
-				ref.Name, res.Ref.Display(), ref.Display(), strings.TrimPrefix(problems[0], "could not mark the old database as retired: "), storage.RetireStatement(ref))
+				ref.Name, res.Ref.Display(), ref.Display(), strings.TrimPrefix(problems[0], "could not mark the old database as retired: "), storage.RetireStatement())
 		}
 		return res, fmt.Errorf("project %q now uses %s, but %s; the old files stayed where they were", ref.Name, res.Ref.Display(), strings.Join(problems, " and "))
 	}

@@ -62,8 +62,8 @@ func IsLocal(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// DefaultPort is the standard port of an engine ("postgres").
-func DefaultPort(engine string) int {
+// DefaultPort is the standard Postgres port.
+func DefaultPort() int {
 	return 5432
 }
 
@@ -140,4 +140,15 @@ type ProbeResult struct {
 // BareHost is host without the [ ] that surround an IPv6 address.
 func BareHost(host string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+}
+
+// SameHost reports whether two host names are the same server: equal ignoring
+// case, or both on this computer (localhost, 127.0.0.1 and ::1 are one machine).
+// Unix socket paths are compared as they are.
+func SameHost(a, b string) bool {
+	a, b = BareHost(a), BareHost(b)
+	if strings.EqualFold(a, b) {
+		return true
+	}
+	return IsLocal(a) && IsLocal(b) && !strings.HasPrefix(a, "/") && !strings.HasPrefix(b, "/")
 }

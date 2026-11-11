@@ -133,6 +133,6 @@ func Discard(ctx context.Context, ref config.ProjectRef) error {
 
 // RetireStatement is the SQL that marks a server board as retired, for a
 // message that tells a person how to do it by hand when Waypoint could not.
-func RetireStatement(ref config.ProjectRef) string {
+func RetireStatement() string {
 	return "UPDATE waypoint_meta SET value = 'true' WHERE key = 'retired'"
 }

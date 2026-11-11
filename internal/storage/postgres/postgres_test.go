@@ -357,3 +357,60 @@ func hardBoardForCreate() (*domain.Board, string) {
 	b.Settings.NextID = 6
 	return b, ""
 }
+
+// A role whose search_path puts another schema first must still get its board
+// in public, where the checks look.
+func TestBoardGoesInPublicWhateverTheSearchPath(t *testing.T) {
+	ref := servertest.Postgres(t)
+	admin := raw(t, ref)
+	mustExec(t, admin, `CREATE ROLE sp_role LOGIN PASSWORD 'sp'`)
+	t.Cleanup(func() { admin.Exec(`DROP OWNED BY sp_role`); admin.Exec(`DROP ROLE IF EXISTS sp_role`) })
+	mustExec(t, admin, `CREATE SCHEMA sp_role AUTHORIZATION sp_role`)
+	mustExec(t, admin, `GRANT ALL ON SCHEMA public TO sp_role`)
+	mustExec(t, admin, `ALTER ROLE sp_role SET search_path = sp_role, public`)
+	ref.User = "sp_role"
+	t.Setenv(dbconn.PasswordVar(ref.Name), "sp")
+
+	r, err := postgres.Create(ctx, ref, settings(), false)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, _, err := r.Load(ctx); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := tables(t, admin); len(got) != 6 {
+		t.Fatalf("public holds %v, want the six Waypoint tables", got)
+	}
+}
+
+func TestRevisionShowsRetirement(t *testing.T) {
+	r, _ := newRepo(t)
+	before, err := r.Revision(ctx)
+	if err != nil || before < 0 {
+		t.Fatalf("Revision = %d, %v", before, err)
+	}
+	unlock, err := r.Lock(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Retire(ctx); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	after, err := r.Revision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after == before || after >= 0 {
+		t.Fatalf("a retired board must read as a changed revision, got %d (was %d)", after, before)
+	}
+}
+
+func TestProbeOfAMissingDatabaseIsNotAnErrorAboutAnother(t *testing.T) {
+	ref := servertest.Postgres(t)
+	ref.Database += "_missing"
+	res, err := postgres.Probe(ctx, ref)
+	if err != nil || !res.Reachable || res.DatabaseExists {
+		t.Fatalf("Probe = %+v, %v", res, err)
+	}
+}

@@ -3,6 +3,7 @@ package projects
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -293,4 +294,45 @@ func TestAddServerOptionDefaults(t *testing.T) {
 			t.Fatalf("default database = %q", got)
 		}
 	})
+}
+
+// Adding a project connects to the server, which can be slow. It must not hold
+// the config lock meanwhile, or every other change to the config waits.
+func TestAddDoesNotHoldTheConfigLockWhileTheServerStalls(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close() // accepted, then never answered
+		}
+	}()
+	cfgPath, env := sandbox(t)
+	ref := config.ProjectRef{Name: "stall", Storage: "postgres", Host: "127.0.0.1", Port: ln.Addr().(*net.TCPAddr).Port, User: "u", Database: "d", SSL: "disable"}
+	ctx, cancel := context.WithCancel(bg)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); Add(ctx, cfgPath, env, serverAdd(ref)) }()
+	time.Sleep(500 * time.Millisecond) // Add is now waiting on the server
+
+	changed := make(chan error, 1)
+	go func() {
+		changed <- config.Update(cfgPath, env, func(c *config.Config) error { return c.Add(config.ProjectRef{Name: "other", Path: "/tmp/other.md"}) })
+	}()
+	select {
+	case err := <-changed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("another config change waited for a stalled server")
+	}
+	cancel()
+	<-done
 }

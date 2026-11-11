@@ -48,11 +48,16 @@ func (p ProjectRef) Display() string {
 	if !p.IsServer() {
 		return p.Path
 	}
-	port := p.Port
-	if port == 0 {
-		port = dbconn.DefaultPort(p.Storage)
+	return fmt.Sprintf("%s:%d/%s", p.Host, p.EffectivePort(), p.Database)
+}
+
+// EffectivePort is the port to connect to: Port, or the engine's default when
+// it is 0.
+func (p ProjectRef) EffectivePort() int {
+	if p.Port == 0 {
+		return dbconn.DefaultPort()
 	}
-	return fmt.Sprintf("%s:%d/%s", p.Host, port, p.Database)
+	return p.Port
 }
 
 // Config is the global configuration.

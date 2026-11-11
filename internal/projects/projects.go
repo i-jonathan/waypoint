@@ -165,7 +165,7 @@ func serverRef(name string, so ServerOptions) (config.ProjectRef, error) {
 		so.Host = "localhost"
 	}
 	if so.Port == 0 {
-		so.Port = dbconn.DefaultPort(so.Engine)
+		so.Port = dbconn.DefaultPort()
 	}
 	if strings.TrimSpace(so.User) == "" {
 		return config.ProjectRef{}, fmt.Errorf("%w: a database user is required (--user)", domain.ErrInvalid)
@@ -197,39 +197,62 @@ func addServer(ctx context.Context, cfgPath string, env func(string) string, nam
 			o.Warn(dbconn.UnencryptedNote)
 		}
 	}
-	// The config lock is held while the server answers, so a server that stalls
-	// must not hold every other config change for good.
+	// The server can be slow, so nothing here waits on it while holding the
+	// config lock. First look at the registry, then at the server, then register.
+	checkRegistry := func(cfg *config.Config) (config.ProjectRef, error) {
+		check := &config.Config{Projects: slices.Clone(cfg.Projects)}
+		if err := check.Add(want); err != nil {
+			return config.ProjectRef{}, err
+		}
+		return check.Projects[len(check.Projects)-1], nil
+	}
+	cfg, err := config.Load(cfgPath, env)
+	if err != nil {
+		return config.ProjectRef{}, err
+	}
+	ref, err := checkRegistry(cfg)
+	if err != nil {
+		return config.ProjectRef{}, err
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	var ref config.ProjectRef
-	var created bool
-	err = config.Update(cfgPath, env, func(cfg *config.Config) error {
-		if err := cfg.Add(want); err != nil {
-			return err
-		}
-		ref = cfg.Projects[len(cfg.Projects)-1]
-		probe, err := storage.Probe(ctx, ref)
+	probe, err := storage.Probe(ctx, ref)
+	if err != nil {
+		return config.ProjectRef{}, err
+	}
+	created := false
+	switch {
+	case probe.DatabaseExists && probe.HasBoard:
+		repo, err := storage.Open(ref)
 		if err != nil {
+			return config.ProjectRef{}, err
+		}
+		if _, _, err = repo.Load(ctx); err != nil { // proves it is a board this build can use, and not retired
+			return config.ProjectRef{}, err
+		}
+	case !probe.DatabaseExists && !o.Server.CreateDatabase:
+		return config.ProjectRef{}, fmt.Errorf("%w: database %q does not exist on %s; create it, or add --create-database", domain.ErrNotFound, ref.Database, ref.Display())
+	default:
+		if _, err = storage.CreateWith(ctx, ref, settings, storage.CreateOptions{CreateDatabase: !probe.DatabaseExists}); err != nil {
+			return config.ProjectRef{}, err
+		}
+		created = true
+	}
+
+	// Register, under the lock and quickly. The registry may have changed while
+	// the server was answering, so it is checked again.
+	err = config.Update(cfgPath, env, func(cfg *config.Config) error {
+		if _, err := checkRegistry(cfg); err != nil {
 			return err
 		}
-		switch {
-		case probe.DatabaseExists && probe.HasBoard:
-			repo, err := storage.Open(ref)
-			if err != nil {
-				return err
-			}
-			_, _, err = repo.Load(ctx) // proves it is a board this build can use, and not retired
-			return err
-		case !probe.DatabaseExists && !o.Server.CreateDatabase:
-			return fmt.Errorf("%w: database %q does not exist on %s; create it, or add --create-database", domain.ErrNotFound, ref.Database, ref.Display())
-		}
-		_, err = storage.CreateWith(ctx, ref, settings, storage.CreateOptions{CreateDatabase: !probe.DatabaseExists})
-		created = err == nil
-		return err
+		return cfg.Add(want)
 	})
 	if err != nil {
-		if created { // the board was made, so it was the save that failed
-			if derr := storage.Discard(ctx, ref); derr != nil {
+		if created { // the board was made but the project cannot be registered: take it back
+			dctx, dcancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer dcancel()
+			if derr := storage.Discard(dctx, ref); derr != nil {
 				err = fmt.Errorf("%w (the new board in %s could not be removed: %v)", err, ref.Display(), derr)
 			}
 		}

@@ -581,3 +581,27 @@ func TestFileProjectMayShareAPasswordVariableNameWithAServerProject(t *testing.T
 	assertNoErr(t, c.Add(ProjectRef{Name: "pharmacy_db", Path: "/tmp/pharmacy_db/BOARD.md"}))
 	assertIs(t, c.Add(serverRef("pharmacy.db")), domain.ErrInvalid) // two server projects still collide
 }
+
+func TestEffectivePort(t *testing.T) {
+	p := serverRef("a")
+	p.Port = 0
+	assertEqual(t, p.EffectivePort(), 5432)
+	p.Port = 6543
+	assertEqual(t, p.EffectivePort(), 6543)
+}
+
+// localhost, 127.0.0.1 and ::1 are one server, so one database there is one project.
+func TestServerEntryRefusesTheSameDatabaseUnderAnotherLoopbackName(t *testing.T) {
+	c := &Config{}
+	assertNoErr(t, c.Add(serverRef("one")))
+	for i, host := range []string{"127.0.0.1", "::1", "[::1]", "127.5.5.5"} {
+		twin := serverRef(fmt.Sprintf("twin%d", i))
+		twin.Database = "db_one"
+		twin.Host = host
+		assertIs(t, c.Add(twin), domain.ErrInvalid)
+	}
+	other := serverRef("elsewhere")
+	other.Database = "db_one"
+	other.Host = "db.example.com"
+	assertNoErr(t, c.Add(other))
+}

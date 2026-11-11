@@ -98,13 +98,11 @@ func connConfig(ref config.ProjectRef, database string) (*pgx.ConnConfig, error)
 	if ssl == "" {
 		ssl = dbconn.DefaultSSL(ref.Host)
 	}
-	port := ref.Port
-	if port == 0 {
-		port = dbconn.DefaultPort("postgres")
-	}
 	dsn := strings.Join([]string{
 		"host=" + quoteDSN(dbconn.BareHost(ref.Host)),
-		"port=" + strconv.Itoa(port),
+		"port=" + strconv.Itoa(ref.EffectivePort()),
+		// Whatever the role's own search_path says, the board lives in public.
+		"search_path=public",
 		"user=" + quoteDSN(ref.User),
 		"dbname=" + quoteDSN(database),
 		"sslmode=" + ssl,
@@ -154,7 +152,7 @@ func connectError(ref config.ProjectRef, database string, err error) error {
 			}
 			return fmt.Errorf("%w: %s rejected the password for user %q: check the value; %s", dbconn.ErrPassword, ref.Display(), ref.User, dbconn.PasswordHelp(ref.Name))
 		case "3D000": // invalid catalog name
-			return fmt.Errorf("%w: database %q does not exist on %s:%d; create it, or ask Waypoint to with --create-database", domain.ErrNotFound, database, ref.Host, portOf(ref))
+			return fmt.Errorf("%w: database %q does not exist on %s:%d; create it, or ask Waypoint to with --create-database", domain.ErrNotFound, database, ref.Host, ref.EffectivePort())
 		}
 		return fmt.Errorf("cannot use %s: %s", ref.Display(), pe.Message)
 	}
@@ -162,14 +160,7 @@ func connectError(ref config.ProjectRef, database string, err error) error {
 		// The server answered; it asked for a password method Waypoint refuses.
 		return fmt.Errorf("%w: %s uses md5 or clear-text password authentication, and Waypoint accepts only SCRAM (scram-sha-256) so the password cannot be collected by a look-alike server; change the server's pg_hba.conf and the user's password to SCRAM", domain.ErrInvalid, ref.Display())
 	}
-	return fmt.Errorf("%w at %s:%d: %v", dbconn.ErrUnreachable, ref.Host, portOf(ref), err)
-}
-
-func portOf(ref config.ProjectRef) int {
-	if ref.Port == 0 {
-		return dbconn.DefaultPort("postgres")
-	}
-	return ref.Port
+	return fmt.Errorf("%w at %s:%d: %v", dbconn.ErrUnreachable, ref.Host, ref.EffectivePort(), err)
 }
 
 // plain scrubs a driver error and, for the few the user can act on, says how.
@@ -300,7 +291,8 @@ func (r *Repo) Save(ctx context.Context, b *domain.Board) error {
 
 // Revision returns the project's save counter: a number that changes with every
 // save, for watching a board without loading it. It is one short query and does
-// not check the schema.
+// not check the schema. A retired board reads as -1, which no save gives, so a
+// watcher sees that something changed.
 func (r *Repo) Revision(ctx context.Context) (int64, error) {
 	db, err := open(ctx, r.ref, r.ref.Database)
 	if err != nil {
@@ -308,7 +300,12 @@ func (r *Repo) Revision(ctx context.Context) (int64, error) {
 	}
 	defer db.Close()
 	var rev int64
-	err = db.QueryRowContext(ctx, `SELECT revision FROM project WHERE id = 1`).Scan(&rev)
+	var retired string
+	err = db.QueryRowContext(ctx, `SELECT p.revision, COALESCE((SELECT value FROM waypoint_meta WHERE key = 'retired'), 'false')
+		FROM project p WHERE p.id = 1`).Scan(&rev, &retired)
+	if retired == "true" {
+		return -1, nil // a number no save gives, so a watcher sees the change
+	}
 	return rev, r.plain(err)
 }
 
@@ -383,6 +380,9 @@ func createDB(ctx context.Context, ref config.ProjectRef) error {
 		return fmt.Errorf("%w: %q is not a usable Postgres database name (1-63 characters, no NUL)", domain.ErrInvalid, ref.Database)
 	}
 	db, err := open(ctx, ref, "postgres")
+	if errors.Is(err, domain.ErrNotFound) { // a server that has no database of that name
+		db, err = open(ctx, ref, "template1")
+	}
 	if err != nil {
 		return err
 	}
@@ -394,12 +394,12 @@ func createDB(ctx context.Context, ref config.ProjectRef) error {
 	if exists {
 		return nil
 	}
-	stmt := `CREATE DATABASE ` + quoteIdent(ref.Database) + ` ENCODING 'UTF8'`
+	stmt := `CREATE DATABASE ` + quoteIdent(ref.Database) + ` ENCODING 'UTF8' TEMPLATE template0`
 	if _, err := db.ExecContext(ctx, stmt); err != nil {
 		err = dbconn.Scrub(err, password(ref))
 		var pe *pgconn.PgError
 		if errors.As(err, &pe) && pe.Code == "42501" {
-			return fmt.Errorf("the user %q may not create databases on %s:%d; create it yourself with: %s;", ref.User, ref.Host, portOf(ref), stmt)
+			return fmt.Errorf("the user %q may not create databases on %s:%d; create it yourself with: %s;", ref.User, ref.Host, ref.EffectivePort(), stmt)
 		}
 		return err
 	}
@@ -413,12 +413,8 @@ type ProbeResult = dbconn.ProbeResult
 func Probe(ctx context.Context, ref config.ProjectRef) (ProbeResult, error) {
 	db, err := open(ctx, ref, ref.Database)
 	if errors.Is(err, domain.ErrNotFound) {
-		// The database is missing; the server itself may still be fine.
-		m, merr := open(ctx, ref, "postgres")
-		if merr != nil {
-			return ProbeResult{}, merr
-		}
-		m.Close()
+		// The server answered, and the user and password were accepted (the
+		// answer comes after authentication): only the database is missing.
 		return ProbeResult{Reachable: true}, nil
 	}
 	if err != nil {

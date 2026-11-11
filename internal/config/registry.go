@@ -66,13 +66,7 @@ func (c *Config) Add(p ProjectRef) error {
 // sameDatabase reports whether two server entries of one engine name the same
 // database: the same host and port (0 means the engine's default) and name.
 func sameDatabase(a, b ProjectRef) bool {
-	port := func(p ProjectRef) int {
-		if p.Port == 0 {
-			return dbconn.DefaultPort(p.Storage)
-		}
-		return p.Port
-	}
-	return strings.EqualFold(a.Host, b.Host) && port(a) == port(b) && a.Database == b.Database
+	return dbconn.SameHost(a.Host, b.Host) && a.EffectivePort() == b.EffectivePort() && a.Database == b.Database
 }
 
 func validateServer(p ProjectRef) error {
