@@ -16,6 +16,7 @@ import (
 	"github.com/gofrs/flock"
 	"gopkg.in/yaml.v3"
 
+	"waypoint/internal/dbconn"
 	"waypoint/internal/domain"
 )
 
@@ -23,12 +24,35 @@ const defaultPort = 4747
 
 var tlsModes = []string{"auto", "on", "off"}
 
-// ProjectRef registers one board. Storage is "markdown" or "sqlite"; Path is
-// absolute.
+// ProjectRef registers one board. Storage is "markdown", "sqlite", "postgres"
+// or "mysql". A file project has an absolute Path. A server project has Host,
+// Port, Database, User and SSL instead, and never a password: that comes from
+// the environment (see package dbconn).
 type ProjectRef struct {
-	Name    string `yaml:"name"`
-	Storage string `yaml:"storage"`
-	Path    string `yaml:"path"`
+	Name     string `yaml:"name"`
+	Storage  string `yaml:"storage"`
+	Path     string `yaml:"path,omitempty"`
+	Host     string `yaml:"host,omitempty"`
+	Port     int    `yaml:"port,omitempty"`
+	Database string `yaml:"database,omitempty"`
+	User     string `yaml:"user,omitempty"`
+	SSL      string `yaml:"ssl,omitempty"`
+}
+
+// IsServer reports whether the project lives in a database server.
+func (p ProjectRef) IsServer() bool { return p.Storage == "postgres" || p.Storage == "mysql" }
+
+// Display is where the project lives, for people: its path, or
+// host:port/database for a server. It never includes the user or a password.
+func (p ProjectRef) Display() string {
+	if !p.IsServer() {
+		return p.Path
+	}
+	port := p.Port
+	if port == 0 {
+		port = dbconn.DefaultPort(p.Storage)
+	}
+	return fmt.Sprintf("%s:%d/%s", p.Host, port, p.Database)
 }
 
 // Config is the global configuration.

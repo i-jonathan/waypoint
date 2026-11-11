@@ -475,3 +475,74 @@ func TestLoadErrorSaysWhatIsWrongWithoutThePath(t *testing.T) {
 		}
 	}
 }
+
+func serverRef(name string) ProjectRef {
+	return ProjectRef{Name: name, Storage: "postgres", Host: "localhost", Port: 5432, Database: "db_" + name, User: "waypoint", SSL: "prefer"}
+}
+
+func TestServerEntryRoundTrip(t *testing.T) {
+	c := &Config{Port: 4747, TLS: "auto", DataDir: "/x"}
+	assertNoErr(t, c.Add(serverRef("pharmacy")))
+	if c.Projects[0].Path != "" {
+		t.Fatalf("server entry got a path: %q", c.Projects[0].Path)
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	assertNoErr(t, c.Save(path))
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "path:") {
+		t.Errorf("saved server entry has a path key:\n%s", data)
+	}
+	got, err := Load(path, envOf(map[string]string{"HOME": "/h"}))
+	assertNoErr(t, err)
+	assertEqual(t, got.Projects, c.Projects)
+	if !got.Projects[0].IsServer() || got.Projects[0].Display() != "localhost:5432/db_pharmacy" {
+		t.Errorf("IsServer/Display wrong: %v %q", got.Projects[0].IsServer(), got.Projects[0].Display())
+	}
+}
+
+func TestServerEntryNeedsHostUserDatabase(t *testing.T) {
+	for _, mut := range []func(*ProjectRef){
+		func(p *ProjectRef) { p.Host = "" },
+		func(p *ProjectRef) { p.User = "" },
+		func(p *ProjectRef) { p.Database = "" },
+		func(p *ProjectRef) { p.Port = 70000 },
+		func(p *ProjectRef) { p.Port = -1 },
+		func(p *ProjectRef) { p.SSL = "bogus" },
+		func(p *ProjectRef) { p.Path = "/some/file" },
+	} {
+		p := serverRef("a")
+		mut(&p)
+		c := &Config{}
+		assertIs(t, c.Add(p), domain.ErrInvalid)
+	}
+	c := &Config{}
+	p := serverRef("a")
+	p.Port = 0
+	p.SSL = ""
+	assertNoErr(t, c.Add(p))
+}
+
+func TestServerEntryRefusesCollidingPasswordVars(t *testing.T) {
+	c := &Config{}
+	assertNoErr(t, c.Add(serverRef("a-b")))
+	err := c.Add(serverRef("a_b"))
+	assertIs(t, err, domain.ErrInvalid)
+	if !strings.Contains(err.Error(), "WAYPOINT_DB_PASSWORD_A_B") {
+		t.Errorf("message should name the variable: %v", err)
+	}
+}
+
+func TestServerEntryRefusesEmptyVar(t *testing.T) {
+	c := &Config{}
+	assertIs(t, c.Add(serverRef("日本語")), domain.ErrInvalid)
+}
+
+func TestFileEntryUnchanged(t *testing.T) {
+	c := &Config{}
+	assertNoErr(t, c.Add(ProjectRef{Name: "日本語", Path: "/tmp/日本語/BOARD.md"}))
+	assertEqual(t, c.Projects[0].Storage, "markdown")
+	assertIs(t, c.Add(ProjectRef{Name: "f", Path: "/tmp/f/BOARD.md", Host: "h"}), domain.ErrInvalid)
+	if c.Projects[0].IsServer() || c.Projects[0].Display() != "/tmp/日本語/BOARD.md" {
+		t.Errorf("file entry display wrong: %q", c.Projects[0].Display())
+	}
+}
