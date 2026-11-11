@@ -67,7 +67,7 @@ projects:
 
 - Read from `WAYPOINT_DB_PASSWORD_<NAME>`, where `<NAME>` is the project name upper-cased with every character other than A-Z and 0-9 turned into `_`. If two project names would give the same variable, `project add` refuses the second and says why.
 - *My call:* if the variable is unset, Waypoint tries to connect without a password, since a local Docker server may allow it. If the server asks for one, the error says `set WAYPOINT_DB_PASSWORD_PHARMACY` (the exact name). It never prompts.
-- *My call:* a fallback `WAYPOINT_DB_PASSWORD` (no project name) is used when the per-project variable is unset, for people with one server. Documented once.
+- A global `WAYPOINT_DB_PASSWORD` serves every server project, and the per-project variable overrides it for that project (owner's request, 2026-11-11). Messages that need a password name both.
 - The CLI has no `--password` flag, the API takes no password, and the web form shows the variable name instead of asking. The registry never holds it.
 - The variable must be set wherever Waypoint runs: the shell, `waypoint serve`, and an agent's MCP config (`env` in the config JSON). The README says so and the MCP example shows it.
 - Every error from a driver is wrapped so that a connection string or password cannot appear in it, in logs, or in an API response. A test sets a distinctive password and asserts it is absent from every output of every failure path.
