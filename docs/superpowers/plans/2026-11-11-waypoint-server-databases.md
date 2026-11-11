@@ -1,5 +1,7 @@
 # Waypoint Postgres and MySQL Storage (Plan 4) Implementation Plan
 
+> **MySQL was dropped (2026-11-11).** It was built, then removed at the owner's request; only Postgres ships. Treat every MySQL part of this document as history.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A project can be stored in a Postgres or MySQL database (local Docker or remote), set up from the CLI and the web UI, convertible to and from the other storages without losing data or leaking the password.

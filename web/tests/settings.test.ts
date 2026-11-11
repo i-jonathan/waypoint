@@ -562,28 +562,13 @@ describe('converting the storage', () => {
     expect(JSON.stringify(globalClient.convertProject.mock.calls[0])).not.toMatch(/password/i);
   });
 
-  it('offers MySQL beside Postgres for a file project, and the other engine for a server project', async () => {
+  it('offers Postgres for a file project and nothing more for a Postgres one', async () => {
     await mount();
     expect(screen.getByRole('button', { name: 'Convert to Postgres' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Convert to MySQL' })).toBeInTheDocument();
     cleanup();
     await mount(undefined, undefined, serverInfo);
     expect(screen.queryByRole('button', { name: 'Convert to Postgres' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Convert to MySQL' })).toBeInTheDocument();
-  });
-
-  it('converts a file project to MySQL with the MySQL port', async () => {
-    globalClient.testDatabase.mockResolvedValue(reachable);
-    globalClient.convertProject.mockResolvedValue({ ...serverInfo, storage: 'mysql', backups: [] });
-    await mount();
-    await fireEvent.click(screen.getByRole('button', { name: 'Convert to MySQL' }));
-    const dialog = screen.getByRole('alertdialog', { name: 'Convert this project to MySQL?' });
-    await fireEvent.input(within(dialog).getByLabelText('User'), { target: { value: 'waypoint' } });
-    await fireEvent.click(within(dialog).getByRole('button', { name: 'Test connection' }));
-    const go = within(dialog).getByRole('button', { name: 'Convert to MySQL' });
-    await waitFor(() => expect(go).toBeEnabled());
-    await fireEvent.click(go);
-    await waitFor(() => expect(globalClient.convertProject).toHaveBeenCalledWith('Home', { to: 'mysql', host: 'localhost', port: 3306, user: 'waypoint' }));
+    expect(screen.getByRole('button', { name: 'Convert to SQLite' })).toBeInTheDocument();
   });
 
   it('will not convert into a database that already holds a board', async () => {

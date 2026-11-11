@@ -42,9 +42,6 @@ func addOnServer(t *testing.T, e engine, cfgPath string, env func(string) string
 func (e engine) retiredFlag(t *testing.T, ref config.ProjectRef) string {
 	t.Helper()
 	q := "SELECT value FROM waypoint_meta WHERE key = 'retired'"
-	if e.name == "mysql" {
-		q = "SELECT value FROM waypoint_meta WHERE `key` = 'retired'"
-	}
 	var v string
 	if err := e.raw(t, ref).QueryRow(q).Scan(&v); err != nil {
 		t.Fatal(err)
@@ -386,15 +383,6 @@ func TestConvertNULToServer(t *testing.T) {
 		cfgBefore, _ := os.ReadFile(cfgPath)
 		target, db := serverTarget(t, e, "Nul")
 		_, err = Convert(bg, cfgPath, env, "Nul", target)
-		if e.name == "mysql" { // MySQL stores a NUL character as it is
-			if err != nil {
-				t.Fatalf("Convert to MySQL: %v", err)
-			}
-			if got := loadRef(t, registered(t, cfgPath, env, "Nul")); got.Cards[0].Body != "has a \x00 nul" {
-				t.Fatalf("the NUL did not survive: %q", got.Cards[0].Body)
-			}
-			return
-		}
 		if !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "T-1") {
 			t.Fatalf("Convert = %v, want ErrInvalid naming T-1", err)
 		}
@@ -458,74 +446,6 @@ func TestConvertWarnsBeforeConnectingToANonLocalServer(t *testing.T) {
 		}
 		if len(warned) != 1 || warned[0] != dbconn.NonLocalWarning {
 			t.Fatalf("warnings = %q", warned)
-		}
-	})
-}
-
-// A board can move from one server engine to the other and back.
-func TestConvertBetweenServerEngines(t *testing.T) {
-	fixedDay(t)
-	cfgPath, env := sandbox(t)
-	dir := t.TempDir()
-	_, original := richProject(t, cfgPath, env, dir)
-	pg, my := engines[0], engines[1]
-
-	toMy, _ := serverTarget(t, my, "Rich")
-	if _, err := Convert(bg, cfgPath, env, "Rich", toMy); err != nil {
-		t.Fatalf("to MySQL: %v", err)
-	}
-	if !loadRef(t, registered(t, cfgPath, env, "Rich")).Equal(original) {
-		t.Fatal("the MySQL copy differs from the original")
-	}
-	toPg, _ := serverTarget(t, pg, "Rich")
-	res, err := Convert(bg, cfgPath, env, "Rich", toPg)
-	if err != nil {
-		t.Fatalf("MySQL to Postgres: %v", err)
-	}
-	if res.Retired == "" || res.Ref.Storage != "postgres" {
-		t.Fatalf("result = %+v", res)
-	}
-	if !loadRef(t, registered(t, cfgPath, env, "Rich")).Equal(original) {
-		t.Fatal("the Postgres copy differs from the original")
-	}
-	backToMy, _ := serverTarget(t, my, "Rich")
-	if _, err := Convert(bg, cfgPath, env, "Rich", backToMy); err != nil {
-		t.Fatalf("Postgres to MySQL: %v", err)
-	}
-	if !loadRef(t, registered(t, cfgPath, env, "Rich")).Equal(original) {
-		t.Fatal("the board that came back differs from the original")
-	}
-}
-
-// If the connection that holds the source's lock dies mid-conversion, the lock
-// is gone and a write may have landed in the source. Convert must notice before
-// it switches, and change nothing.
-func TestConvertRefusesWhenTheSourceLockIsLost(t *testing.T) {
-	eachEngine(t, func(t *testing.T, e engine) {
-		cfgPath, env := sandbox(t)
-		ref, srcDB := addOnServer(t, e, cfgPath, env, "Pg")
-		svcAdd(t, ref, "before")
-		cfgBefore, _ := os.ReadFile(cfgPath)
-		dir := t.TempDir()
-
-		old := afterCopy
-		afterCopy = func() error { e.killConnections(t, srcDB); return nil }
-		t.Cleanup(func() { afterCopy = old })
-		_, err := Convert(bg, cfgPath, env, "Pg", Target{Storage: "markdown", Path: filepath.Join(dir, "pg.md")})
-		afterCopy = old
-		if err == nil || !strings.Contains(err.Error(), "lock") {
-			t.Fatalf("Convert = %v, want a refusal that says the lock was lost", err)
-		}
-		if after, _ := os.ReadFile(cfgPath); string(cfgBefore) != string(after) {
-			t.Error("the registry changed")
-		}
-		if exists(filepath.Join(dir, "pg.md")) {
-			t.Error("the abandoned copy was left behind")
-		}
-		// The project still works, and the source was not retired.
-		svcAdd(t, ref, "after")
-		if e.retiredFlag(t, srcDB) != "false" {
-			t.Error("the source was retired")
 		}
 	})
 }

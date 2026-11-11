@@ -1,7 +1,7 @@
-// Package servertest gives tests a fresh, empty database on a real Postgres or
-// MySQL server, or skips them when no server is configured. The servers come
-// from the environment: WAYPOINT_TEST_POSTGRES and WAYPOINT_TEST_MYSQL, each
-// "host:port:user:password". `make test-servers` starts both in Docker.
+// Package servertest gives tests a fresh, empty database on a real Postgres
+// server, or skips them when no server is configured. The server comes
+// from the environment: WAYPOINT_TEST_POSTGRES, "host:port:user:password".
+// `make test-servers` starts one in Docker.
 package servertest
 
 import (
@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 
@@ -98,21 +97,6 @@ func Postgres(t *testing.T) config.ProjectRef {
 	return ref
 }
 
-// MySQL is Postgres for MySQL (WAYPOINT_TEST_MYSQL).
-func MySQL(t *testing.T) config.ProjectRef {
-	t.Helper()
-	ref, c := setup(t, "WAYPOINT_TEST_MYSQL", "mysql")
-	db := openMySQL(t, c)
-	defer db.Close()
-	exec1(t, db, "CREATE DATABASE `"+ref.Database+"` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
-	t.Cleanup(func() {
-		db := openMySQL(t, c)
-		defer db.Close()
-		_, _ = db.Exec("DROP DATABASE IF EXISTS `" + ref.Database + "`")
-	})
-	return ref
-}
-
 func exec1(t *testing.T, db *sql.DB, q string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -130,17 +114,4 @@ func openPostgres(t *testing.T, c conn, database string) *sql.DB {
 	}
 	cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Database = c.host, uint16(c.port), c.user, c.password, database
 	return sql.OpenDB(stdlib.GetConnector(*cfg))
-}
-
-func openMySQL(t *testing.T, c conn) *sql.DB {
-	t.Helper()
-	cfg := mysql.NewConfig()
-	cfg.User, cfg.Passwd, cfg.Net = c.user, c.password, "tcp"
-	cfg.Addr = fmt.Sprintf("%s:%d", c.host, c.port)
-	cfg.Timeout = 10 * time.Second
-	connector, err := mysql.NewConnector(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return sql.OpenDB(connector)
 }

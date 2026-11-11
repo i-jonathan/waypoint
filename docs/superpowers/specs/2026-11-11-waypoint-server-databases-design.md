@@ -1,5 +1,7 @@
 # Waypoint: Postgres and MySQL storage (Plan 4 design)
 
+> **MySQL was dropped (2026-11-11).** It was built, then removed at the owner's request; only Postgres ships. Treat every MySQL part of this document as history.
+
 Date: 2026-11-11. Builds on `2026-11-03-waypoint-design.md` and Plan 3 (SQLite, convert, import/export, MCP).
 
 ## Intent

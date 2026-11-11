@@ -62,11 +62,8 @@ func IsLocal(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// DefaultPort is the standard port of an engine ("postgres" or "mysql").
+// DefaultPort is the standard port of an engine ("postgres").
 func DefaultPort(engine string) int {
-	if engine == "mysql" {
-		return 3306
-	}
 	return 5432
 }
 

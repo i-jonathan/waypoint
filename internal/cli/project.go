@@ -18,11 +18,11 @@ import (
 
 const (
 	usageProject = "waypoint project add|ls|rm|convert ..."
-	usageAdd     = "waypoint project add NAME [--path FILE | --storage postgres|mysql " + serverUsage + "] [--storage sqlite|markdown] [--prefix T] [--json]"
-	usageConvert = "waypoint project convert NAME --to sqlite|markdown|postgres|mysql [--path FILE | " + serverUsage + "] [--json]"
+	usageAdd     = "waypoint project add NAME [--path FILE | --storage postgres " + serverUsage + "] [--storage sqlite|markdown] [--prefix T] [--json]"
+	usageConvert = "waypoint project convert NAME --to sqlite|markdown|postgres [--path FILE | " + serverUsage + "] [--json]"
 	usageLs      = "waypoint project ls [--json]"
 	usageRm      = "waypoint project rm NAME [--json]"
-	usageInit    = "waypoint init [NAME] [--storage sqlite|markdown|postgres|mysql " + serverUsage + "] [--prefix T] [--json]"
+	usageInit    = "waypoint init [NAME] [--storage sqlite|markdown|postgres " + serverUsage + "] [--prefix T] [--json]"
 	serverUsage  = "[--host H] [--port N] --user U [--database D] [--ssl disable|prefer|require|verify-full] [--create-database]"
 
 	defaultPrefix = projects.DefaultPrefix
@@ -73,7 +73,7 @@ func (f *serverFlags) used() bool {
 func (f *serverFlags) options(kind string) (*projects.ServerOptions, error) {
 	if !slices.Contains(projects.ServerEngines(), kind) {
 		if f.used() {
-			return nil, fmt.Errorf("%w: --host, --port, --user, --database, --ssl and --create-database need --storage postgres or mysql", domain.ErrInvalid)
+			return nil, fmt.Errorf("%w: --host, --port, --user, --database, --ssl and --create-database need --storage postgres", domain.ErrInvalid)
 		}
 		return nil, nil
 	}
@@ -300,7 +300,7 @@ func (r *runner) cmdProjectConvert(args []string) int {
 		return r.usageError("expected one project NAME", usageConvert)
 	}
 	if to == "" {
-		return r.usageError("--to sqlite|markdown|postgres|mysql is required", usageConvert)
+		return r.usageError("--to sqlite|markdown|postgres is required", usageConvert)
 	}
 	if path != "" && !filepath.IsAbs(path) {
 		if r.env.Cwd == "" {

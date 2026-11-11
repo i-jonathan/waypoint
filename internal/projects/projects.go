@@ -50,7 +50,7 @@ type AddOptions struct {
 // ServerOptions says where a server project lives. The password is never
 // part of it: it comes from the environment (see dbconn.Password).
 type ServerOptions struct {
-	Engine         string // "postgres" or "mysql"
+	Engine         string // "postgres"
 	Host           string // default localhost
 	Port           int    // default: the engine's
 	User           string // required
@@ -123,7 +123,7 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 }
 
 // serverEngines are the engines a project can be stored on, in the order they are listed.
-var serverEngines = []string{"postgres", "mysql"}
+var serverEngines = []string{"postgres"}
 
 // ServerEngines lists the engines a project can be stored on.
 func ServerEngines() []string { return slices.Clone(serverEngines) }

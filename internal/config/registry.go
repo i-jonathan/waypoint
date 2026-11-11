@@ -27,7 +27,7 @@ func (c *Config) Add(p ProjectRef) error {
 		}
 	} else {
 		if p.Host != "" || p.Port != 0 || p.Database != "" || p.User != "" || p.SSL != "" {
-			return fmt.Errorf("%w: server settings need storage postgres or mysql", domain.ErrInvalid)
+			return fmt.Errorf("%w: server settings need storage postgres", domain.ErrInvalid)
 		}
 		if p.Path == "" {
 			return fmt.Errorf("%w: project path is empty", domain.ErrInvalid)
@@ -41,7 +41,7 @@ func (c *Config) Add(p ProjectRef) error {
 			p.Storage = StorageFor(p.Path)
 		}
 		if p.Storage != "markdown" && p.Storage != "sqlite" {
-			return fmt.Errorf("%w: storage %q must be markdown, sqlite, postgres or mysql", domain.ErrInvalid, p.Storage)
+			return fmt.Errorf("%w: storage %q must be markdown, sqlite or postgres", domain.ErrInvalid, p.Storage)
 		}
 	}
 	for _, q := range c.Projects {

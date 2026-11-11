@@ -134,16 +134,6 @@ func (s Store) validText(b *domain.Board) error {
 		}
 		return nil
 	}
-	// name is check for the values a column of names and keys holds.
-	name := func(where, v string) error {
-		if err := check(where, v); err != nil {
-			return err
-		}
-		if err := s.D.ValidName(v); err != nil {
-			return fmt.Errorf("%w: %s %v", domain.ErrInvalid, where, err)
-		}
-		return nil
-	}
 	st := b.Settings
 	for _, e := range []struct{ where, v string }{{"the project name", st.Name}, {"the card prefix", st.Prefix}} {
 		if err := check(e.where, e.v); err != nil {
@@ -156,7 +146,7 @@ func (s Store) validText(b *domain.Board) error {
 		}
 	}
 	for i, c := range st.Columns {
-		if err := name(fmt.Sprintf("column %d name", i+1), c.Name); err != nil {
+		if err := check(fmt.Sprintf("column %d name", i+1), c.Name); err != nil {
 			return err
 		}
 		for _, m := range c.MovesTo {
@@ -166,10 +156,10 @@ func (s Store) validText(b *domain.Board) error {
 		}
 	}
 	for i, g := range st.Groups {
-		if err := name(fmt.Sprintf("group %d name", i+1), g.Name); err != nil {
+		if err := check(fmt.Sprintf("group %d name", i+1), g.Name); err != nil {
 			return err
 		}
-		if err := name(fmt.Sprintf("group %d color", i+1), g.Color); err != nil {
+		if err := check(fmt.Sprintf("group %d color", i+1), g.Color); err != nil {
 			return err
 		}
 	}
@@ -180,7 +170,7 @@ func (s Store) validText(b *domain.Board) error {
 				{"id", string(c.ID)}, {"column", c.Column}, {"group", c.Group}, {"priority", c.Priority},
 			}
 			for _, e := range names {
-				if err := name(id+" "+e.what, e.v); err != nil {
+				if err := check(id+" "+e.what, e.v); err != nil {
 					return err
 				}
 			}
@@ -194,7 +184,7 @@ func (s Store) validText(b *domain.Board) error {
 				}
 			}
 			for i, f := range c.Extra {
-				if err := name(fmt.Sprintf("%s field %d key", id, i+1), f.Key); err != nil {
+				if err := check(fmt.Sprintf("%s field %d key", id, i+1), f.Key); err != nil {
 					return err
 				}
 				if err := check(fmt.Sprintf("%s field %d value", id, i+1), f.Value); err != nil {

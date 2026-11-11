@@ -15,18 +15,19 @@ Read this first when resuming. Spec: `docs/superpowers/specs/2026-11-03-waypoint
   - `scripts/migrate-pharmacy` turns the pharmacy `BOARD.md` and `DONE.md` into a CSV. A dry run on copies gave 99 cards, 14 groups and a counter of 116. The real import has not been done: it waits for the owner.
   - A midpoint binary-level review found and fixed lost writes, hangs and an unsafe registry order in conversion. The final review is recorded in the PR.
 
-- **Plan 4 (Postgres and MySQL storage):** built on branch `feat/databases`, cut from `feat/sqlite`. Not yet reviewed by the owner.
+- **Plan 4 (Postgres storage):** built on branch `feat/databases`, cut from `feat/sqlite`. Not yet reviewed by the owner.
+  - MySQL was built and then dropped on 2026-11-11 (the owner decided against it); the spec and plan still describe it.
   - Spec: `docs/superpowers/specs/2026-11-11-waypoint-server-databases-design.md`. Plan: `docs/superpowers/plans/2026-11-11-waypoint-server-databases.md`. All 11 tasks built.
-  - A project can live in a Postgres or MySQL database (local Docker or remote): `waypoint init|project add --storage postgres|mysql --user U ...`, or the New project dialog. Any storage converts to any other, from the CLI (`project convert --to ...`) or project settings. The web UI follows server projects by polling a revision number.
+  - A project can live in a Postgres database (local Docker or remote): `waypoint init|project add --storage postgres|mysql --user U ...`, or the New project dialog. Any storage converts to any other, from the CLI (`project convert --to ...`) or project settings. The web UI follows server projects by polling a revision number.
   - The password is never stored. It comes from `WAYPOINT_DB_PASSWORD_<NAME>` (one project) or `WAYPOINT_DB_PASSWORD` (all), and the UI only names the variables. A server that is not on this computer gets a one-time warning at setup.
-  - `make test-servers` runs the Go tests against throwaway Postgres 17 and MySQL 8.4 containers. Without a server those tests skip, so `go test ./...` still passes anywhere.
+  - `make test-servers` runs the Go tests against a throwaway Postgres 17 container. Without a server those tests skip, so `go test ./...` still passes anywhere.
 
 ## Next steps
 
 1. With the owner: review PR #3, riskiest first: `internal/storage/sqlite/` (lock and save), `internal/projects/convert.go`, then `internal/app/transfer.go`, `internal/app/csv.go` and `internal/domain/validate.go`.
 2. Merge the PR when the owner decides.
 3. The real pharmacy migration, when the owner says: add the project, set its columns (In Progress, Up Next, Backlog, Done), run the tool on the real files, then `waypoint import --create`. Check the counter reads 116.
-4. **Plan 4 (proposed):** choose the SQL server per project: SQLite, or Postgres or MySQL, local or remote. One person's data only, even on a remote server. Plan 3 keeps the board-to-rows code in `internal/storage/sqlstore`, free of SQLite, for this.
+4. **Plan 4 (proposed):** choose the SQL server per project: SQLite, or Postgres, local or remote. One person's data only, even on a remote server. Plan 3 keeps the board-to-rows code in `internal/storage/sqlstore`, free of SQLite, for this.
 
 ## How we work
 
@@ -59,8 +60,7 @@ Read this first when resuming. Spec: `docs/superpowers/specs/2026-11-03-waypoint
 - A CSV export writes cells that start with `=`, `+`, `-` or `@` as they are, so a spreadsheet may read one as a formula. Nothing is escaped, to keep the export lossless.
 - The web import dialog checks a file and then imports it; a change made to the project between the two can make the result differ from the preview.
 - Conversion to a different disk is covered by a test across folders only.
-- Plan 4: one board per database; a server is for one person's data. A conversion uses one password variable for source and target, so two servers with different passwords need export and import. Postgres refuses a NUL character; MySQL keeps names of at most 255 characters.
-- Plan 4: on MySQL `--ssl require` does not protect the password from an active attacker posing as the server; only `verify-full` does (Postgres never reveals it to such a server).
+- Plan 4: one board per database; a server is for one person's data. A conversion uses one password variable for source and target, so two servers with different passwords need export and import. Postgres refuses a NUL character.
 - Plan 4: a database created for a conversion that then failed stays behind, empty. `/api/db/test` connects to any host a local client names (guarded by the Host, Origin and header checks only).
 - Plan 4: the SQLite file lock polls, so very many writers can starve a conversion that starts from a SQLite file (seen with 8 hot writers; 4 are fine).
-- Plan 4 deferred minors: a retired database shows as a board in the web connection test; `--create-database` by a MySQL user without the privilege gives a "may not use database" hint; raw driver text for an over-large value (`max_allowed_packet`); a 1-character password over-redacts error text; the watcher and connection test open a connection per call.
+- Plan 4 deferred minors: a retired database shows as a board in the web connection test; raw driver text for an over-large value (`max_allowed_packet`); a 1-character password over-redacts error text; the watcher and connection test open a connection per call.

@@ -13,7 +13,6 @@ import (
 	"waypoint/internal/dbconn"
 	"waypoint/internal/domain"
 	"waypoint/internal/storage/markdown"
-	"waypoint/internal/storage/mysql"
 	"waypoint/internal/storage/postgres"
 	"waypoint/internal/storage/sqlite"
 )
@@ -55,8 +54,6 @@ func Open(ref config.ProjectRef) (app.Repository, error) {
 		return sqlite.New(ref.Path), nil
 	case "postgres":
 		return postgres.New(ref), nil
-	case "mysql":
-		return mysql.New(ref), nil
 	default:
 		return nil, fmt.Errorf("%w: project %q has unknown storage %q", domain.ErrInvalid, ref.Name, ref.Storage)
 	}
@@ -92,16 +89,6 @@ func CreateWith(ctx context.Context, ref config.ProjectRef, s domain.Settings, o
 			return nil, err
 		}
 		return repo, nil
-	case "mysql":
-		b := opts.Board
-		if b == nil {
-			b = &domain.Board{Settings: s}
-		}
-		repo, err := mysql.CreateFrom(ctx, ref, b, opts.CreateDatabase)
-		if err != nil {
-			return nil, err
-		}
-		return repo, nil
 	case "markdown":
 		if err := os.MkdirAll(filepath.Dir(ref.Path), 0o755); err != nil {
 			return nil, fmt.Errorf("create directory for %s: %w", ref.Path, err)
@@ -130,8 +117,6 @@ func Probe(ctx context.Context, ref config.ProjectRef) (dbconn.ProbeResult, erro
 	switch ref.Storage {
 	case "postgres":
 		return postgres.Probe(ctx, ref)
-	case "mysql":
-		return mysql.Probe(ctx, ref)
 	}
 	return dbconn.ProbeResult{}, fmt.Errorf("%w: project %q is not stored on a database server", domain.ErrInvalid, ref.Name)
 }
@@ -142,8 +127,6 @@ func Discard(ctx context.Context, ref config.ProjectRef) error {
 	switch ref.Storage {
 	case "postgres":
 		return postgres.New(ref).Discard(ctx)
-	case "mysql":
-		return mysql.New(ref).Discard(ctx)
 	}
 	return fmt.Errorf("%w: project %q is not stored on a database server", domain.ErrInvalid, ref.Name)
 }
@@ -151,8 +134,5 @@ func Discard(ctx context.Context, ref config.ProjectRef) error {
 // RetireStatement is the SQL that marks a server board as retired, for a
 // message that tells a person how to do it by hand when Waypoint could not.
 func RetireStatement(ref config.ProjectRef) string {
-	if ref.Storage == "mysql" {
-		return "UPDATE waypoint_meta SET value = 'true' WHERE `key` = 'retired'"
-	}
 	return "UPDATE waypoint_meta SET value = 'true' WHERE key = 'retired'"
 }

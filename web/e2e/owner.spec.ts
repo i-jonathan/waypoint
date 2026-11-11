@@ -232,10 +232,7 @@ test('a bad CSV file is refused with its line and changes nothing', async ({ pag
   expect(await wp.cli('ls')).not.toContain('Good');
 });
 
-for (const engine of [
-  { key: 'postgres', label: 'Postgres', env: 'WAYPOINT_TEST_POSTGRES' },
-  { key: 'mysql', label: 'MySQL', env: 'WAYPOINT_TEST_MYSQL' },
-]) {
+for (const engine of [{ key: 'postgres', label: 'Postgres', env: 'WAYPOINT_TEST_POSTGRES' }]) {
   test(`a ${engine.label} project can be made in the dialog, used, and moved to SQLite and back`, async ({ page, wp }) => {
   const pg = process.env[engine.env];
   test.skip(!pg, `${engine.env} is not set`);

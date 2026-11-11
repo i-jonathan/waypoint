@@ -24,8 +24,8 @@ const defaultPort = 4747
 
 var tlsModes = []string{"auto", "on", "off"}
 
-// ProjectRef registers one board. Storage is "markdown", "sqlite", "postgres"
-// or "mysql". A file project has an absolute Path. A server project has Host,
+// ProjectRef registers one board. Storage is "markdown", "sqlite" or "postgres".
+// A file project has an absolute Path. A server project has Host,
 // Port, Database, User and SSL instead, and never a password: that comes from
 // the environment (see package dbconn).
 type ProjectRef struct {
@@ -40,7 +40,7 @@ type ProjectRef struct {
 }
 
 // IsServer reports whether the project lives in a database server.
-func (p ProjectRef) IsServer() bool { return p.Storage == "postgres" || p.Storage == "mysql" }
+func (p ProjectRef) IsServer() bool { return p.Storage == "postgres" }
 
 // Display is where the project lives, for people: its path, or
 // host:port/database for a server. It never includes the user or a password.

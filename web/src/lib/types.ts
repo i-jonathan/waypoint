@@ -198,7 +198,7 @@ export interface ServerFieldsBody {
 }
 
 export interface DbTestRequest extends ServerFieldsBody {
-  engine: 'postgres' | 'mysql';
+  engine: 'postgres';
   /** The project the settings are for: the password variable is named after it. */
   project: string;
 }
@@ -244,7 +244,7 @@ export interface NewProject extends ServerFieldsBody {
   path?: string;
   prefix?: string;
   /** What to create. The server defaults to sqlite. An existing file is what it is. */
-  storage?: 'sqlite' | 'markdown' | 'postgres' | 'mysql';
+  storage?: 'sqlite' | 'markdown' | 'postgres';
   /** Open a board that is already there: a missing file is refused, not created. */
   existing?: boolean;
 }

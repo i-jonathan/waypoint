@@ -64,7 +64,7 @@ func TestIsLocal(t *testing.T) {
 }
 
 func TestDefaults(t *testing.T) {
-	if DefaultPort("postgres") != 5432 || DefaultPort("mysql") != 3306 {
+	if DefaultPort("postgres") != 5432 {
 		t.Error("default ports wrong")
 	}
 	if DefaultSSL("localhost") != "prefer" || DefaultSSL("db.example.com") != "require" {

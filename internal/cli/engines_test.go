@@ -13,7 +13,7 @@ type engine struct {
 	fresh func(*testing.T) config.ProjectRef
 }
 
-var engines = []engine{{"postgres", servertest.Postgres}, {"mysql", servertest.MySQL}}
+var engines = []engine{{"postgres", servertest.Postgres}}
 
 // eachEngine runs a test once per engine, as a subtest named for it.
 func eachEngine(t *testing.T, fn func(t *testing.T, e engine)) {

@@ -56,9 +56,6 @@ func (dialect) ValidText(s string) error {
 	return nil
 }
 
-// ValidName accepts everything: a Postgres text column has no length limit.
-func (dialect) ValidName(string) error { return nil }
-
 var store = sqlstore.Store{D: dialect{}}
 
 // execer is what a transaction body is given.

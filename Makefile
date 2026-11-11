@@ -4,7 +4,7 @@ test:
 	go test ./...
 	cd web && npm test
 
-# The Go tests against throwaway Postgres and MySQL servers in Docker.
+# The Go tests against throwaway a Postgres server in Docker.
 test-servers:
 	scripts/test-servers.sh
 
