@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"waypoint/internal/config"
 	"waypoint/internal/dbconn"
@@ -184,6 +185,10 @@ func addServer(ctx context.Context, cfgPath string, env func(string) string, nam
 			o.Warn(dbconn.UnencryptedNote)
 		}
 	}
+	// The config lock is held while the server answers, so a server that stalls
+	// must not hold every other config change for good.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	var ref config.ProjectRef
 	var created bool
 	err = config.Update(cfgPath, env, func(cfg *config.Config) error {

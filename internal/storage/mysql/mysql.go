@@ -341,6 +341,18 @@ func (r *Repo) Discard(ctx context.Context) error {
 // used). MySQL cannot roll back DDL, so a failure drops the tables this call
 // made and leaves nothing.
 func Create(ctx context.Context, ref config.ProjectRef, s domain.Settings, createDatabase bool) (*Repo, error) {
+	return CreateFrom(ctx, ref, &domain.Board{Settings: s}, createDatabase)
+}
+
+// afterSave is a test seam: CreateFrom calls it once the board is written and
+// before the board is released.
+var afterSave = func() error { return nil }
+
+// CreateFrom is Create with the board's cards written too. MySQL cannot make the
+// schema and the cards one transaction, so the board is created marked retired
+// and released only when every card is in: a crash in between leaves a board
+// that cannot be mistaken for a finished one.
+func CreateFrom(ctx context.Context, ref config.ProjectRef, b *domain.Board, createDatabase bool) (*Repo, error) {
 	if createDatabase {
 		if err := createDB(ctx, ref); err != nil {
 			return nil, err
@@ -368,9 +380,15 @@ func Create(ctx context.Context, ref config.ProjectRef, s domain.Settings, creat
 		return nil, r.plain(err)
 	}
 	err = inTx(ctx, db, true, func(q execer) error {
-		_, err := store.Save(ctx, q, &domain.Board{Settings: s})
+		_, err := store.Save(ctx, q, b)
 		return err
 	})
+	if err == nil {
+		err = afterSave()
+	}
+	if err == nil {
+		_, err = db.ExecContext(ctx, "UPDATE waypoint_meta SET value = 'false' WHERE `key` = 'retired'")
+	}
 	if err != nil {
 		_, _ = db.ExecContext(context.Background(), `DROP TABLE IF EXISTS `+strings.Join(waypointTables, ", "))
 		return nil, r.plain(err)

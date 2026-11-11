@@ -43,6 +43,12 @@ type retirer interface {
 	Retire(ctx context.Context) error
 }
 
+// lockChecker is implemented by a repository whose lock can be lost (a server
+// connection that dies), so Convert can prove it still holds it.
+type lockChecker interface {
+	CheckLock(ctx context.Context) error
+}
+
 // ConvertResult says what Convert did.
 type ConvertResult struct {
 	Ref     config.ProjectRef // the project as now registered
@@ -135,10 +141,11 @@ func Convert(ctx context.Context, cfgPath string, env func(string) string, name 
 		return ConvertResult{}, err
 	}
 	released := false
+	var unlockErr error
 	release := func() {
 		if !released {
 			released = true
-			_ = unlock() // the conversion is done or abandoned by now
+			unlockErr = unlock() // for a server this COMMITs the retire mark
 		}
 	}
 	defer release()
@@ -194,6 +201,13 @@ func Convert(ctx context.Context, cfgPath string, env func(string) string, name 
 		if err := afterCopy(); err != nil {
 			return err
 		}
+		// A lock on a server is a connection, which can die. If it did, a write
+		// may have reached the source after it was read: the copy is stale.
+		if c, ok := src.(lockChecker); ok {
+			if err := c.CheckLock(ctx); err != nil {
+				return err
+			}
+		}
 		for i := range cfg.Projects {
 			if cfg.Projects[i].Name == cur.Name {
 				cfg.Projects[i] = dstRef
@@ -216,13 +230,19 @@ func Convert(ctx context.Context, cfgPath string, env func(string) string, name 
 	var problems []string
 	retireFailed := false
 	if r, ok := src.(retirer); ok { // SQLite or a server: retire, let go, then move the files
-		if err := retireSource(ctx, r); err != nil {
+		// The project is converted whatever the caller does now, so a cancelled
+		// request must not stop the old board being retired.
+		err := retireSource(context.WithoutCancel(ctx), r)
+		release()
+		if err == nil {
+			err = unlockErr // the mark is only there once the transaction committed
+		}
+		if err != nil {
 			retireFailed = true
 			problems = append(problems, "could not mark the old database as retired: "+err.Error())
 		} else if ref.IsServer() {
 			res.Retired = ref.Display()
 		}
-		release()
 	}
 	if !ref.IsServer() {
 		moved, err := backUp(ref)
@@ -345,18 +365,14 @@ func verifyCopy(ctx context.Context, at, dst config.ProjectRef, board *domain.Bo
 }
 
 func writeServerCopy(ctx context.Context, dst config.ProjectRef, board *domain.Board, opts storage.CreateOptions) (func(), error) {
-	repo, err := storage.CreateWith(ctx, dst, board.Settings, opts) // refuses a database that is not empty
-	if err != nil {
+	opts.Board = board
+	if _, err := storage.CreateWith(ctx, dst, board.Settings, opts); err != nil { // refuses a database that is not empty; writes the cards with the schema
 		return nil, err
 	}
 	discard := func() {
 		dctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = storage.Discard(dctx, dst) // only the tables Create just made
-	}
-	if err := repo.Save(ctx, board); err != nil {
-		discard()
-		return nil, err
 	}
 	if err := verifyCopy(ctx, dst, dst, board); err != nil {
 		discard()

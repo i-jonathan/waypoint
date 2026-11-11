@@ -231,7 +231,7 @@ func TestConvertWritersDuringServerConversions(t *testing.T) {
 		if _, err := Add(bg, cfgPath, env, AddOptions{Name: "Busy", Path: filepath.Join(dir, "busy.db"), Prefix: "T"}); err != nil {
 			t.Fatal(err)
 		}
-		w := startWriters(t, cfgPath, env, "Busy", 8)
+		w := startWriters(t, cfgPath, env, "Busy", 4) // more starve the SQLite file lock, which polls (a limit older than the server storages)
 		time.Sleep(150 * time.Millisecond)
 		for round := 0; round < 5; round++ {
 			var to Target
@@ -495,4 +495,37 @@ func TestConvertBetweenServerEngines(t *testing.T) {
 	if !loadRef(t, registered(t, cfgPath, env, "Rich")).Equal(original) {
 		t.Fatal("the board that came back differs from the original")
 	}
+}
+
+// If the connection that holds the source's lock dies mid-conversion, the lock
+// is gone and a write may have landed in the source. Convert must notice before
+// it switches, and change nothing.
+func TestConvertRefusesWhenTheSourceLockIsLost(t *testing.T) {
+	eachEngine(t, func(t *testing.T, e engine) {
+		cfgPath, env := sandbox(t)
+		ref, srcDB := addOnServer(t, e, cfgPath, env, "Pg")
+		svcAdd(t, ref, "before")
+		cfgBefore, _ := os.ReadFile(cfgPath)
+		dir := t.TempDir()
+
+		old := afterCopy
+		afterCopy = func() error { e.killConnections(t, srcDB); return nil }
+		t.Cleanup(func() { afterCopy = old })
+		_, err := Convert(bg, cfgPath, env, "Pg", Target{Storage: "markdown", Path: filepath.Join(dir, "pg.md")})
+		afterCopy = old
+		if err == nil || !strings.Contains(err.Error(), "lock") {
+			t.Fatalf("Convert = %v, want a refusal that says the lock was lost", err)
+		}
+		if after, _ := os.ReadFile(cfgPath); string(cfgBefore) != string(after) {
+			t.Error("the registry changed")
+		}
+		if exists(filepath.Join(dir, "pg.md")) {
+			t.Error("the abandoned copy was left behind")
+		}
+		// The project still works, and the source was not retired.
+		svcAdd(t, ref, "after")
+		if e.retiredFlag(t, srcDB) != "false" {
+			t.Error("the source was retired")
+		}
+	})
 }

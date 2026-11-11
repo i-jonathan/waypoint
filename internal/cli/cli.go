@@ -53,7 +53,7 @@ Commands:
   project add NAME     Add a project (--path FILE, --storage sqlite|markdown|postgres|mysql, --prefix T; server: --host --port --user --database --ssl --create-database)
   project ls           List projects
   project rm NAME      Remove a project from the registry (the file is kept)
-  project convert NAME Move a project to --to sqlite|markdown; the old files are kept as .bak-DATE
+  project convert NAME Move a project to --to sqlite|markdown|postgres|mysql; the old files are kept as .bak-DATE, an old database is kept and marked retired
   ls [QUERY...]        List cards (--column X, --group G, --blocked, --next, --archived)
   show ID              Show one card with its body
   add TITLE            Add a card (--column, --group, --priority, --depends, --body TEXT|-)

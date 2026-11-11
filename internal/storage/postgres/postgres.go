@@ -108,6 +108,10 @@ func connConfig(ref config.ProjectRef, database string) (*pgx.ConnConfig, error)
 		"dbname=" + quoteDSN(database),
 		"sslmode=" + ssl,
 		"connect_timeout=" + strconv.Itoa(int(connectTimeout/time.Second)),
+		// Never hand the password over in clear text or as an md5 hash: only a
+		// SCRAM exchange (which does not reveal it), or no password at all. A
+		// server the user pointed Waypoint at by mistake cannot collect it.
+		"require_auth=none,scram-sha-256",
 	}, " ")
 	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
@@ -320,6 +324,17 @@ func (r *Repo) Discard(ctx context.Context) error {
 // createDatabase a missing database is created first (an existing one is
 // used). All tables are made in one transaction, so a failure leaves nothing.
 func Create(ctx context.Context, ref config.ProjectRef, s domain.Settings, createDatabase bool) (*Repo, error) {
+	return CreateFrom(ctx, ref, &domain.Board{Settings: s}, createDatabase)
+}
+
+// afterSave is a test seam: CreateFrom calls it once the board is written and
+// before the transaction commits.
+var afterSave = func() error { return nil }
+
+// CreateFrom is Create with the board's cards written in the same transaction as
+// the schema, so no moment exists at which a valid but empty board is there
+// and the cards are not.
+func CreateFrom(ctx context.Context, ref config.ProjectRef, b *domain.Board, createDatabase bool) (*Repo, error) {
 	if createDatabase {
 		if err := createDB(ctx, ref); err != nil {
 			return nil, err
@@ -342,8 +357,10 @@ func Create(ctx context.Context, ref config.ProjectRef, s domain.Settings, creat
 		if err := migrate(ctx, q); err != nil {
 			return err
 		}
-		_, err = store.Save(ctx, q, &domain.Board{Settings: s})
-		return err
+		if _, err = store.Save(ctx, q, b); err != nil {
+			return err
+		}
+		return afterSave()
 	})
 	if err != nil {
 		return nil, r.plain(err)

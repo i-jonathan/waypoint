@@ -20,3 +20,11 @@ func SetLockWaitLimit(d time.Duration) time.Duration {
 	lockWaitLimit = d
 	return old
 }
+
+// FailAfterSave makes CreateFrom fail after the cards are written but before the
+// transaction commits. It returns a restore func.
+func FailAfterSave() func() {
+	old := afterSave
+	afterSave = func() error { return errors.New("injected failure") }
+	return func() { afterSave = old }
+}

@@ -387,3 +387,29 @@ func TestMultibyteKeysEmoji(t *testing.T) {
 		t.Fatalf("multibyte text changed: %+v", got.Cards[0])
 	}
 }
+
+func TestCreateFromReleasesTheBoardOnlyWhenComplete(t *testing.T) {
+	ref := servertest.MySQL(t)
+	b := domain.NewBoard("From", "T")
+	for i := 1; i <= 5; i++ {
+		b.Cards = append(b.Cards, domain.Card{ID: domain.CardID(fmt.Sprintf("T-%d", i)), Title: "c", Column: b.Settings.Columns[0].Name})
+	}
+	b.Settings.NextID = 6
+	restore := mysql.FailAfterSave()
+	_, err := mysql.CreateFrom(ctx, ref, b, false)
+	restore()
+	if err == nil {
+		t.Fatal("CreateFrom should have failed")
+	}
+	if got := tables(t, raw(t, ref)); len(got) != 0 {
+		t.Fatalf("a failed CreateFrom left %v", got)
+	}
+	r, err := mysql.CreateFrom(ctx, ref, b, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := r.Load(ctx)
+	if err != nil || len(got.Cards) != 5 {
+		t.Fatalf("Load = %v, %v", got, err)
+	}
+}

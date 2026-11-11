@@ -325,3 +325,34 @@ func TestRoundTripHardBoard(t *testing.T) {
 		t.Errorf("1 MiB body came back as %d bytes", len(got.Cards[0].Body))
 	}
 }
+
+func TestCreateFromWritesTheCardsInTheSameTransaction(t *testing.T) {
+	ref := servertest.Postgres(t)
+	b, _ := hardBoardForCreate()
+	restore := postgres.FailAfterSave()
+	_, err := postgres.CreateFrom(ctx, ref, b, false)
+	restore()
+	if err == nil {
+		t.Fatal("CreateFrom should have failed")
+	}
+	if got := tables(t, raw(t, ref)); len(got) != 0 {
+		t.Fatalf("a failure after the cards were written left %v: a half-made board must not exist", got)
+	}
+	r, err := postgres.CreateFrom(ctx, ref, b, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := r.Load(ctx)
+	if err != nil || len(got.Cards) != len(b.Cards) {
+		t.Fatalf("Load = %v, %v", got, err)
+	}
+}
+
+func hardBoardForCreate() (*domain.Board, string) {
+	b := domain.NewBoard("From", "T")
+	for i := 1; i <= 5; i++ {
+		b.Cards = append(b.Cards, domain.Card{ID: domain.CardID(fmt.Sprintf("T-%d", i)), Title: "c", Column: b.Settings.Columns[0].Name})
+	}
+	b.Settings.NextID = 6
+	return b, ""
+}

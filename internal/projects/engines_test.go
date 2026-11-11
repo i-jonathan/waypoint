@@ -24,6 +24,8 @@ type engine struct {
 	// retireSQL marks a board retired, and tables counts what the schema holds.
 	retireSQL string
 	tablesSQL string
+	// killSQL ends every other connection to the database; for mysql it lists their ids.
+	killSQL string
 }
 
 var engines = []engine{
@@ -31,11 +33,13 @@ var engines = []engine{
 		name: "postgres", fresh: servertest.Postgres, open: openPostgres,
 		retireSQL: `UPDATE waypoint_meta SET value = 'true' WHERE key = 'retired'`,
 		tablesSQL: `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','m','f','S')`,
+		killSQL:   `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()`,
 	},
 	{
 		name: "mysql", fresh: servertest.MySQL, open: openMySQL,
 		retireSQL: "UPDATE waypoint_meta SET value = 'true' WHERE `key` = 'retired'",
 		tablesSQL: `SELECT count(*) FROM information_schema.tables WHERE table_schema = DATABASE()`,
+		killSQL:   `SELECT id FROM information_schema.processlist WHERE db = DATABASE() AND id <> CONNECTION_ID()`,
 	},
 }
 
@@ -94,4 +98,31 @@ func (e engine) tableCount(t *testing.T, ref config.ProjectRef) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// killConnections ends every other connection to ref's database, as a network
+// failure or a server restart would.
+func (e engine) killConnections(t *testing.T, ref config.ProjectRef) {
+	t.Helper()
+	db := e.raw(t, ref)
+	if e.name == "postgres" {
+		if _, err := db.Exec(e.killSQL); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	rows, err := db.Query(e.killSQL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	rows.Close()
+	for _, id := range ids {
+		db.Exec(fmt.Sprintf("KILL %d", id))
+	}
 }

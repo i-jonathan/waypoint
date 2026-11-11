@@ -72,7 +72,7 @@ var createTable = regexp.MustCompile(`(?i)^CREATE TABLE (\w+)`)
 
 // migrate creates the schema on an empty database and records the version.
 // MySQL cannot roll back DDL, so a failure drops the tables this call made,
-// by name; the caller has already proved the schema was empty, so none of them
+// by name (the board is made marked retired; CreateFrom releases it); the caller has already proved the schema was empty, so none of them
 // can be somebody else's.
 func migrate(ctx context.Context, q sqlstore.Querier) (err error) {
 	ms, err := migrations()
@@ -105,7 +105,7 @@ func migrate(ctx context.Context, q sqlstore.Querier) (err error) {
 			}
 		}
 	}
-	for _, kv := range [][2]string{{"schema_version", strconv.Itoa(latest())}, {"retired", "false"}} {
+	for _, kv := range [][2]string{{"schema_version", strconv.Itoa(latest())}, {"retired", "true"}} {
 		if _, err := q.ExecContext(ctx, "INSERT INTO waypoint_meta (`key`, value) VALUES (?, ?)", kv[0], kv[1]); err != nil {
 			return err
 		}

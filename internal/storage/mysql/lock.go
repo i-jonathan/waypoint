@@ -141,3 +141,23 @@ func (r *Repo) Retire(ctx context.Context) error {
 	_, err := h.conn.ExecContext(ctx, "UPDATE waypoint_meta SET value = 'true' WHERE `key` = 'retired'")
 	return r.plain(err)
 }
+
+// CheckLock proves the lock is still held: the connection that holds it is
+// alive and the board is at the revision this Repo last loaded. A lock whose
+// connection died is gone, and anything may have been saved since.
+func (r *Repo) CheckLock(ctx context.Context) error {
+	r.mu.Lock()
+	h, loaded, seen := r.held, r.loaded, r.rev
+	r.mu.Unlock()
+	if h == nil {
+		return errors.New("the board is not locked")
+	}
+	cur, err := lockRevision(ctx, h.conn)
+	if err != nil {
+		return fmt.Errorf("the lock on the board was lost (%v); nothing was changed, try again", r.plain(err))
+	}
+	if loaded && cur != seen {
+		return fmt.Errorf("the lock on the board was lost: it was saved by someone else meanwhile; nothing was changed, try again")
+	}
+	return nil
+}

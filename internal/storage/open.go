@@ -66,6 +66,9 @@ func Open(ref config.ProjectRef) (app.Repository, error) {
 type CreateOptions struct {
 	// CreateDatabase makes the database if it does not exist.
 	CreateDatabase bool
+	// Board, when set, is written into a server board in the same step that
+	// creates it, so the board never exists half-filled. Files ignore it.
+	Board *domain.Board
 }
 
 // Create makes a new, empty board with settings s and returns its repository.
@@ -80,13 +83,21 @@ func Create(ref config.ProjectRef, s domain.Settings) (app.Repository, error) {
 func CreateWith(ctx context.Context, ref config.ProjectRef, s domain.Settings, opts CreateOptions) (app.Repository, error) {
 	switch ref.Storage {
 	case "postgres":
-		repo, err := postgres.Create(ctx, ref, s, opts.CreateDatabase)
+		b := opts.Board
+		if b == nil {
+			b = &domain.Board{Settings: s}
+		}
+		repo, err := postgres.CreateFrom(ctx, ref, b, opts.CreateDatabase)
 		if err != nil {
 			return nil, err
 		}
 		return repo, nil
 	case "mysql":
-		repo, err := mysql.Create(ctx, ref, s, opts.CreateDatabase)
+		b := opts.Board
+		if b == nil {
+			b = &domain.Board{Settings: s}
+		}
+		repo, err := mysql.CreateFrom(ctx, ref, b, opts.CreateDatabase)
 		if err != nil {
 			return nil, err
 		}
