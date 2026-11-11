@@ -11,7 +11,6 @@ import (
 
 	"waypoint/internal/config"
 	"waypoint/internal/dbconn"
-	"waypoint/internal/storage/servertest"
 )
 
 func serverBody(ref config.ProjectRef, extra map[string]any) map[string]any {
@@ -36,27 +35,29 @@ func TestDBTestEndpointNoPasswordField(t *testing.T) {
 }
 
 func TestDBTestReportsTheServer(t *testing.T) {
-	ref := servertest.Postgres(t)
-	f := newFixture(t)
-	body := serverBody(ref, map[string]any{"engine": "postgres", "project": ref.Name})
-	out := f.do("POST", "/api/db/test", body).want(200).obj()
-	assertEq[any](t, out["reachable"], true)
-	assertEq[any](t, out["database_exists"], true)
-	assertEq[any](t, out["empty"], true)
-	assertEq[any](t, out["has_board"], false)
-	assertEq[any](t, out["non_local"], false)
-	assertEq[any](t, out["password_var"], dbconn.PasswordVar(ref.Name))
-	assertEq[any](t, out["global_password_var"], dbconn.GlobalPasswordVar)
+	eachEngine(t, func(t *testing.T, e engine) {
+		ref := e.fresh(t)
+		f := newFixture(t)
+		body := serverBody(ref, map[string]any{"engine": e.name, "project": ref.Name})
+		out := f.do("POST", "/api/db/test", body).want(200).obj()
+		assertEq[any](t, out["reachable"], true)
+		assertEq[any](t, out["database_exists"], true)
+		assertEq[any](t, out["empty"], true)
+		assertEq[any](t, out["has_board"], false)
+		assertEq[any](t, out["non_local"], false)
+		assertEq[any](t, out["password_var"], dbconn.PasswordVar(ref.Name))
+		assertEq[any](t, out["global_password_var"], dbconn.GlobalPasswordVar)
 
-	f.do("POST", "/api/projects", serverBody(ref, map[string]any{"name": ref.Name, "storage": "postgres"})).want(201)
-	out = f.do("POST", "/api/db/test", body).want(200).obj()
-	assertEq[any](t, out["has_board"], true)
-	assertEq[any](t, out["empty"], false)
+		f.do("POST", "/api/projects", serverBody(ref, map[string]any{"name": ref.Name, "storage": e.name})).want(201)
+		out = f.do("POST", "/api/db/test", body).want(200).obj()
+		assertEq[any](t, out["has_board"], true)
+		assertEq[any](t, out["empty"], false)
 
-	body["database"] = ref.Database + "_missing"
-	out = f.do("POST", "/api/db/test", body).want(200).obj()
-	assertEq[any](t, out["reachable"], true)
-	assertEq[any](t, out["database_exists"], false)
+		body["database"] = ref.Database + "_missing"
+		out = f.do("POST", "/api/db/test", body).want(200).obj()
+		assertEq[any](t, out["reachable"], true)
+		assertEq[any](t, out["database_exists"], false)
+	})
 }
 
 func TestDBTestNonLocalFlag(t *testing.T) {
@@ -88,80 +89,86 @@ func TestDBTestRefusesBadInput(t *testing.T) {
 }
 
 func TestCreateServerProject(t *testing.T) {
-	ref := servertest.Postgres(t)
-	f := newFixture(t)
-	r := f.do("POST", "/api/projects", serverBody(ref, map[string]any{"name": ref.Name, "storage": "postgres"})).want(201)
-	out := r.obj()
-	assertEq[any](t, out["host"], ref.Host)
-	assertEq[any](t, out["database"], ref.Database)
-	assertEq[any](t, out["user"], ref.User)
-	assertEq[any](t, out["storage"], "postgres")
-	if _, has := out["path"]; has {
-		t.Errorf("a server project has no path: %v", out)
-	}
-	if out["error"] != nil {
-		t.Errorf("error = %v", out["error"])
-	}
-	f.do("GET", "/api/projects/"+ref.Name+"/board", nil).want(200)
-	var list []projectJSON
-	f.do("GET", "/api/projects", nil).want(200).decode(&list)
-	assertEq(t, len(list), 1)
-	assertEq(t, list[0].Database, ref.Database)
-	// A path makes no sense for a server project.
-	f.do("POST", "/api/projects", map[string]any{"name": "x", "storage": "postgres", "path": "/tmp/x.db", "user": "u"}).wantCode(422, "invalid")
+	eachEngine(t, func(t *testing.T, e engine) {
+		ref := e.fresh(t)
+		f := newFixture(t)
+		r := f.do("POST", "/api/projects", serverBody(ref, map[string]any{"name": ref.Name, "storage": e.name})).want(201)
+		out := r.obj()
+		assertEq[any](t, out["host"], ref.Host)
+		assertEq[any](t, out["database"], ref.Database)
+		assertEq[any](t, out["user"], ref.User)
+		assertEq[any](t, out["storage"], e.name)
+		if _, has := out["path"]; has {
+			t.Errorf("a server project has no path: %v", out)
+		}
+		if out["error"] != nil {
+			t.Errorf("error = %v", out["error"])
+		}
+		f.do("GET", "/api/projects/"+ref.Name+"/board", nil).want(200)
+		var list []projectJSON
+		f.do("GET", "/api/projects", nil).want(200).decode(&list)
+		assertEq(t, len(list), 1)
+		assertEq(t, list[0].Database, ref.Database)
+		// A path makes no sense for a server project.
+		f.do("POST", "/api/projects", map[string]any{"name": "x", "storage": "postgres", "path": "/tmp/x.db", "user": "u"}).wantCode(422, "invalid")
+	})
 }
 
-func TestConvertToPostgresOverHTTP(t *testing.T) {
-	ref := servertest.Postgres(t)
-	f := newFixture(t)
-	f.addBoard(ref.Name, nil)
-	out := f.do("POST", "/api/projects/"+ref.Name+"/convert", serverBody(ref, map[string]any{"to": "postgres"})).want(200).obj()
-	assertEq[any](t, out["storage"], "postgres")
-	assertEq[any](t, out["database"], ref.Database)
-	if _, has := out["path"]; has {
-		t.Errorf("path in %v", out)
-	}
-	f.do("GET", "/api/projects/"+ref.Name+"/board", nil).want(200)
-	back := f.do("POST", "/api/projects/"+ref.Name+"/convert", map[string]any{"to": "sqlite", "path": filepath.Join(f.dir, "back.db")}).want(200).obj()
-	assertEq[any](t, back["storage"], "sqlite")
-	assertEq[any](t, back["retired"], ref.Display())
+func TestConvertToServerOverHTTP(t *testing.T) {
+	eachEngine(t, func(t *testing.T, e engine) {
+		ref := e.fresh(t)
+		f := newFixture(t)
+		f.addBoard(ref.Name, nil)
+		out := f.do("POST", "/api/projects/"+ref.Name+"/convert", serverBody(ref, map[string]any{"to": e.name})).want(200).obj()
+		assertEq[any](t, out["storage"], e.name)
+		assertEq[any](t, out["database"], ref.Database)
+		if _, has := out["path"]; has {
+			t.Errorf("path in %v", out)
+		}
+		f.do("GET", "/api/projects/"+ref.Name+"/board", nil).want(200)
+		back := f.do("POST", "/api/projects/"+ref.Name+"/convert", map[string]any{"to": "sqlite", "path": filepath.Join(f.dir, "back.db")}).want(200).obj()
+		assertEq[any](t, back["storage"], "sqlite")
+		assertEq[any](t, back["retired"], ref.Display())
+	})
 }
 
 func TestResponsesNeverContainPassword(t *testing.T) {
-	ref := servertest.Postgres(t)
-	real := os.Getenv(dbconn.PasswordVar(ref.Name))
-	const marker = "s3cr3t-marker"
-	t.Setenv(dbconn.PasswordVar(ref.Name), marker)
-	f := newFixture(t)
-	f.addBoard(ref.Name+"-md", nil)
+	eachEngine(t, func(t *testing.T, e engine) {
+		ref := e.fresh(t)
+		real := os.Getenv(dbconn.PasswordVar(ref.Name))
+		const marker = "s3cr3t-marker"
+		t.Setenv(dbconn.PasswordVar(ref.Name), marker)
+		f := newFixture(t)
+		f.addBoard(ref.Name+"-md", nil)
 
-	check := func(what string, r reply) {
-		t.Helper()
-		if strings.Contains(string(r.body), marker) || strings.Contains(string(r.body), real) {
-			t.Fatalf("%s: the response holds a password: %s", what, r.body)
+		check := func(what string, r reply) {
+			t.Helper()
+			if strings.Contains(string(r.body), marker) || strings.Contains(string(r.body), real) {
+				t.Fatalf("%s: the response holds a password: %s", what, r.body)
+			}
 		}
-	}
-	test := f.do("POST", "/api/db/test", serverBody(ref, map[string]any{"engine": "postgres", "project": ref.Name}))
-	check("db/test", test)
-	assertEq[any](t, test.obj()["reachable"], false)
-	assertContains(t, test.obj()["error"].(string), dbconn.PasswordHelp(ref.Name))
+		test := f.do("POST", "/api/db/test", serverBody(ref, map[string]any{"engine": e.name, "project": ref.Name}))
+		check("db/test", test)
+		assertEq[any](t, test.obj()["reachable"], false)
+		assertContains(t, test.obj()["error"].(string), dbconn.PasswordHelp(ref.Name))
 
-	create := f.do("POST", "/api/projects", serverBody(ref, map[string]any{"name": ref.Name, "storage": "postgres"}))
-	check("create", create)
-	create.wantCode(422, "needs_password")
-	assertContains(t, create.obj()["error"].(string), dbconn.PasswordHelp(ref.Name))
+		create := f.do("POST", "/api/projects", serverBody(ref, map[string]any{"name": ref.Name, "storage": e.name}))
+		check("create", create)
+		create.wantCode(422, "needs_password")
+		assertContains(t, create.obj()["error"].(string), dbconn.PasswordHelp(ref.Name))
 
-	// Register it by hand with the wrong password still set, and read it.
-	f.register(config.ProjectRef{Name: ref.Name, Storage: "postgres", Host: ref.Host, Port: ref.Port, Database: ref.Database, User: ref.User, SSL: "prefer"})
-	check("list", f.do("GET", "/api/projects", nil))
-	check("board", f.do("GET", "/api/projects/"+ref.Name+"/board", nil))
+		// Register it by hand with the wrong password still set, and read it.
+		f.register(config.ProjectRef{Name: ref.Name, Storage: e.name, Host: ref.Host, Port: ref.Port, Database: ref.Database, User: ref.User, SSL: "prefer"})
+		check("list", f.do("GET", "/api/projects", nil))
+		check("board", f.do("GET", "/api/projects/"+ref.Name+"/board", nil))
 
-	f.addBoard("mdboard", nil)
-	conv := f.do("POST", "/api/projects/mdboard/convert", serverBody(ref, map[string]any{"to": "postgres"}))
-	check("convert", conv)
-	if conv.code == 200 {
-		t.Fatalf("a wrong password converted: %s", conv.body)
-	}
+		f.addBoard("mdboard", nil)
+		conv := f.do("POST", "/api/projects/mdboard/convert", serverBody(ref, map[string]any{"to": e.name}))
+		check("convert", conv)
+		if conv.code == 200 {
+			t.Fatalf("a wrong password converted: %s", conv.body)
+		}
+	})
 }
 
 func TestUnreachableServerProjectListsWithError(t *testing.T) {

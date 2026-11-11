@@ -135,7 +135,7 @@ export const api = {
     });
   },
   /** Moves a project to another storage. The old files, or the old database, are kept. */
-  convertProject: (p: string, body: { to: 'sqlite' | 'markdown' | 'postgres'; path?: string } & ServerFieldsBody) =>
+  convertProject: (p: string, body: { to: 'sqlite' | 'markdown' | 'postgres' | 'mysql'; path?: string } & ServerFieldsBody) =>
     request<ConvertedProject>('POST', `${projectPath(p)}/convert`, body),
   /** Looks at a database server and changes nothing. */
   testDatabase: (body: DbTestRequest) => request<DbTestResult>('POST', '/api/db/test', body),

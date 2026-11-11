@@ -46,6 +46,34 @@ describe('helpers', () => {
   });
 });
 
+describe('choosing the database engine', () => {
+  it('changes the default port and what is sent', async () => {
+    const { createProject } = open();
+    await typeInto('Name', 'Kitchen');
+    await fireEvent.click(screen.getByLabelText('Database server (Postgres)'));
+    expect(field('Port')).toHaveAttribute('placeholder', '5432');
+    await fireEvent.click(screen.getByLabelText('Database server (MySQL)'));
+    expect(field('Port')).toHaveAttribute('placeholder', '3306');
+    expect(screen.getByText(/MySQL database, on this computer/)).toBeInTheDocument();
+    await typeInto('User', 'waypoint');
+    await fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+    await waitFor(() => expect(createButton()).toBeEnabled());
+    await fireEvent.click(createButton());
+    await waitFor(() => expect(createProject).toHaveBeenCalled());
+    expect(createProject).toHaveBeenCalledWith({ name: 'Kitchen', prefix: 'T', storage: 'mysql', host: 'localhost', port: 3306, user: 'waypoint' });
+  });
+
+  it('tests the connection with the chosen engine and its port', async () => {
+    const { testDatabase } = open();
+    await typeInto('Name', 'Kitchen');
+    await fireEvent.click(screen.getByLabelText('Database server (MySQL)'));
+    await typeInto('User', 'waypoint');
+    await fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+    await waitFor(() => expect(testDatabase).toHaveBeenCalled());
+    expect(testDatabase).toHaveBeenCalledWith(expect.objectContaining({ engine: 'mysql', port: 3306 }));
+  });
+});
+
 describe('creating a project on a database server', () => {
   it('shows the exact password variables and has no password field', async () => {
     open();

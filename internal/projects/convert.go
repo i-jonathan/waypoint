@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -87,17 +88,18 @@ func Convert(ctx context.Context, cfgPath string, env func(string) string, name 
 	switch to.Storage {
 	case "sqlite", "markdown":
 		if to.Server != nil {
-			return ConvertResult{}, fmt.Errorf("%w: server settings need storage postgres", domain.ErrInvalid)
-		}
-	case "postgres":
-		if to.Server == nil {
-			return ConvertResult{}, fmt.Errorf("%w: storage postgres needs the server settings", domain.ErrInvalid)
-		}
-		if to.Path != "" {
-			return ConvertResult{}, fmt.Errorf("%w: a postgres project has no path", domain.ErrInvalid)
+			return ConvertResult{}, fmt.Errorf("%w: server settings need storage %s", domain.ErrInvalid, strings.Join(serverEngines, " or "))
 		}
 	default:
-		return ConvertResult{}, fmt.Errorf("%w: storage %q must be sqlite, markdown or postgres", domain.ErrInvalid, to.Storage)
+		if !slices.Contains(serverEngines, to.Storage) {
+			return ConvertResult{}, fmt.Errorf("%w: storage %q must be sqlite, markdown, %s", domain.ErrInvalid, to.Storage, strings.Join(serverEngines, " or "))
+		}
+		if to.Server == nil {
+			return ConvertResult{}, fmt.Errorf("%w: storage %s needs the server settings", domain.ErrInvalid, to.Storage)
+		}
+		if to.Path != "" {
+			return ConvertResult{}, fmt.Errorf("%w: a %s project has no path", domain.ErrInvalid, to.Storage)
+		}
 	}
 	cfg0, err := config.Load(cfgPath, env)
 	if err != nil {
@@ -233,8 +235,8 @@ func Convert(ctx context.Context, cfgPath string, env func(string) string, name 
 	release()
 	if len(problems) > 0 {
 		if ref.IsServer() && retireFailed {
-			return res, fmt.Errorf("project %q now uses %s, but the old database %s could not be marked retired (%s), so it is still a live board that nothing uses. To retire it, run: UPDATE waypoint_meta SET value = 'true' WHERE key = 'retired'",
-				ref.Name, res.Ref.Display(), ref.Display(), strings.TrimPrefix(problems[0], "could not mark the old database as retired: "))
+			return res, fmt.Errorf("project %q now uses %s, but the old database %s could not be marked retired (%s), so it is still a live board that nothing uses. To retire it, run: %s",
+				ref.Name, res.Ref.Display(), ref.Display(), strings.TrimPrefix(problems[0], "could not mark the old database as retired: "), storage.RetireStatement(ref))
 		}
 		return res, fmt.Errorf("project %q now uses %s, but %s; the old files stayed where they were", ref.Name, res.Ref.Display(), strings.Join(problems, " and "))
 	}

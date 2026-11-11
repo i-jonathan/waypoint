@@ -15,6 +15,12 @@ Read this first when resuming. Spec: `docs/superpowers/specs/2026-11-03-waypoint
   - `scripts/migrate-pharmacy` turns the pharmacy `BOARD.md` and `DONE.md` into a CSV. A dry run on copies gave 99 cards, 14 groups and a counter of 116. The real import has not been done: it waits for the owner.
   - A midpoint binary-level review found and fixed lost writes, hangs and an unsafe registry order in conversion. The final review is recorded in the PR.
 
+- **Plan 4 (Postgres and MySQL storage):** built on branch `feat/databases`, cut from `feat/sqlite`. Not yet reviewed by the owner.
+  - Spec: `docs/superpowers/specs/2026-11-11-waypoint-server-databases-design.md`. Plan: `docs/superpowers/plans/2026-11-11-waypoint-server-databases.md`. All 11 tasks built.
+  - A project can live in a Postgres or MySQL database (local Docker or remote): `waypoint init|project add --storage postgres|mysql --user U ...`, or the New project dialog. Any storage converts to any other, from the CLI (`project convert --to ...`) or project settings. The web UI follows server projects by polling a revision number.
+  - The password is never stored. It comes from `WAYPOINT_DB_PASSWORD_<NAME>` (one project) or `WAYPOINT_DB_PASSWORD` (all), and the UI only names the variables. A server that is not on this computer gets a one-time warning at setup.
+  - `make test-servers` runs the Go tests against throwaway Postgres 17 and MySQL 8.4 containers. Without a server those tests skip, so `go test ./...` still passes anywhere.
+
 ## Next steps
 
 1. With the owner: review PR #3, riskiest first: `internal/storage/sqlite/` (lock and save), `internal/projects/convert.go`, then `internal/app/transfer.go`, `internal/app/csv.go` and `internal/domain/validate.go`.

@@ -61,8 +61,8 @@ export const test = base.extend<{ wp: Waypoint }>({
     const env = { ...process.env, HOME: home, WAYPOINT_CONFIG: config, XDG_CONFIG_HOME: join(home, '.config'), XDG_DATA_HOME: join(home, '.data') };
     delete env.WAYPOINT_PROJECT;
     // A Postgres test server's password reaches the server and the CLI the way a real one would: through the environment.
-    const pg = process.env.WAYPOINT_TEST_POSTGRES;
-    if (pg) env.WAYPOINT_DB_PASSWORD = pg.split(':').slice(3).join(':');
+    const dbServer = process.env.WAYPOINT_TEST_POSTGRES ?? process.env.WAYPOINT_TEST_MYSQL;
+    if (dbServer) env.WAYPOINT_DB_PASSWORD = dbServer.split(':').slice(3).join(':');
     writeFileSync(config, 'tls: off\n');
 
     const file = join(dir, 'waypoint.md');

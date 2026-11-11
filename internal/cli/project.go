@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -17,11 +18,11 @@ import (
 
 const (
 	usageProject = "waypoint project add|ls|rm|convert ..."
-	usageAdd     = "waypoint project add NAME [--path FILE | --storage postgres " + serverUsage + "] [--storage sqlite|markdown] [--prefix T] [--json]"
-	usageConvert = "waypoint project convert NAME --to sqlite|markdown|postgres [--path FILE | " + serverUsage + "] [--json]"
+	usageAdd     = "waypoint project add NAME [--path FILE | --storage postgres|mysql " + serverUsage + "] [--storage sqlite|markdown] [--prefix T] [--json]"
+	usageConvert = "waypoint project convert NAME --to sqlite|markdown|postgres|mysql [--path FILE | " + serverUsage + "] [--json]"
 	usageLs      = "waypoint project ls [--json]"
 	usageRm      = "waypoint project rm NAME [--json]"
-	usageInit    = "waypoint init [NAME] [--storage sqlite|markdown|postgres " + serverUsage + "] [--prefix T] [--json]"
+	usageInit    = "waypoint init [NAME] [--storage sqlite|markdown|postgres|mysql " + serverUsage + "] [--prefix T] [--json]"
 	serverUsage  = "[--host H] [--port N] --user U [--database D] [--ssl disable|prefer|require|verify-full] [--create-database]"
 
 	defaultPrefix = projects.DefaultPrefix
@@ -70,9 +71,9 @@ func (f *serverFlags) used() bool {
 // options returns the server options for storage kind, or nil for a file
 // storage (and then no server flag may have been given).
 func (f *serverFlags) options(kind string) (*projects.ServerOptions, error) {
-	if kind != "postgres" {
+	if !slices.Contains(projects.ServerEngines(), kind) {
 		if f.used() {
-			return nil, fmt.Errorf("%w: --host, --port, --user, --database, --ssl and --create-database need --storage postgres", domain.ErrInvalid)
+			return nil, fmt.Errorf("%w: --host, --port, --user, --database, --ssl and --create-database need --storage postgres or mysql", domain.ErrInvalid)
 		}
 		return nil, nil
 	}
@@ -140,7 +141,7 @@ func (r *runner) cmdInit(args []string) int {
 	if len(pos) == 1 {
 		name = pos[0]
 	}
-	if storageFlag == "postgres" { // no file in this folder
+	if slices.Contains(projects.ServerEngines(), storageFlag) { // no file in this folder
 		return r.addProject(name, "", prefix, storageFlag, "", &sf)
 	}
 	file := initSQLiteFile
@@ -296,7 +297,7 @@ func (r *runner) cmdProjectConvert(args []string) int {
 		return r.usageError("expected one project NAME", usageConvert)
 	}
 	if to == "" {
-		return r.usageError("--to sqlite|markdown|postgres is required", usageConvert)
+		return r.usageError("--to sqlite|markdown|postgres|mysql is required", usageConvert)
 	}
 	if path != "" && !filepath.IsAbs(path) {
 		if r.env.Cwd == "" {

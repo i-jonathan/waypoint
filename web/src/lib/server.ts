@@ -24,8 +24,17 @@ export function isLocalHost(host: string): boolean {
   return m !== null && m.slice(1).every((n) => Number(n) <= 255);
 }
 
-export const DEFAULT_PORTS = { postgres: 5432 } as const;
+export const DEFAULT_PORTS = { postgres: 5432, mysql: 3306 } as const;
 export type ServerEngine = keyof typeof DEFAULT_PORTS;
+
+/** The database servers a project can live on, as the owner sees them. */
+export const SERVER_ENGINES: readonly { value: ServerEngine; label: string }[] = [
+  { value: 'postgres', label: 'Postgres' },
+  { value: 'mysql', label: 'MySQL' },
+];
+
+export const engineLabel = (engine: string): string => SERVER_ENGINES.find((e) => e.value === engine)?.label ?? engine;
+export const isServerEngine = (storage: string): storage is ServerEngine => SERVER_ENGINES.some((e) => e.value === storage);
 
 export const SSL_CHOICES = [
   { value: '', label: 'Default (encrypted unless the server is on this computer)' },

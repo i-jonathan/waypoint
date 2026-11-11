@@ -28,6 +28,7 @@
   import AppearanceFields from './AppearanceFields.svelte';
   import ColumnsEditor from './ColumnsEditor.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
+  import { DEFAULT_PORTS, SERVER_ENGINES, engineLabel, isServerEngine, type ServerEngine } from '../lib/server';
   import ServerFields, { type ServerSettings } from './ServerFields.svelte';
   import ImportDialog from './ImportDialog.svelte';
   import UnsavedGuard from './UnsavedGuard.svelte';
@@ -59,9 +60,10 @@
   let root: HTMLElement | undefined = $state();
 
   // ----- Converting the storage -----
-  type Kind = 'sqlite' | 'markdown' | 'postgres';
-  const KIND_LABEL: Record<Kind, string> = { sqlite: 'SQLite', markdown: 'Markdown', postgres: 'Postgres' };
-  const label = (k: string) => KIND_LABEL[k as Kind] ?? k;
+  type Kind = 'sqlite' | 'markdown' | ServerEngine;
+  const label = (k: string) => (k === 'sqlite' ? 'SQLite' : k === 'markdown' ? 'Markdown' : engineLabel(k));
+  /** The database servers a project can move to: any but the one it is on. */
+  const serverTargets = $derived(SERVER_ENGINES.filter((e) => e.value !== info.storage));
   /** The files a project can move to. A project on a server can go to either; a file project to the other kind. */
   const fileTargets = $derived((['sqlite', 'markdown'] as const).filter((k) => k !== info.storage));
   /** Where the server will put the file: the same folder and name with the other extension. */
@@ -70,7 +72,7 @@
   const where = $derived(info.path ?? `${info.host}:${info.port}/${info.database}`);
   /** The file target waiting for a yes. */
   let confirmingConvert = $state<'sqlite' | 'markdown' | null>(null);
-  let choosingServer = $state(false);
+  let choosingServer = $state<ServerEngine | null>(null);
   let target = $state<ServerSettings>({ engine: 'postgres', host: '', port: '', user: '', database: '', ssl: '', createDatabase: false });
   let targetReady = $state(false);
   let converting = $state(false);
@@ -83,18 +85,18 @@
     convertFailure = '';
     converted = null;
     try {
-      if (to === 'postgres') {
+      if (isServerEngine(to)) {
         const body: Parameters<typeof client.convertProject>[1] = {
           to,
           host: target.host.trim() === '' ? 'localhost' : target.host.trim(),
-          port: target.port.trim() === '' ? 5432 : Number(target.port),
+          port: target.port.trim() === '' ? DEFAULT_PORTS[to] : Number(target.port),
           user: target.user.trim(),
         };
         if (target.database.trim() !== '') body.database = target.database.trim();
         if (target.ssl !== '') body.ssl = target.ssl;
         if (target.createDatabase) body.create_database = true;
         converted = await client.convertProject(project, body);
-        choosingServer = false;
+        choosingServer = null;
       } else {
         converted = await client.convertProject(project, { to });
       }
@@ -494,9 +496,17 @@
           {#each fileTargets as to (to)}
             <button type="button" class="btn" disabled={converting || dirty} onclick={() => (confirmingConvert = to)}>Convert to {label(to)}</button>
           {/each}
-          {#if !info.host}
-            <button type="button" class="btn" disabled={converting || dirty} onclick={() => (choosingServer = true)}>Convert to Postgres</button>
-          {/if}
+          {#each serverTargets as eng (eng.value)}
+            <button
+              type="button"
+              class="btn"
+              disabled={converting || dirty}
+              onclick={() => {
+                target.engine = eng.value;
+                choosingServer = eng.value;
+              }}>Convert to {eng.label}</button
+            >
+          {/each}
         </div>
         {#if dirty}
           <p class="sf-hint">Save or cancel your changes first.</p>
@@ -584,16 +594,22 @@
 {/if}
 
 {#if choosingServer}
+  {@const engine = choosingServer}
   <ConfirmDialog
-    title="Convert this project to Postgres?"
-    confirmLabel="Convert to Postgres"
+    title="Convert this project to {label(engine)}?"
+    confirmLabel="Convert to {label(engine)}"
     confirmDisabled={!targetReady || converting}
     wide
     focus="dialog"
-    onConfirm={() => void convert('postgres')}
-    onCancel={() => (choosingServer = false)}
+    onConfirm={() => void convert(engine)}
+    onCancel={() => (choosingServer = null)}
   >
-    <p class="line-msg">Waypoint will copy the board into an empty database, check that every card and setting matches, then switch the project to it. The old files are kept next to the old board, renamed with .bak and today's date.</p>
+    <p class="line-msg">
+      Waypoint will copy the board into an empty database, check that every card and setting matches, then switch the project to it.
+      {info.host
+        ? 'The old database is kept as it is, marked as retired so nothing writes to it by mistake.'
+        : "The old files are kept next to the old board, renamed with .bak and today's date."}
+    </p>
     <ServerFields project={info.name} bind:value={target} bind:ready={targetReady} mode="convert" {client} />
     {#if convertFailure}<div class="sf-error" role="alert"><p>{convertFailure}</p></div>{/if}
   </ConfirmDialog>

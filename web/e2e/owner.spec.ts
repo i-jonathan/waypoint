@@ -232,9 +232,13 @@ test('a bad CSV file is refused with its line and changes nothing', async ({ pag
   expect(await wp.cli('ls')).not.toContain('Good');
 });
 
-test('a Postgres project can be made in the dialog, used, and moved to SQLite and back', async ({ page, wp }) => {
-  const pg = process.env.WAYPOINT_TEST_POSTGRES;
-  test.skip(!pg, 'WAYPOINT_TEST_POSTGRES is not set');
+for (const engine of [
+  { key: 'postgres', label: 'Postgres', env: 'WAYPOINT_TEST_POSTGRES' },
+  { key: 'mysql', label: 'MySQL', env: 'WAYPOINT_TEST_MYSQL' },
+]) {
+  test(`a ${engine.label} project can be made in the dialog, used, and moved to SQLite and back`, async ({ page, wp }) => {
+  const pg = process.env[engine.env];
+  test.skip(!pg, `${engine.env} is not set`);
   const [host, port, user] = (pg ?? '').split(':');
   const database = `waypoint_e2e_${Math.random().toString(16).slice(2, 10)}`;
 
@@ -243,7 +247,7 @@ test('a Postgres project can be made in the dialog, used, and moved to SQLite an
   await page.getByRole('menuitem', { name: 'New project' }).click();
   const dialog = page.getByRole('dialog', { name: 'New project' });
   await dialog.getByLabel('Name').fill('Server');
-  await dialog.getByRole('radio', { name: /Database server/ }).check();
+  await dialog.getByRole('radio', { name: new RegExp(`Database server \\(${engine.label}\\)`) }).check();
   await expect(dialog).toContainText('WAYPOINT_DB_PASSWORD_SERVER');
   await expect(dialog.getByRole('button', { name: 'Create project' })).toBeDisabled();
   await dialog.getByLabel('Host').fill(host);
@@ -257,10 +261,10 @@ test('a Postgres project can be made in the dialog, used, and moved to SQLite an
 
   await expect(page).toHaveURL(/\/p\/Server/);
   await page.keyboard.press('n');
-  await page.keyboard.type('Lives in Postgres');
+  await page.keyboard.type(`Lives in ${engine.label}`);
   await page.keyboard.press('Enter');
   await expect(page.locator('[data-card-id="T-1"]')).toBeVisible();
-  expect(await wp.cli('ls', '--project', 'Server')).toContain('Lives in Postgres');
+  expect(await wp.cli('ls', '--project', 'Server')).toContain(`Lives in ${engine.label}`);
   expect(await wp.cli('project', 'ls')).toContain(`${host}:${port}/${database}`);
 
   // Out to SQLite, then back into a second, empty database.
@@ -268,10 +272,10 @@ test('a Postgres project can be made in the dialog, used, and moved to SQLite an
   await page.getByRole('button', { name: 'Convert to SQLite' }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Convert' }).click();
   await expect(page.getByRole('status', { name: 'Conversion result' })).toContainText('marked as retired');
-  expect(await wp.cli('ls', '--project', 'Server')).toContain('Lives in Postgres');
+  expect(await wp.cli('ls', '--project', 'Server')).toContain(`Lives in ${engine.label}`);
 
-  await page.getByRole('button', { name: 'Convert to Postgres' }).click();
-  const again = page.getByRole('alertdialog', { name: 'Convert this project to Postgres?' });
+  await page.getByRole('button', { name: `Convert to ${engine.label}` }).click();
+  const again = page.getByRole('alertdialog', { name: `Convert this project to ${engine.label}?` });
   await again.getByLabel('Host').fill(host);
   await again.getByLabel('Port').fill(port);
   await again.getByLabel('User').fill(user);
@@ -279,7 +283,8 @@ test('a Postgres project can be made in the dialog, used, and moved to SQLite an
   await again.getByLabel('Create the database if it does not exist').check();
   await again.getByRole('button', { name: 'Test connection' }).click();
   await expect(again.getByRole('status')).toContainText('Connected');
-  await again.getByRole('button', { name: 'Convert to Postgres' }).click();
-  await expect(page.getByRole('status', { name: 'Conversion result' })).toContainText('Converted to Postgres');
-  expect(await wp.cli('ls', '--project', 'Server')).toContain('Lives in Postgres');
+  await again.getByRole('button', { name: `Convert to ${engine.label}` }).click();
+  await expect(page.getByRole('status', { name: 'Conversion result' })).toContainText(`Converted to ${engine.label}`);
+  expect(await wp.cli('ls', '--project', 'Server')).toContain(`Lives in ${engine.label}`);
 });
+}
