@@ -199,3 +199,7 @@ For agents that speak the Model Context Protocol and have no shell, `waypoint mc
 ```
 
 The tools are `list_cards`, `get_card`, `create_card`, `move_card`, `update_card`, `next_up` and `list_blocked`. Each returns the same JSON as the matching `--json` command. A refused move, a WIP limit, an unknown card or column, or an `if_match` that no longer matches comes back as a tool error with the reason (and, for `if_match`, the card as it is now), so the agent can adjust. Where a shell is available, the CLI is simpler and does more.
+
+## License
+
+Waypoint is released under the [Apache License 2.0](LICENSE).
