@@ -1,8 +1,12 @@
-.PHONY: test e2e build build-go web vet
+.PHONY: test test-servers e2e build build-go web vet
 
 test:
 	go test ./...
 	cd web && npm test
+
+# The Go tests against throwaway Postgres and MySQL servers in Docker.
+test-servers:
+	scripts/test-servers.sh
 
 # Browser tests against the real binary. They build their own copy in a temp folder.
 e2e:
