@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"waypoint/internal/domain"
@@ -48,44 +49,64 @@ func (s Store) Save(ctx context.Context, q Querier, b *domain.Board) (int64, err
 			return 0, err
 		}
 	}
+	var columns, groups, cards, fields [][]any
 	for i, c := range st.Columns {
 		moves, _ := json.Marshal(nonNil(c.MovesTo))
-		if _, err := q.ExecContext(ctx, s.D.Rebind(`INSERT INTO board_columns (position, name, wip, done, moves_to) VALUES (?, ?, ?, ?, ?)`),
-			i, c.Name, c.WIP, boolInt(c.Done), string(moves)); err != nil {
-			return 0, err
-		}
+		columns = append(columns, []any{i, c.Name, c.WIP, boolInt(c.Done), string(moves)})
 	}
 	for i, g := range st.Groups {
-		if _, err := q.ExecContext(ctx, s.D.Rebind(`INSERT INTO board_groups (position, name, color) VALUES (?, ?, ?)`), i, g.Name, g.Color); err != nil {
-			return 0, err
+		groups = append(groups, []any{i, g.Name, g.Color})
+	}
+	addCards := func(list []domain.Card, archived bool) {
+		for i, c := range list {
+			depends, _ := json.Marshal(nonNil(c.Depends))
+			var at any // NULL for a live card
+			if archived {
+				at = archivedAt(c)
+			}
+			cards = append(cards, []any{string(c.ID), i, c.Column, c.Title, c.Group, c.Priority, string(depends),
+				storedDate(c.Created), storedDate(c.Done), c.Body, at})
+			for j, f := range c.Extra {
+				fields = append(fields, []any{string(c.ID), j, f.Key, f.Value})
+			}
 		}
 	}
-	for i, c := range b.Cards {
-		if err := s.insertCard(ctx, q, i, c, nil); err != nil {
-			return 0, err
-		}
-	}
-	for i, c := range b.Archived {
-		at := archivedAt(c)
-		if err := s.insertCard(ctx, q, i, c, &at); err != nil {
+	addCards(b.Cards, false)
+	addCards(b.Archived, true)
+	for _, t := range []struct {
+		table string
+		cols  []string
+		rows  [][]any
+	}{
+		{"board_columns", []string{"position", "name", "wip", "done", "moves_to"}, columns},
+		{"board_groups", []string{"position", "name", "color"}, groups},
+		{"cards", []string{"id", "position", "column_name", "title", "group_name", "priority", "depends", "created", "done", "body", "archived_at"}, cards},
+		{"card_fields", []string{"card_id", "position", "field_key", "field_value"}, fields},
+	} {
+		if err := s.insertRows(ctx, q, t.table, t.cols, t.rows); err != nil {
 			return 0, err
 		}
 	}
 	return rev, nil
 }
 
-func (s Store) insertCard(ctx context.Context, q Querier, pos int, c domain.Card, archivedAt *string) error {
-	depends, _ := json.Marshal(nonNil(c.Depends))
-	if _, err := q.ExecContext(ctx, s.D.Rebind(`INSERT INTO cards
-		(id, position, column_name, title, group_name, priority, depends, created, done, body, archived_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
-		string(c.ID), pos, c.Column, c.Title, c.Group, c.Priority, string(depends),
-		storedDate(c.Created), storedDate(c.Done), c.Body, archivedAt); err != nil {
-		return err
-	}
-	for i, f := range c.Extra {
-		if _, err := q.ExecContext(ctx, s.D.Rebind(`INSERT INTO card_fields (card_id, position, field_key, field_value) VALUES (?, ?, ?, ?)`),
-			string(c.ID), i, f.Key, f.Value); err != nil {
+// batchRows is how many rows one INSERT carries. The widest table has 11
+// columns, so a batch stays well under the 65,535 placeholders an engine allows.
+const batchRows = 100
+
+// insertRows inserts rows into table in batches, so a save costs a few round
+// trips and not one per card, which matters when the database is across a network.
+func (s Store) insertRows(ctx context.Context, q Querier, table string, cols []string, rows [][]any) error {
+	for start := 0; start < len(rows); start += batchRows {
+		chunk := rows[start:min(start+batchRows, len(rows))]
+		one := "(" + strings.TrimSuffix(strings.Repeat("?, ", len(cols)), ", ") + ")"
+		query := "INSERT INTO " + table + " (" + strings.Join(cols, ", ") + ") VALUES " +
+			strings.TrimSuffix(strings.Repeat(one+", ", len(chunk)), ", ")
+		args := make([]any, 0, len(chunk)*len(cols))
+		for _, r := range chunk {
+			args = append(args, r...)
+		}
+		if _, err := q.ExecContext(ctx, s.D.Rebind(query), args...); err != nil {
 			return err
 		}
 	}

@@ -137,14 +137,23 @@ func (a *api) openProject(r *http.Request) (project, error) {
 // changed publishes that the project's board changed.
 func (a *api) changed(p project) { a.publish(Event{Type: "changed", Project: p.ref.Name}) }
 
+// boardKey identifies a board for the run: its path, or for a server project
+// the engine, address, database and user, which together say which board it is.
+func boardKey(ref config.ProjectRef) string {
+	if ref.IsServer() {
+		return ref.Storage + "|" + ref.Display() + "|" + ref.User
+	}
+	return ref.Path
+}
+
 // autoArchiveOnce archives the cards that are due, the first time a board is
 // opened in this server run. A failure is logged and does not fail the read
 // that triggered it; it is tried again on the next open. That includes waiting
 // too long for the board's lock: a read must not hang on a slow writer.
 func (a *api) autoArchiveOnce(r *http.Request, p project) {
 	a.mu.Lock()
-	done := a.opened[p.ref.Display()]
-	a.opened[p.ref.Display()] = true
+	done := a.opened[boardKey(p.ref)]
+	a.opened[boardKey(p.ref)] = true
 	a.mu.Unlock()
 	if done {
 		return

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -52,6 +53,9 @@ func (dialect) Rebind(q string) string {
 func (dialect) ValidText(s string) error {
 	if strings.ContainsRune(s, 0) {
 		return errors.New("contains a NUL character, which PostgreSQL cannot store; remove it")
+	}
+	if !utf8.ValidString(s) {
+		return errors.New("is not valid UTF-8 text (a stray byte from another encoding?), which PostgreSQL cannot store; fix it")
 	}
 	return nil
 }
@@ -153,6 +157,10 @@ func connectError(ref config.ProjectRef, database string, err error) error {
 			return fmt.Errorf("%w: database %q does not exist on %s:%d; create it, or ask Waypoint to with --create-database", domain.ErrNotFound, database, ref.Host, portOf(ref))
 		}
 		return fmt.Errorf("cannot use %s: %s", ref.Display(), pe.Message)
+	}
+	if strings.Contains(err.Error(), "require_auth") {
+		// The server answered; it asked for a password method Waypoint refuses.
+		return fmt.Errorf("%w: %s uses md5 or clear-text password authentication, and Waypoint accepts only SCRAM (scram-sha-256) so the password cannot be collected by a look-alike server; change the server's pg_hba.conf and the user's password to SCRAM", domain.ErrInvalid, ref.Display())
 	}
 	return fmt.Errorf("%w at %s:%d: %v", dbconn.ErrUnreachable, ref.Host, portOf(ref), err)
 }

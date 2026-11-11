@@ -573,3 +573,11 @@ func TestFindByDirIgnoresServerProjects(t *testing.T) {
 		t.Fatal("a server project was found by folder")
 	}
 }
+
+// A file project reads no password, so it cannot collide with a server project's.
+func TestFileProjectMayShareAPasswordVariableNameWithAServerProject(t *testing.T) {
+	c := &Config{}
+	assertNoErr(t, c.Add(serverRef("pharmacy-db")))
+	assertNoErr(t, c.Add(ProjectRef{Name: "pharmacy_db", Path: "/tmp/pharmacy_db/BOARD.md"}))
+	assertIs(t, c.Add(serverRef("pharmacy.db")), domain.ErrInvalid) // two server projects still collide
+}

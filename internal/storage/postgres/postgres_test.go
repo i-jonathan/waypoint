@@ -193,6 +193,7 @@ func TestRejectsNUL(t *testing.T) {
 		"body":   func(b *domain.Board) { b.Cards[0].Body = "bad\x00body" },
 		"field":  func(b *domain.Board) { b.Cards[0].Extra = []domain.Field{{Key: "k\x00ey", Value: "v"}} },
 		"column": func(b *domain.Board) { b.Settings.Columns[0].Name = "col\x00umn" },
+		"utf8":   func(b *domain.Board) { b.Cards[0].Body = "caf\xe9" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

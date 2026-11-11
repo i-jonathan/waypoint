@@ -1420,3 +1420,18 @@ func TestImportRefusals(t *testing.T) {
 	f.do("GET", "/api/projects/Alpha/board", nil).want(200).decode(&board)
 	assertEq(t, len(board.Board.Cards), 0)
 }
+
+func TestBoardKeysDifferByEngineAndUser(t *testing.T) {
+	a := config.ProjectRef{Name: "a", Storage: "postgres", Host: "h", Port: 5432, Database: "d", User: "u1"}
+	b := a
+	b.Storage = "other"
+	c := a
+	c.User = "u2"
+	if boardKey(a) == boardKey(b) || boardKey(a) == boardKey(c) {
+		t.Fatal("two projects that differ by engine or user must not share a key")
+	}
+	f := config.ProjectRef{Name: "f", Storage: "sqlite", Path: "/x/y.db"}
+	if boardKey(f) != "/x/y.db" {
+		t.Fatalf("a file project is keyed by its path, got %q", boardKey(f))
+	}
+}

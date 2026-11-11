@@ -16,7 +16,7 @@ import (
 // Storage on a file project is chosen by StorageFor(path). A server project
 // needs host, user and database, a port of 0-65535 (0 means the engine's
 // default), a valid ssl value and no path; its name must give a password
-// variable no other server project's name gives.
+// variable no other server project's name gives (a file project reads no password).
 func (c *Config) Add(p ProjectRef) error {
 	if strings.TrimSpace(p.Name) == "" {
 		return fmt.Errorf("%w: project name is empty", domain.ErrInvalid)
@@ -54,7 +54,7 @@ func (c *Config) Add(p ProjectRef) error {
 		if p.IsServer() && q.IsServer() && p.Storage == q.Storage && sameDatabase(p, q) {
 			return fmt.Errorf("%w: %s is already registered as %q", domain.ErrInvalid, p.Display(), q.Name)
 		}
-		if (p.IsServer() || q.IsServer()) && dbconn.PasswordVar(q.Name) == dbconn.PasswordVar(p.Name) {
+		if p.IsServer() && q.IsServer() && dbconn.PasswordVar(q.Name) == dbconn.PasswordVar(p.Name) {
 			return fmt.Errorf("%w: project names %q and %q would both use %s for the password; rename one",
 				domain.ErrInvalid, q.Name, p.Name, dbconn.PasswordVar(p.Name))
 		}
@@ -86,7 +86,7 @@ func validateServer(p ProjectRef) error {
 	case strings.TrimSpace(p.Database) == "":
 		return fmt.Errorf("%w: database is empty", domain.ErrInvalid)
 	case p.Port < 0 || p.Port > 65535:
-		return fmt.Errorf("%w: port %d must be 1-65535", domain.ErrInvalid, p.Port)
+		return fmt.Errorf("%w: port %d must be from 1 to 65535, or left out for the default", domain.ErrInvalid, p.Port)
 	case p.SSL != "" && !dbconn.ValidSSL(p.SSL):
 		return fmt.Errorf("%w: ssl %q must be disable, prefer, require or verify-full", domain.ErrInvalid, p.SSL)
 	}

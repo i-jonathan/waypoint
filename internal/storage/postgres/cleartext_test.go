@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -61,6 +62,9 @@ func TestNeverSendsTheClearTextPassword(t *testing.T) {
 	_, err = postgres.Probe(ctx, ref)
 	if err == nil {
 		t.Fatal("a cleartext-password server should be refused")
+	}
+	if errors.Is(err, dbconn.ErrUnreachable) || !strings.Contains(err.Error(), "SCRAM") {
+		t.Fatalf("the refusal should say Waypoint accepts only SCRAM, not that the server is unreachable: %v", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
