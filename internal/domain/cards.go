@@ -97,7 +97,7 @@ func (b *Board) AddCard(n NewCard, now time.Time) (Card, error) {
 		Priority: priority,
 		Depends:  slices.Clone(n.Depends),
 		Created:  Stamp(now),
-		Body:     n.Body,
+		Body:     NormalizeBody(n.Body),
 		Extra:    slices.Clone(n.Extra),
 	}
 	if col.Done {
@@ -214,7 +214,7 @@ func (b *Board) UpdateCard(id CardID, p CardPatch) error {
 		next.Priority = priority
 	}
 	if p.Body != nil {
-		next.Body = *p.Body
+		next.Body = NormalizeBody(*p.Body)
 	}
 	if p.Depends != nil {
 		if err := validateDepends(*p.Depends); err != nil {

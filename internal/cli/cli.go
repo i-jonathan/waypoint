@@ -49,10 +49,11 @@ Usage: waypoint <command> [flags]
 Commands:
   serve                Start the web UI (--port N, --no-open)
   trust                Trust the local certificate so the UI can use HTTPS and HTTP/2
-  init [NAME]          Register ./BOARD.md in this directory as a project
-  project add NAME     Add a project (--path FILE, --prefix T)
+  init [NAME]          Create ./waypoint.db here and register it as a project (--storage markdown for ./BOARD.md)
+  project add NAME     Add a project (--path FILE, --storage sqlite|markdown, --prefix T)
   project ls           List projects
   project rm NAME      Remove a project from the registry (the file is kept)
+  project convert NAME Move a project to --to sqlite|markdown; the old files are kept as .bak-DATE
   ls [QUERY...]        List cards (--column X, --group G, --blocked, --next, --archived)
   show ID              Show one card with its body
   add TITLE            Add a card (--column, --group, --priority, --depends, --body TEXT|-)
@@ -63,7 +64,11 @@ Commands:
   archive              Archive every card in a done column
   restore ID           Bring an archived card back (--column X)
   rm ID                Delete a card
+  export               Write the project as JSON, CSV or Markdown (--format json|csv|md, --out FILE; to the screen without it)
+  import FILE          Put a JSON export into an empty project (--replace to swap everything),
+                       or a CSV file into any project (--create adds unknown columns and groups)
   agents               Print a snippet to paste into AGENTS.md or CLAUDE.md
+  mcp                  Serve the board to agents over MCP on stdin and stdout
   help format          Print the board file format guide
 
 Every command accepts --json and --project NAME.
@@ -99,6 +104,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return r.cmdTrust(args[1:])
 	case "agents":
 		return r.cmdAgents(args[1:])
+	case "mcp":
+		return r.cmdMCP(args[1:])
 	case "init":
 		return r.cmdInit(args[1:])
 	case "project":
@@ -123,6 +130,10 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return r.cmdRestore(args[1:])
 	case "rm":
 		return r.cmdRm(args[1:])
+	case "export":
+		return r.cmdExport(args[1:])
+	case "import":
+		return r.cmdImport(args[1:])
 	}
 	return r.usageError(fmt.Sprintf("unknown command %q", args[0]), "waypoint <command> [flags], see waypoint --help")
 }
@@ -246,32 +257,58 @@ func (e noProjectError) Error() string { return e.msg }
 
 func (noProjectError) Unwrap() error { return domain.ErrNotFound }
 
-// unregisteredHere reports whether the working directory holds a Waypoint board
-// named exactly BOARD.md that is not registered. Any other file or folder of
-// that name is not Waypoint's, and says nothing about which project this is.
-func (r *runner) unregisteredHere(cfg *config.Config) bool {
+// unregisteredHere returns the name of an unregistered Waypoint board in the
+// working directory, or "". Only the two names "waypoint init" makes count:
+// BOARD.md and waypoint.db. Any other file or folder of those names is not
+// Waypoint's, and says nothing about which project this is.
+func (r *runner) unregisteredHere(cfg *config.Config) string {
 	// The directory listing has the real name; on a case-insensitive disk a
 	// Stat would also find board.md.
 	entries, err := os.ReadDir(r.env.Cwd)
-	if err != nil || !slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Name() == initBoardFile }) {
+	if err != nil {
+		return ""
+	}
+	for _, name := range []string{initMarkdownFile, initSQLiteFile} {
+		if !slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Name() == name }) {
+			continue
+		}
+		here := filepath.Join(r.env.Cwd, name)
+		if info, err := os.Stat(here); err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if !isWaypointBoard(r.ctx, here) {
+			continue
+		}
+		if _, registered := projects.RegisteredAt(cfg, here); !registered {
+			return name
+		}
+	}
+	return ""
+}
+
+// isWaypointBoard says whether the file at path is a Waypoint board of either
+// storage. It reads and never writes.
+func isWaypointBoard(ctx context.Context, path string) bool {
+	kind, err := storage.Sniff(path)
+	if err != nil {
 		return false
 	}
-	here := filepath.Join(r.env.Cwd, initBoardFile)
-	if info, err := os.Stat(here); err != nil || !info.Mode().IsRegular() {
+	if kind == "markdown" {
+		data, err := os.ReadFile(path)
+		return err == nil && markdown.IsBoard(data)
+	}
+	repo, err := storage.Open(config.ProjectRef{Name: "here", Storage: kind, Path: path})
+	if err != nil {
 		return false
 	}
-	data, err := os.ReadFile(here)
-	if err != nil || !markdown.IsBoard(data) {
-		return false
-	}
-	_, registered := projects.RegisteredAt(cfg, here)
-	return !registered
+	_, _, err = repo.Load(ctx)
+	return err == nil
 }
 
 // resolveProject picks the project a command acts on: name (the --project
 // value) if given, else $WAYPOINT_PROJECT, else the project found from the
 // working directory (see config.FindByDir). An unregistered Waypoint board at
-// ./BOARD.md stops that search, because a board in the working directory is the
+// ./BOARD.md or ./waypoint.db stops that search, because a board in the working directory is the
 // one the user means, whatever is registered above it. Anything else is an error,
 // so a card never lands on a board the user did not mean. A named project that
 // does not exist is an error, not a fall-through.
@@ -287,8 +324,12 @@ func (r *runner) resolveProject(cfg *config.Config, name string) (config.Project
 		return ref, nil
 	}
 	if r.env.Cwd != "" {
-		if r.unregisteredHere(cfg) {
-			return config.ProjectRef{}, noProjectError{initBoardFile + ` here isn't registered; run "waypoint init"`}
+		if name := r.unregisteredHere(cfg); name != "" {
+			hint := `waypoint init`
+			if name == initMarkdownFile {
+				hint += ` --storage markdown`
+			}
+			return config.ProjectRef{}, noProjectError{name + ` here isn't registered; run "` + hint + `"`}
 		}
 		if ref, ok := cfg.FindByDir(r.env.Cwd); ok {
 			return ref, nil

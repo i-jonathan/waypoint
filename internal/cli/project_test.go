@@ -35,7 +35,7 @@ func TestProjectAddNew(t *testing.T) {
 func TestProjectAddDefaultPathCreatesDataDir(t *testing.T) {
 	dir := t.TempDir()
 	// A fresh machine: data_dir does not exist yet.
-	want := filepath.Join(sandboxFor(t).home, ".local", "share", "waypoint", "my-big-project.md")
+	want := filepath.Join(sandboxFor(t).home, ".local", "share", "waypoint", "my-big-project.db")
 	mustNotExist(t, filepath.Dir(want))
 
 	stdout, stderr, code := runCLI(t, dir, "project", "add", "  My Big_Project!! ")
@@ -169,16 +169,15 @@ func TestProjectAddNotABoardJSONHasNoLine(t *testing.T) {
 	assertNotContains(t, stdout, `"line"`)
 }
 
-func TestProjectAddSQLiteRefused(t *testing.T) {
+func TestProjectAddSQLite(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"a.db", "a.sqlite", "a.sqlite3"} {
 		path := filepath.Join(dir, name)
-		_, stderr, code := runCLI(t, dir, "project", "add", "S", "--path", path)
-		assertEq(t, code, 1)
-		assertContains(t, stderr, "sqlite storage arrives in a later version")
-		mustNotExist(t, path)
+		stdout, _, code := runCLI(t, dir, "project", "add", "S"+name, "--path", path)
+		assertEq(t, code, 0)
+		assertContains(t, stdout, "(sqlite)")
+		mustExist(t, path)
 	}
-	mustNotExist(t, sandboxFor(t).config)
 }
 
 func TestProjectAddDuplicateCreatesNoFile(t *testing.T) {
@@ -371,7 +370,7 @@ func TestInitInCwd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stdout, stderr, code := runCLI(t, dir, "init")
+	stdout, stderr, code := runCLI(t, dir, "init", "--storage", "markdown")
 	assertEq(t, code, 0)
 	assertEq(t, stderr, "")
 	board := filepath.Join(dir, "BOARD.md")
@@ -385,7 +384,7 @@ func TestInitInCwd(t *testing.T) {
 
 func TestInitWithNameAndPrefix(t *testing.T) {
 	dir := t.TempDir()
-	_, _, code := runCLI(t, dir, "init", "Named", "--prefix", "NM")
+	_, _, code := runCLI(t, dir, "init", "--storage", "markdown", "Named", "--prefix", "NM")
 	assertEq(t, code, 0)
 	board := readFile(t, filepath.Join(dir, "BOARD.md"))
 	assertContains(t, board, "name: Named")
@@ -394,11 +393,11 @@ func TestInitWithNameAndPrefix(t *testing.T) {
 
 func TestInitRefusesRegisteredBoard(t *testing.T) {
 	dir := t.TempDir()
-	_, _, code := runCLI(t, dir, "init", "First")
+	_, _, code := runCLI(t, dir, "init", "--storage", "markdown", "First")
 	assertEq(t, code, 0)
 	before := readFile(t, filepath.Join(dir, "BOARD.md"))
 
-	_, stderr, code := runCLI(t, dir, "init", "Second")
+	_, stderr, code := runCLI(t, dir, "init", "--storage", "markdown", "Second")
 	assertEq(t, code, 1)
 	assertContains(t, stderr, "First")
 	assertContains(t, stderr, "already registered")
@@ -410,7 +409,7 @@ func TestInitRegistersExistingUnregisteredBoard(t *testing.T) {
 	board := filepath.Join(dir, "BOARD.md")
 	writeFile(t, board, boardFile)
 
-	_, stderr, code := runCLI(t, dir, "init", "Adopted")
+	_, stderr, code := runCLI(t, dir, "init", "--storage", "markdown", "Adopted")
 	assertEq(t, code, 0)
 	assertEq(t, stderr, "")
 	assertEq(t, readFile(t, board), boardFile)
@@ -421,7 +420,7 @@ func TestInitRefusesPlainBoardMd(t *testing.T) {
 	dir := t.TempDir()
 	board := filepath.Join(dir, "BOARD.md")
 	writeFile(t, board, "# my notes\n")
-	_, stderr, code := runCLI(t, dir, "init")
+	_, stderr, code := runCLI(t, dir, "init", "--storage", "markdown")
 	assertEq(t, code, 1)
 	assertContains(t, stderr, "not a Waypoint board")
 	assertEq(t, readFile(t, board), "# my notes\n")
@@ -449,4 +448,148 @@ func TestResolveProjectByCwd(t *testing.T) {
 	stdout, _, _ := runCLI(t, nested, "project", "ls")
 	assertContains(t, stdout, "* Second")
 	assertContains(t, stdout, "  First")
+}
+
+func TestInitDefaultsToSQLiteFile(t *testing.T) {
+	dir := t.TempDir()
+	stdout, stderr, code := runCLI(t, dir, "init", "Reno")
+	assertEq(t, code, 0)
+	assertContains(t, stdout, "(sqlite)")
+	mustExist(t, filepath.Join(dir, "waypoint.db"))
+	mustNotExist(t, filepath.Join(dir, "BOARD.md"))
+	_ = stderr
+	// The board works from this folder with no flags.
+	_, _, code = runCLI(t, dir, "add", "First")
+	assertEq(t, code, 0)
+	stdout, _, _ = runCLI(t, dir, "ls")
+	assertContains(t, stdout, "First")
+}
+
+func TestInitMarkdownFlag(t *testing.T) {
+	dir := t.TempDir()
+	stdout, _, code := runCLI(t, dir, "init", "--storage", "markdown", "Reno")
+	assertEq(t, code, 0)
+	assertContains(t, stdout, "(markdown)")
+	mustExist(t, filepath.Join(dir, "BOARD.md"))
+	mustNotExist(t, filepath.Join(dir, "waypoint.db"))
+}
+
+func TestInitAgainSaysWhichFile(t *testing.T) {
+	dir := t.TempDir()
+	runCLI(t, dir, "init", "Reno")
+	_, stderr, code := runCLI(t, dir, "init", "Reno2")
+	assertEq(t, code, 1)
+	assertContains(t, stderr, "waypoint.db here is already registered")
+}
+
+func TestUnregisteredDatabaseHereStopsTheSearch(t *testing.T) {
+	root := t.TempDir()
+	runCLI(t, root, "project", "add", "Parent", "--path", filepath.Join(root, "BOARD.md"))
+	dir := filepath.Join(root, "sub")
+	os.MkdirAll(dir, 0o755)
+	runCLI(t, dir, "init", "Sub")
+	// Forget the registration but keep the file.
+	runCLI(t, dir, "project", "rm", "Sub")
+	_, stderr, code := runCLI(t, dir, "add", "Nope")
+	assertEq(t, code, 1)
+	assertContains(t, stderr, `waypoint.db here isn't registered; run "waypoint init"`)
+}
+
+func TestUnregisteredMarkdownHereSuggestsTheFlag(t *testing.T) {
+	dir := t.TempDir()
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
+	runCLI(t, dir, "project", "rm", "P")
+	_, stderr, code := runCLI(t, dir, "add", "Nope")
+	assertEq(t, code, 1)
+	assertContains(t, stderr, `BOARD.md here isn't registered; run "waypoint init --storage markdown"`)
+}
+
+func TestProjectConvertThereAndBack(t *testing.T) {
+	dir := t.TempDir()
+	runCLI(t, dir, "init", "--storage", "markdown", "Reno")
+	runCLI(t, dir, "add", "Measure every room")
+	runCLI(t, dir, "add", "Paint the hallway", "--depends", "T-1")
+
+	stdout, stderr, code := runCLI(t, dir, "project", "convert", "Reno", "--to", "sqlite")
+	assertEq(t, code, 0)
+	assertEq(t, stderr, "")
+	assertContains(t, stdout, "Converted Reno to sqlite at "+filepath.Join(dir, "BOARD.db"))
+	assertContains(t, stdout, "BOARD.md.bak-")
+	mustExist(t, filepath.Join(dir, "BOARD.db"))
+	mustNotExist(t, filepath.Join(dir, "BOARD.md"))
+
+	// The project carries on from the new file: same cards, same blocked state.
+	stdout, _, code = runCLI(t, dir, "ls", "--project", "Reno")
+	assertEq(t, code, 0)
+	assertContains(t, stdout, "T-1  Todo  Measure every room")
+	assertContains(t, stdout, "[BLOCKED by T-1]")
+	stdout, _, _ = runCLI(t, dir, "project", "ls")
+	assertContains(t, stdout, "sqlite")
+
+	_, _, code = runCLI(t, dir, "project", "convert", "Reno", "--to", "markdown", "--path", "back.md")
+	assertEq(t, code, 0)
+	mustExist(t, filepath.Join(dir, "back.md"))
+	stdout, _, _ = runCLI(t, dir, "ls", "--project", "Reno")
+	assertContains(t, stdout, "Paint the hallway")
+}
+
+func TestProjectConvertJSON(t *testing.T) {
+	dir := t.TempDir()
+	runCLI(t, dir, "init", "Reno")
+	stdout, _, code := runCLI(t, dir, "project", "convert", "Reno", "--to", "markdown", "--json")
+	assertEq(t, code, 0)
+	assertContains(t, stdout, `"storage":"markdown"`)
+	assertContains(t, stdout, `"backups":[`)
+	assertContains(t, stdout, "waypoint.db.bak-")
+}
+
+func TestProjectConvertRefusals(t *testing.T) {
+	dir := t.TempDir()
+	runCLI(t, dir, "init", "Reno")
+	for name, args := range map[string][]string{
+		"already that storage": {"project", "convert", "Reno", "--to", "sqlite"},
+		"no --to":              {"project", "convert", "Reno"},
+		"unknown --to":         {"project", "convert", "Reno", "--to", "mongo"},
+		"no name":              {"project", "convert", "--to", "markdown"},
+		"unknown project":      {"project", "convert", "Nope", "--to", "markdown"},
+	} {
+		_, stderr, code := runCLI(t, dir, args...)
+		if code == 0 || stderr == "" {
+			t.Errorf("%s: exit %d, stderr %q; want a failure with a message", name, code, stderr)
+		}
+	}
+	mustExist(t, filepath.Join(dir, "waypoint.db"))
+}
+
+func TestInitAdoptsAnExistingBoardMd(t *testing.T) {
+	dir := t.TempDir()
+	board := filepath.Join(dir, "BOARD.md")
+	writeFile(t, board, boardFile)
+
+	stdout, stderr, code := runCLI(t, dir, "init", "Adopted")
+	assertEq(t, code, 0)
+	assertEq(t, stderr, "")
+	assertContains(t, stdout, "(markdown)")
+	assertEq(t, readFile(t, board), boardFile)
+	mustNotExist(t, filepath.Join(dir, "waypoint.db"))
+	// And the folder works straight away.
+	_, _, code = runCLI(t, dir, "ls")
+	assertEq(t, code, 0)
+}
+
+func TestInitDoesNotAdoptNotesCalledBoardMd(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "BOARD.md"), "# my notes\n")
+	_, _, code := runCLI(t, dir, "init", "Fresh")
+	assertEq(t, code, 0)
+	mustExist(t, filepath.Join(dir, "waypoint.db"))
+	assertEq(t, readFile(t, filepath.Join(dir, "BOARD.md")), "# my notes\n")
+}
+
+func TestInitStorageSQLiteBesideABoardMdIsHonoured(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "BOARD.md"), boardFile)
+	_, _, code := runCLI(t, dir, "init", "--storage", "sqlite", "Both")
+	assertEq(t, code, 0)
+	mustExist(t, filepath.Join(dir, "waypoint.db"))
 }

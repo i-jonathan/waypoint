@@ -1,6 +1,6 @@
 # Waypoint board format
 
-A Waypoint project is one Markdown file, usually named `BOARD.md`. It holds the
+This describes the Markdown storage. (Waypoint can also store a project in a SQLite database, which has no file format to edit by hand.) A Markdown project is one file, usually named `BOARD.md`. It holds the
 board settings in YAML front matter and every card as a heading with text under
 it. You can edit it by hand, in any editor, or let an agent edit it. Waypoint
 reads it again whenever it changes.

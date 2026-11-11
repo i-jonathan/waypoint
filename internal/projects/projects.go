@@ -27,6 +27,9 @@ type AddOptions struct {
 	// Prefix is the card id prefix and must be valid: Add applies no default,
 	// so an empty one is refused. Callers pass DefaultPrefix when they mean it.
 	Prefix string
+	// Storage is "sqlite" or "markdown". Empty means: what an existing file is,
+	// else what the path's extension says, else sqlite.
+	Storage string
 	// Cwd resolves a relative Path. With Cwd empty a relative Path is refused.
 	Cwd string
 	// FromInit words the "already registered" error for "waypoint init".
@@ -40,7 +43,7 @@ type AddOptions struct {
 // The order is: validate, then under the config lock check the registry, create
 // or open the board, and only then write the config. A failure before the last
 // step leaves the config as it was. A path already registered, even through a
-// symlink, is refused, and so is a sqlite path (sqlite storage is not built).
+// symlink, is refused.
 // If the board was created but the config could not be saved, the error says
 // the new file was left behind.
 func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOptions) (config.ProjectRef, error) {
@@ -59,7 +62,7 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 	var ref config.ProjectRef
 	var created bool
 	err := config.Update(cfgPath, env, func(cfg *config.Config) error {
-		path, err := boardPath(cfg, name, o.Path, o.Cwd)
+		path, err := boardPath(cfg, name, o.Path, o.Cwd, o.Storage)
 		if err != nil {
 			return err
 		}
@@ -69,13 +72,16 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 			}
 			return fmt.Errorf("%w: %s is already registered as %q", domain.ErrInvalid, path, q.Name)
 		}
-		if config.StorageFor(path) == "sqlite" {
-			return storage.ErrSQLite
-		}
-		if err := checkArchive(cfg, path); err != nil {
+		kind, err := chooseStorage(path, o.Storage)
+		if err != nil {
 			return err
 		}
-		if err := cfg.Add(config.ProjectRef{Name: name, Path: path}); err != nil {
+		if kind == "markdown" {
+			if err := checkArchive(cfg, path); err != nil {
+				return err
+			}
+		}
+		if err := cfg.Add(config.ProjectRef{Name: name, Path: path, Storage: kind}); err != nil {
 			return err
 		}
 		ref = cfg.Projects[len(cfg.Projects)-1]
@@ -89,6 +95,44 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 		return config.ProjectRef{}, err
 	}
 	return ref, nil
+}
+
+// chooseStorage decides which storage a project at path uses. An existing file
+// is what its content says; a path with nothing there yet follows want, then its
+// extension, then the default, sqlite. A want that contradicts the file or the
+// extension is domain.ErrInvalid, so a board never ends up in a file named for
+// the other kind.
+func chooseStorage(path, want string) (string, error) {
+	switch want {
+	case "", "markdown", "sqlite":
+	default:
+		return "", fmt.Errorf("%w: storage %q must be sqlite or markdown", domain.ErrInvalid, want)
+	}
+	if kind, err := storage.Sniff(path); err == nil {
+		if want != "" && want != kind {
+			return "", fmt.Errorf("%w: %s is a %s file, not %s", domain.ErrInvalid, path, kind, want)
+		}
+		return kind, nil
+	}
+	if _, err := os.Stat(path); err == nil { // there, but empty or unreadable: opening it says why
+		return config.StorageFor(path), nil
+	}
+	implied := ""
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".markdown":
+		implied = "markdown"
+	case ".db", ".sqlite", ".sqlite3":
+		implied = "sqlite"
+	}
+	switch {
+	case want != "" && implied != "" && want != implied:
+		return "", fmt.Errorf("%w: %s ends in %s, which is a %s file, not %s", domain.ErrInvalid, path, filepath.Ext(path), implied, want)
+	case want != "":
+		return want, nil
+	case implied != "":
+		return implied, nil
+	}
+	return "sqlite", nil
 }
 
 // openOrCreate makes sure a board exists at ref. An existing file is loaded
@@ -113,14 +157,18 @@ func openOrCreate(ctx context.Context, ref config.ProjectRef, settings domain.Se
 }
 
 // boardPath is where a new project's board lives: path resolved against cwd, or
-// <data_dir>/<slug of name>.md when path is empty.
-func boardPath(cfg *config.Config, name, path, cwd string) (string, error) {
+// <data_dir>/<slug of name>.db (.md for markdown storage) when path is empty.
+func boardPath(cfg *config.Config, name, path, cwd, storageWanted string) (string, error) {
 	if path == "" {
 		s := slug(name)
 		if s == "" {
 			return "", fmt.Errorf("%w: cannot make a file name from %q; use --path", domain.ErrInvalid, name)
 		}
-		return filepath.Join(cfg.DataDir, s+".md"), nil
+		ext := ".db"
+		if storageWanted == "markdown" {
+			ext = ".md"
+		}
+		return filepath.Join(cfg.DataDir, s+ext), nil
 	}
 	if filepath.IsAbs(path) {
 		return filepath.Clean(path), nil
@@ -160,7 +208,7 @@ func checkArchive(cfg *config.Config, path string) error {
 	}
 	_, mine := markdown.New(path).Files()
 	for _, q := range cfg.Projects {
-		if config.StorageFor(q.Path) != "markdown" {
+		if q.Storage != "markdown" {
 			continue
 		}
 		board, archive := markdown.New(q.Path).Files()
@@ -202,16 +250,14 @@ func (e *EntryError) Error() string { return e.Msg }
 func (e *EntryError) Unwrap() error { return e.Kind }
 
 // Validate checks a registry entry without reading the board: a path that is
-// not absolute, an unknown storage, sqlite storage, a missing file or a
+// not absolute, an unknown storage, a missing file or a
 // directory. It returns nil when the entry looks openable.
 func Validate(ref config.ProjectRef) error {
 	if !filepath.IsAbs(ref.Path) {
 		return &EntryError{fmt.Sprintf("Path %q is not absolute", ref.Path), domain.ErrInvalid}
 	}
 	switch ref.Storage {
-	case "markdown":
-	case "sqlite":
-		return storage.ErrSQLite
+	case "markdown", "sqlite":
 	default:
 		return &EntryError{fmt.Sprintf("Unknown storage %q", ref.Storage), domain.ErrInvalid}
 	}

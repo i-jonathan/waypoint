@@ -75,7 +75,7 @@ func TestChecklistForms(t *testing.T) {
 func TestToggleCheck(t *testing.T) {
 	b := NewBoard("x", "T")
 	body := "Intro\n- [ ] one\n- [ ] two  \n```\n- [ ] x\n```\ntail\n"
-	c := mustAdd(t, b, NewCard{Title: "A", Body: body})
+	c := mustAddRaw(t, b, "A", body)
 
 	assertNoErr(t, b.ToggleCheck(c.ID, 2))
 	assertEqual(t, b.Cards[0].Body, "Intro\n- [ ] one\n- [x] two  \n```\n- [ ] x\n```\ntail\n")
@@ -89,7 +89,7 @@ func TestToggleCheck(t *testing.T) {
 
 func TestToggleCheckUppercaseBecomesUnchecked(t *testing.T) {
 	b := NewBoard("x", "T")
-	c := mustAdd(t, b, NewCard{Title: "A", Body: "* [X] done\r\n- [ ] next"})
+	c := mustAddRaw(t, b, "A", "* [X] done\r\n- [ ] next")
 	assertNoErr(t, b.ToggleCheck(c.ID, 1))
 	assertEqual(t, b.Cards[0].Body, "* [ ] done\r\n- [ ] next")
 }
@@ -97,7 +97,7 @@ func TestToggleCheckUppercaseBecomesUnchecked(t *testing.T) {
 func TestToggleCheckOutOfRange(t *testing.T) {
 	b := NewBoard("x", "T")
 	body := "- [ ] a\n- [x] b\n```\n- [ ] hidden\n```\n"
-	c := mustAdd(t, b, NewCard{Title: "A", Body: body})
+	c := mustAddRaw(t, b, "A", body)
 	for _, n := range []int{3, 0, -1} {
 		err := b.ToggleCheck(c.ID, n)
 		assertTrue(t, errors.Is(err, ErrNotFound))
@@ -111,4 +111,15 @@ func TestScanFencesOpeners(t *testing.T) {
 	var got []int
 	ScanFences(body, func(_ int, _ string, opener int) { got = append(got, opener) })
 	assertEqual(t, got, []int{-1, 1, 1, 1, 4, 4, 4, -1, 8, 8})
+}
+
+// mustAddRaw adds a card and then sets its body as it is, the way a body that
+// came from a file edited by hand, or from an older Waypoint, can be. AddCard
+// would tidy it; toggling a checkbox must keep whatever is there.
+func mustAddRaw(t *testing.T, b *Board, title, body string) Card {
+	t.Helper()
+	c := mustAdd(t, b, NewCard{Title: title})
+	b.Cards[len(b.Cards)-1].Body = body
+	c.Body = body
+	return c
 }

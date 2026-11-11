@@ -134,3 +134,100 @@ test('five hidden tabs leave a connection free for writes', async ({ context, pa
   await page.keyboard.press('Shift+ArrowRight');
   await expect.poll(() => section(wp.read(), 'In progress'), { timeout: 3000 }).toContain('Many tabs');
 });
+
+test('a project made from the dialog with the defaults is a working SQLite board', async ({ page, wp }) => {
+  await page.goto(wp.boardURL);
+  await page.getByRole('button', { name: /Switch project/ }).click();
+  await page.getByRole('menuitem', { name: 'New project' }).click();
+
+  const dialog = page.getByRole('dialog', { name: 'New project' });
+  await expect(dialog.getByRole('radio', { name: /SQLite database/ })).toBeChecked();
+  await dialog.getByLabel('Name').fill('Lite');
+  await dialog.getByRole('button', { name: 'Create project' }).click();
+
+  await expect(page).toHaveURL(/\/p\/Lite/);
+  await page.keyboard.press('n');
+  await page.keyboard.type('Made in a database');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('[data-card-id="T-1"]')).toBeVisible();
+
+  expect(await wp.cli('project', 'ls')).toMatch(/Lite\s+sqlite\s+\S+lite\.db/);
+  expect(await wp.cli('ls', '--project', 'Lite')).toContain('Made in a database');
+});
+
+test('converting a project to SQLite from its settings keeps the board working', async ({ page, wp }) => {
+  await wp.cli('add', 'Survives the move', '--body', 'with its notes');
+  await wp.cli('add', 'Second card', '--depends', 'T-1');
+  await page.goto(`${wp.boardURL}/settings`);
+
+  await page.getByRole('button', { name: 'Convert to SQLite' }).click();
+  const dialog = page.getByRole('alertdialog', { name: 'Convert this project to SQLite?' });
+  await expect(dialog).toContainText('waypoint.db');
+  await dialog.getByRole('button', { name: 'Convert' }).click();
+
+  const result = page.getByRole('status', { name: 'Conversion result' });
+  await expect(result).toContainText('waypoint.md.bak-');
+  // The page follows the registry: the type now reads sqlite, and the button offers the way back.
+  await expect(page.getByRole('button', { name: 'Convert to Markdown' })).toBeVisible();
+
+  await page.goto(wp.boardURL);
+  await expect(page.locator('[data-card-id="T-1"]')).toBeVisible();
+  await expect(page.locator('[data-card-id="T-2"]')).toContainText('Blocked by T-1');
+  await page.keyboard.press('n');
+  await page.keyboard.type('Added after the move');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('[data-card-id="T-3"]')).toBeVisible();
+
+  expect(await wp.cli('ls')).toContain('Added after the move');
+  expect(await wp.cli('project', 'ls')).toMatch(/sqlite\s+\S+waypoint\.db/);
+});
+
+test('a project can be exported as a file from its settings', async ({ page, wp }) => {
+  await wp.cli('add', 'Measure every room', '--body', 'Bring a tape.');
+  await page.goto(`${wp.boardURL}/settings`);
+
+  for (const [name, ext, text] of [
+    ['Export CSV', '.csv', 'Measure every room'],
+    ['Export JSON', '.json', '"title": "Measure every room"'],
+    ['Export Markdown', '.md', '### T-1 Measure every room'],
+  ]) {
+    const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('link', { name }).click()]);
+    expect(download.suggestedFilename()).toBe(`e2e${ext}`);
+    expect(readFileSync((await download.path())!, 'utf8')).toContain(text);
+  }
+});
+
+test('importing a CSV file checks it, asks before creating a column, and adds the cards', async ({ page, wp }) => {
+  await wp.cli('add', 'Already here');
+  await page.goto(`${wp.boardURL}/settings`);
+
+  const csv = 'title,column,group\nPaint the hallway,Review,Decor\nBuy brushes,Todo,Decor\n';
+  await page.getByLabel('Import file').setInputFiles({ name: 'plan.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+
+  const dialog = page.getByRole('alertdialog', { name: 'Import plan.csv' });
+  await expect(dialog.getByText('Adds 2 cards and updates 0 cards.')).toBeVisible();
+  await expect(dialog.getByText('Adds columns: Review')).toBeVisible();
+  await expect(dialog.getByText('Adds groups: Decor')).toBeVisible();
+  // Nothing has happened yet.
+  expect(await wp.cli('ls')).not.toContain('Paint the hallway');
+
+  await dialog.getByRole('button', { name: 'Create and import' }).click();
+  await expect(page.getByRole('status', { name: 'Import result' })).toContainText('Imported plan.csv: added 2 cards');
+
+  await page.goto(wp.boardURL);
+  await expect(page.locator('[data-card-id="T-2"]')).toContainText('Paint the hallway');
+  await expect(page.getByRole('heading', { name: /Review/ })).toBeVisible();
+  expect(await wp.cli('ls')).toContain('Buy brushes');
+});
+
+test('a bad CSV file is refused with its line and changes nothing', async ({ page, wp }) => {
+  await wp.cli('add', 'Already here');
+  await page.goto(`${wp.boardURL}/settings`);
+  await page.getByLabel('Import file').setInputFiles({ name: 'bad.csv', mimeType: 'text/csv', buffer: Buffer.from('title,priority\nGood,P0\nBad,P9\n') });
+
+  const dialog = page.getByRole('alertdialog', { name: 'Import bad.csv' });
+  await expect(dialog.getByRole('alert')).toContainText('line 3');
+  await expect(dialog.getByRole('button', { name: 'Import' })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  expect(await wp.cli('ls')).not.toContain('Good');
+});

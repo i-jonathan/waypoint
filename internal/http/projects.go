@@ -52,11 +52,11 @@ func (a *api) listProjects(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// isMarkdownFile reports whether path names a markdown file, so a web client
-// cannot make Waypoint create a board at an arbitrary kind of file.
-func isMarkdownFile(path string) bool {
+// isBoardFile reports whether path has an extension Waypoint boards use, so a web
+// client cannot make Waypoint create a board at an arbitrary kind of file.
+func isBoardFile(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
-	case ".md", ".markdown":
+	case ".md", ".markdown", ".db", ".sqlite", ".sqlite3":
 		return true
 	}
 	return false
@@ -67,6 +67,9 @@ func (a *api) createProject(w http.ResponseWriter, r *http.Request) error {
 		Name   string `json:"name"`
 		Path   string `json:"path"`
 		Prefix string `json:"prefix"`
+		// Storage is "sqlite" (the default) or "markdown". It is checked against an
+		// existing file, which must match.
+		Storage string `json:"storage"`
 		// Existing means open a board that is already there, so a mistyped path is an error
 		// rather than a new file.
 		Existing bool `json:"existing"`
@@ -77,8 +80,8 @@ func (a *api) createProject(w http.ResponseWriter, r *http.Request) error {
 	if in.Path != "" && !filepath.IsAbs(in.Path) {
 		return invalidRequest("path must be an absolute path")
 	}
-	if in.Path != "" && !isMarkdownFile(in.Path) {
-		return invalidRequest("path must end in .md or .markdown")
+	if in.Path != "" && !isBoardFile(in.Path) {
+		return invalidRequest("path must end in .md, .markdown, .db, .sqlite or .sqlite3")
 	}
 	if in.Existing {
 		if in.Path == "" {
@@ -92,7 +95,7 @@ func (a *api) createProject(w http.ResponseWriter, r *http.Request) error {
 		in.Prefix = projects.DefaultPrefix
 	}
 	ref, err := projects.Add(r.Context(), a.d.ConfigPath, a.d.Getenv, projects.AddOptions{
-		Name: in.Name, Path: in.Path, Prefix: in.Prefix,
+		Name: in.Name, Path: in.Path, Prefix: in.Prefix, Storage: in.Storage,
 	})
 	if err != nil {
 		return err
@@ -103,6 +106,40 @@ func (a *api) createProject(w http.ResponseWriter, r *http.Request) error {
 	}
 	a.publish(Event{Type: "projects"})
 	a.writeJSON(w, r, http.StatusCreated, projectOut(r.Context(), cfg, ref))
+	return nil
+}
+
+// convertProject moves a project to the other storage. See projects.Convert.
+func (a *api) convertProject(w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		To   string `json:"to"`
+		Path string `json:"path"`
+	}
+	if err := decodeBody(w, r, &in, false); err != nil {
+		return err
+	}
+	if in.To == "" {
+		return invalidRequest("to is required: sqlite or markdown")
+	}
+	if in.Path != "" && !filepath.IsAbs(in.Path) {
+		return invalidRequest("path must be an absolute path")
+	}
+	if in.Path != "" && !isBoardFile(in.Path) {
+		return invalidRequest("path must end in .md, .markdown, .db, .sqlite or .sqlite3")
+	}
+	res, err := projects.Convert(r.Context(), a.d.ConfigPath, a.d.Getenv, r.PathValue("p"), in.To, in.Path)
+	if err != nil {
+		return err
+	}
+	cfg, err := a.loadConfig()
+	if err != nil {
+		return err
+	}
+	a.publish(Event{Type: "projects"})
+	a.writeJSON(w, r, http.StatusOK, struct {
+		projectJSON
+		Backups []string `json:"backups"`
+	}{projectOut(r.Context(), cfg, res.Ref), res.Backups})
 	return nil
 }
 

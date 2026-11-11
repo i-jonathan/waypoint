@@ -2,6 +2,7 @@ package projects
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"waypoint/internal/config"
 	"waypoint/internal/domain"
 	"waypoint/internal/storage"
+	"waypoint/internal/storage/sqlite"
 )
 
 func sandbox(t *testing.T) (cfgPath string, env func(string) string) {
@@ -90,8 +92,8 @@ func TestAddSeesThroughSymlinksToAnArchive(t *testing.T) {
 func TestArchiveCheckAgainstHandRegisteredEntries(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{Projects: []config.ProjectRef{
-		{Name: "legacy", Path: filepath.Join(dir, "n.archive.md")},
-		{Name: "db", Path: filepath.Join(dir, "q.db")},
+		{Name: "legacy", Storage: "markdown", Path: filepath.Join(dir, "n.archive.md")},
+		{Name: "db", Storage: "sqlite", Path: filepath.Join(dir, "q.db")},
 	}}
 	// n.md would archive into the file registered as a board.
 	if err := checkArchive(cfg, filepath.Join(dir, "n.md")); !errors.Is(err, domain.ErrInvalid) {
@@ -108,14 +110,7 @@ func TestAddRefusals(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	_, err := Add(ctx, cfgPath, env, AddOptions{Name: "S", Path: filepath.Join(dir, "s.db"), Prefix: "T"})
-	if !errors.Is(err, storage.ErrSQLite) {
-		t.Fatalf("sqlite path: %v", err)
-	}
-	if _, statErr := os.Stat(cfgPath); statErr == nil {
-		t.Fatal("a refused add wrote the config")
-	}
-
+	var err error
 	_, err = Add(ctx, cfgPath, env, AddOptions{Name: "R", Path: "rel/x.md", Prefix: "T"})
 	if !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("relative path without cwd: %v", err)
@@ -154,7 +149,7 @@ func TestInspect(t *testing.T) {
 		{"missing", config.ProjectRef{Name: "m", Storage: "markdown", Path: filepath.Join(dir, "gone.md")}, "File not found at " + filepath.Join(dir, "gone.md")},
 		{"relative", config.ProjectRef{Name: "r", Storage: "markdown", Path: "rel.md"}, "not absolute"},
 		{"unknown storage", config.ProjectRef{Name: "u", Storage: "mongo", Path: good}, `Unknown storage "mongo"`},
-		{"sqlite", config.ProjectRef{Name: "s", Storage: "sqlite", Path: good}, "sqlite"},
+		{"sqlite", config.ProjectRef{Name: "s", Storage: "sqlite", Path: good}, "SQLite"},
 		{"directory", config.ProjectRef{Name: "d", Storage: "markdown", Path: dir}, "is a directory"},
 		{"not a board", config.ProjectRef{Name: "b", Storage: "markdown", Path: bad}, "not a Waypoint board"},
 	}
@@ -205,5 +200,129 @@ func TestAddRefusesDotNames(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "b.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a board was created: %v", err)
+	}
+}
+
+func TestAddSQLiteProject(t *testing.T) {
+	cfgPath, env := sandbox(t)
+	path := filepath.Join(t.TempDir(), "x.db")
+	ref, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "Lite", Path: path, Prefix: "L"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Storage != "sqlite" || ref.Path != path {
+		t.Fatalf("ref = %+v, want sqlite at %s", ref, path)
+	}
+	b, err := Inspect(context.Background(), ref)
+	if err != nil || b.Settings.Name != "Lite" || b.Settings.Prefix != "L" {
+		t.Fatalf("Inspect = %+v, %v", b, err)
+	}
+}
+
+func TestAddExistingDatabaseOpensWithoutRewriting(t *testing.T) {
+	cfgPath, env := sandbox(t)
+	path := filepath.Join(t.TempDir(), "kept.data") // the name does not say what it is
+	if _, err := sqlite.Create(path, domain.NewBoard("Kept", "K").Settings); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(path)
+	ref, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "Kept", Path: path, Prefix: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Storage != "sqlite" {
+		t.Fatalf("storage = %q, want sqlite (the content decides, not the name)", ref.Storage)
+	}
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Fatal("registering an existing database changed it")
+	}
+}
+
+func TestAddForeignDatabaseRefused(t *testing.T) {
+	cfgPath, env := sandbox(t)
+	path := filepath.Join(t.TempDir(), "other.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("CREATE TABLE notes(x)"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	_, err = Add(context.Background(), cfgPath, env, AddOptions{Name: "Other", Path: path, Prefix: "T"})
+	if !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("Add of a foreign database = %v, want domain.ErrInvalid", err)
+	}
+	if _, statErr := os.Stat(cfgPath); statErr == nil {
+		t.Fatal("a refused add wrote the config")
+	}
+}
+
+func TestValidateAcceptsSQLiteEntry(t *testing.T) {
+	missing := config.ProjectRef{Name: "L", Storage: "sqlite", Path: filepath.Join(t.TempDir(), "gone.db")}
+	if err := Validate(missing); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("Validate of a missing database = %v, want domain.ErrNotFound", err)
+	}
+}
+
+func TestAddDefaultsToSQLite(t *testing.T) {
+	cfgPath, env := sandbox(t)
+	ref, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "Home Reno", Prefix: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Storage != "sqlite" || filepath.Base(ref.Path) != "home-reno.db" {
+		t.Fatalf("ref = %+v, want sqlite storage in home-reno.db", ref)
+	}
+}
+
+func TestAddMarkdownStillWorks(t *testing.T) {
+	cfgPath, env := sandbox(t)
+	ref, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "Home Reno", Prefix: "T", Storage: "markdown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Storage != "markdown" || filepath.Base(ref.Path) != "home-reno.md" {
+		t.Fatalf("ref = %+v, want markdown storage in home-reno.md", ref)
+	}
+}
+
+func TestStorageAndPathMustAgree(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "old.md")
+	if _, err := storage.Create(config.ProjectRef{Name: "O", Storage: "markdown", Path: existing}, domain.NewBoard("O", "T").Settings); err != nil {
+		t.Fatal(err)
+	}
+	for name, o := range map[string]AddOptions{
+		"markdown asked, .db path":      {Path: filepath.Join(dir, "x.db"), Storage: "markdown"},
+		"sqlite asked, .md path":        {Path: filepath.Join(dir, "x.md"), Storage: "sqlite"},
+		"sqlite asked, markdown file":   {Path: existing, Storage: "sqlite"},
+		"a storage that does not exist": {Path: filepath.Join(dir, "y.db"), Storage: "mongo"},
+	} {
+		cfgPath, env := sandbox(t)
+		o.Name, o.Prefix = "N", "T"
+		if _, err := Add(context.Background(), cfgPath, env, o); !errors.Is(err, domain.ErrInvalid) {
+			t.Errorf("%s: %v, want domain.ErrInvalid", name, err)
+		}
+		if _, err := os.Stat(cfgPath); err == nil {
+			t.Errorf("%s: a refused add wrote the config", name)
+		}
+	}
+	for _, name := range []string{"x.db", "x.md", "y.db"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			t.Errorf("%s was created by a refused add", name)
+		}
+	}
+}
+
+func TestAddPathWithoutExtensionFollowsStorage(t *testing.T) {
+	dir := t.TempDir()
+	for storageWanted, want := range map[string]string{"": "sqlite", "markdown": "markdown", "sqlite": "sqlite"} {
+		cfgPath, env := sandbox(t)
+		ref, err := Add(context.Background(), cfgPath, env, AddOptions{Name: "N", Prefix: "T", Storage: storageWanted, Path: filepath.Join(dir, "board-"+want+storageWanted)})
+		if err != nil || ref.Storage != want {
+			t.Errorf("storage %q: %+v, %v; want %s", storageWanted, ref, err, want)
+		}
 	}
 }

@@ -5,6 +5,7 @@ package domain
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -102,6 +103,21 @@ var (
 // ValidCardID reports whether id has the shape of a card id: a prefix, a dash
 // and a number. It does not check that the card exists.
 func ValidCardID(id string) bool { return cardIDRE.MatchString(id) }
+
+// MaxCardNumber is the largest number a card id may carry. It is far beyond any
+// real board, and small enough that counting past it can never overflow.
+const MaxCardNumber = 1<<31 - 1
+
+// CardNumber returns the number in a card id (the 7 in T-7). ok is false when the
+// id has none or the number is larger than MaxCardNumber.
+func CardNumber(id CardID) (n int, ok bool) {
+	_, num, found := strings.Cut(string(id), "-")
+	if !found {
+		return 0, false
+	}
+	n, err := strconv.Atoi(num)
+	return n, err == nil && n <= MaxCardNumber
+}
 
 // singleLine reports whether s has no line break.
 func singleLine(s string) bool { return !strings.ContainsAny(s, "\r\n") }

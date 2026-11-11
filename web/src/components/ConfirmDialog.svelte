@@ -12,6 +12,8 @@
     cancelLabel?: string;
     /** The confirm button warns: it deletes something. */
     danger?: boolean;
+    /** The confirm button cannot be used yet, for example while something is being checked. */
+    confirmDisabled?: boolean;
     /** Where focus starts: the safe button, or the dialog itself for a long read. */
     focus?: 'cancel' | 'dialog';
     wide?: boolean;
@@ -21,7 +23,7 @@
     onDismiss?: () => void;
   }
 
-  let { title, message, children, confirmLabel, cancelLabel = 'Cancel', danger = false, focus = 'cancel', wide = false, onConfirm, onCancel, onDismiss }: Props = $props();
+  let { title, message, children, confirmLabel, cancelLabel = 'Cancel', danger = false, confirmDisabled = false, focus = 'cancel', wide = false, onConfirm, onCancel, onDismiss }: Props = $props();
 
   const dismiss = () => (onDismiss ?? onCancel)();
 
@@ -64,7 +66,7 @@
   {#if children}{@render children()}{/if}
   <div class="actions">
     <button class="btn" bind:this={cancelButton} onclick={onCancel}>{cancelLabel}</button>
-    <button class="btn" class:primary={!danger} class:danger onclick={onConfirm}>{confirmLabel}</button>
+    <button class="btn" class:primary={!danger} class:danger disabled={confirmDisabled} onclick={onConfirm}>{confirmLabel}</button>
   </div>
 </div>
 

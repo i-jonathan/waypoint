@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"waypoint/internal/config"
@@ -51,22 +50,54 @@ func TestCreateRefusesExistingFile(t *testing.T) {
 	}
 }
 
-func TestSQLiteIsNotBuiltYet(t *testing.T) {
-	ref := config.ProjectRef{Name: "S", Storage: "sqlite", Path: filepath.Join(t.TempDir(), "s.db")}
-	if _, err := Open(ref); err == nil || !strings.Contains(err.Error(), "sqlite storage arrives in a later version") {
-		t.Fatalf("Open: %v", err)
-	}
-	if _, err := Create(ref, domain.NewBoard("S", "T").Settings); err == nil || !strings.Contains(err.Error(), "sqlite storage arrives in a later version") {
-		t.Fatalf("Create: %v", err)
-	}
-	if _, err := os.Stat(ref.Path); err == nil {
-		t.Fatal("a file was created")
-	}
-}
-
 func TestUnknownStorage(t *testing.T) {
 	_, err := Open(config.ProjectRef{Name: "X", Storage: "carrier-pigeon", Path: "/x"})
 	if !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSniff(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "a.db")
+	if _, err := Create(config.ProjectRef{Name: "N", Storage: "sqlite", Path: db}, domain.NewBoard("N", "T").Settings); err != nil {
+		t.Fatal(err)
+	}
+	md := filepath.Join(dir, "a.md")
+	if _, err := Create(config.ProjectRef{Name: "N", Storage: "markdown", Path: md}, domain.NewBoard("N", "T").Settings); err != nil {
+		t.Fatal(err)
+	}
+	empty := filepath.Join(dir, "empty")
+	os.WriteFile(empty, nil, 0o644)
+
+	for path, want := range map[string]string{db: "sqlite", md: "markdown"} {
+		if got, err := Sniff(path); err != nil || got != want {
+			t.Errorf("Sniff(%s) = %q, %v; want %q", filepath.Base(path), got, err, want)
+		}
+	}
+	if _, err := Sniff(empty); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("Sniff(empty) = %v, want domain.ErrInvalid", err)
+	}
+	if _, err := Sniff(filepath.Join(dir, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Sniff(missing) = %v, want os.ErrNotExist", err)
+	}
+}
+
+func TestCreateThenOpenSQLite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a", "b", "board.db")
+	ref := config.ProjectRef{Name: "N", Storage: "sqlite", Path: path}
+	if _, err := Create(ref, domain.NewBoard("N", "T").Settings); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := Open(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := repo.Load(context.Background())
+	if err != nil || b.Settings.Name != "N" {
+		t.Fatalf("Load = %+v, %v", b, err)
+	}
+	if _, err := Create(ref, domain.NewBoard("N", "T").Settings); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("second Create = %v, want os.ErrExist", err)
 	}
 }

@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 const (
 	dateLayout  = "2006-01-02"
@@ -38,4 +41,20 @@ func DisplayDate(t time.Time, loc *time.Location) string {
 		return t.UTC().Format(dateLayout)
 	}
 	return t.In(loc).Format(dateLayout)
+}
+
+// ParseStored reads a value written by StoredDate. An empty string is the zero
+// time (unset).
+func ParseStored(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	if t, err := time.Parse(dateLayout, s); err == nil {
+		return t, nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%w: %q is not a date", ErrInvalid, s)
+	}
+	return t.UTC(), nil
 }

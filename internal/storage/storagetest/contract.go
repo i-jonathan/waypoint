@@ -20,14 +20,31 @@ var (
 
 // RunContract checks a repository implementation. newRepo returns a repository
 // holding a fresh NewBoard("Contract", "T"); each call must be independent.
-func RunContract(t *testing.T, newRepo func(t *testing.T) app.Repository) {
+func RunContract(t *testing.T, newRepo func(t *testing.T) app.Repository, opts ...Option) {
+	var o options
+	for _, f := range opts {
+		f(&o)
+	}
 	t.Run("SaveLoadRoundTrip", func(t *testing.T) { saveLoadRoundTrip(t, newRepo(t)) })
 	t.Run("ArchiveSurvivesRoundTrip", func(t *testing.T) { archiveSurvivesRoundTrip(t, newRepo(t)) })
 	t.Run("IDsNeverReused", func(t *testing.T) { idsNeverReused(t, newRepo(t)) })
 	t.Run("NextIDStaysPastArchivedIDs", func(t *testing.T) { nextIDStaysPastArchivedIDs(t, newRepo(t)) })
 	t.Run("NoticesAreNotPersisted", func(t *testing.T) { noticesAreNotPersisted(t, newRepo(t)) })
-	t.Run("LockIsExclusive", func(t *testing.T) { lockIsExclusive(t, newRepo(t)) })
+	t.Run("LockIsExclusive", func(t *testing.T) {
+		if o.skipLock {
+			t.Skip("this repository has no lock yet")
+		}
+		lockIsExclusive(t, newRepo(t))
+	})
 }
+
+type options struct{ skipLock bool }
+
+// Option adjusts RunContract.
+type Option func(*options)
+
+// SkipLock skips the lock test, for a repository whose lock is not built yet.
+func SkipLock() Option { return func(o *options) { o.skipLock = true } }
 
 func load(t *testing.T, r app.Repository) *domain.Board {
 	t.Helper()

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -448,7 +449,7 @@ func TestProjectListValidatesEachEntry(t *testing.T) {
 	assertEq(t, byName["Good"].Error, "")
 	assertContains(t, byName["Relative"].Error, "not absolute")
 	assertContains(t, byName["Mongo"].Error, `Unknown storage "mongo"`)
-	assertContains(t, byName["Lite"].Error, "sqlite")
+	assertContains(t, byName["Lite"].Error, "File not found")
 	assertContains(t, byName["Bad"].Error, "not a Waypoint board")
 	for _, name := range []string{"Relative", "Mongo", "Lite"} {
 		assertEq(t, byName[name].Accent != "", true)
@@ -457,7 +458,7 @@ func TestProjectListValidatesEachEntry(t *testing.T) {
 	f.do("GET", "/api/projects/Good/board", nil).want(200)
 	f.do("GET", "/api/projects/Relative/board", nil).wantCode(422, "invalid")
 	f.do("GET", "/api/projects/Mongo/board", nil).wantCode(422, "invalid")
-	f.do("GET", "/api/projects/Lite/board", nil).wantCode(422, "invalid")
+	f.do("GET", "/api/projects/Lite/board", nil).wantCode(404, "not_found")
 	f.do("GET", "/api/projects/Bad/board", nil).wantCode(423, "parse")
 }
 
@@ -713,7 +714,7 @@ func TestProjectAddAndRemove(t *testing.T) {
 
 	// Default path goes under data_dir, which is the sandbox's, not the real one.
 	f.do("POST", "/api/projects", map[string]any{"name": "Delta Force"}).want(201).decode(&p)
-	assertEq(t, p.Path, filepath.Join(f.config().DataDir, "delta-force.md"))
+	assertEq(t, p.Path, filepath.Join(f.config().DataDir, "delta-force.db"))
 
 	// The same file, even through a symlink, and a taken name are refused.
 	link := filepath.Join(f.dir, "link.md")
@@ -723,9 +724,12 @@ func TestProjectAddAndRemove(t *testing.T) {
 	e := f.do("POST", "/api/projects", map[string]any{"name": "Other", "path": link}).wantCode(422, "invalid")
 	assertContains(t, e.Error, `already registered as "Alpha"`)
 	f.do("POST", "/api/projects", map[string]any{"name": "alpha", "path": filepath.Join(f.dir, "z.md")}).wantCode(422, "invalid")
-	// Read-only sqlite storage and relative paths are refused.
-	f.do("POST", "/api/projects", map[string]any{"name": "Lite", "path": filepath.Join(f.dir, "x.db")}).wantCode(422, "invalid")
-	// Only markdown files can be created from the web.
+	// A database can be created from the web too.
+	f.do("POST", "/api/projects", map[string]any{"name": "Lite", "path": filepath.Join(f.dir, "x.db")}).want(201)
+	if _, err := os.Stat(filepath.Join(f.dir, "x.db")); err != nil {
+		t.Fatal(err)
+	}
+	// Only markdown files and databases can be created from the web.
 	for _, bad := range []string{"notes.txt", "board", "board.md.txt", ".hidden"} {
 		f.do("POST", "/api/projects", map[string]any{"name": "Ext", "path": filepath.Join(f.dir, bad)}).wantCode(422, "invalid")
 		if _, err := os.Stat(filepath.Join(f.dir, bad)); err == nil {
@@ -737,14 +741,14 @@ func TestProjectAddAndRemove(t *testing.T) {
 	f.do("POST", "/api/projects", map[string]any{"name": "Rel", "path": "boards/rel.md"}).wantCode(422, "invalid")
 	f.do("POST", "/api/projects", map[string]any{"name": "Home", "path": "~/x.md"}).wantCode(422, "invalid")
 	f.do("POST", "/api/projects", map[string]any{"name": "  "}).wantCode(422, "invalid")
-	assertEq(t, len(f.config().Projects), 5)
+	assertEq(t, len(f.config().Projects), 6)
 	if _, err := os.Stat(filepath.Join(f.dir, "boards", "rel.md")); err == nil {
 		t.Fatal("a relative path reached the filesystem")
 	}
 
 	f.do("DELETE", "/api/projects/Gamma", nil).want(204)
 	assertEq(t, receive(t, events), Event{Type: "projects"})
-	assertEq(t, len(f.config().Projects), 4)
+	assertEq(t, len(f.config().Projects), 5)
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("removing a project deleted its file: %v", err)
 	}
@@ -1218,4 +1222,201 @@ func TestBusyBoardIsA503(t *testing.T) {
 	assertEq(t, rec.Code, 503)
 	assertContains(t, rec.Body.String(), `"code":"busy"`)
 	assertContains(t, rec.Body.String(), "try again")
+}
+
+func TestCreateProjectStorageChoice(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	var made projectJSON
+	f.do("POST", "/api/projects", map[string]any{"name": "Default"}).want(201).decode(&made)
+	assertEq(t, made.Storage, "sqlite")
+	assertEq(t, strings.HasSuffix(made.Path, ".db"), true)
+	f.do("POST", "/api/projects", map[string]any{"name": "Plain", "storage": "markdown"}).want(201).decode(&made)
+	assertEq(t, made.Storage, "markdown")
+	assertEq(t, strings.HasSuffix(made.Path, ".md"), true)
+	f.do("POST", "/api/projects", map[string]any{"name": "Clash", "storage": "markdown", "path": filepath.Join(f.dir, "c.db")}).wantCode(422, "invalid")
+	f.do("POST", "/api/projects", map[string]any{"name": "Odd", "storage": "mongo"}).wantCode(422, "invalid")
+	f.do("GET", "/api/projects/Default/board", nil).want(200)
+}
+
+func TestConvertProjectAPI(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	f.do("POST", "/api/projects/Alpha/cards", map[string]any{"title": "Kept across the move"}).want(201)
+	events, cancel := f.broker.Subscribe()
+	defer cancel()
+
+	var out struct {
+		projectJSON
+		Backups []string `json:"backups"`
+	}
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "sqlite"}).want(200).decode(&out)
+	assertEq(t, out.Storage, "sqlite")
+	assertEq(t, strings.HasSuffix(out.Path, "Alpha.db") || strings.HasSuffix(out.Path, "alpha.db"), true)
+	assertEq(t, len(out.Backups) >= 1, true)
+	assertEq(t, receive(t, events), Event{Type: "projects"})
+	assertEq(t, f.config().Projects[0].Storage, "sqlite")
+	if _, err := os.Stat(out.Backups[0]); err != nil {
+		t.Fatalf("the old board was not kept: %v", err)
+	}
+
+	var board struct {
+		Board struct {
+			Cards []struct{ Title, Hash string } `json:"cards"`
+		} `json:"board"`
+	}
+	f.do("GET", "/api/projects/Alpha/board", nil).want(200).decode(&board)
+	assertEq(t, len(board.Board.Cards), 1)
+	assertEq(t, board.Board.Cards[0].Title, "Kept across the move")
+
+	// And back, to a path of the caller's choosing.
+	back := filepath.Join(f.dir, "back", "alpha.md")
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "markdown", "path": back}).want(200).decode(&out)
+	assertEq(t, out.Storage, "markdown")
+	assertEq(t, out.Path, back)
+	f.do("GET", "/api/projects/Alpha/board", nil).want(200)
+}
+
+func TestConvertProjectAPIRefusals(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	taken := filepath.Join(f.dir, "taken.db")
+	os.WriteFile(taken, []byte("mine"), 0o644)
+
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "markdown"}).wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "mongo"}).wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{}).wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "sqlite", "path": "rel.db"}).wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "sqlite", "path": taken}).wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Nobody/convert", map[string]any{"to": "sqlite"}).wantCode(404, "not_found")
+
+	if data, _ := os.ReadFile(taken); string(data) != "mine" {
+		t.Fatal("the file at the target was touched")
+	}
+	assertEq(t, f.config().Projects[0].Storage, "markdown")
+	f.do("GET", "/api/projects/Alpha/board", nil).want(200)
+}
+
+func TestConvertProjectAPIMismatchSaysWhichCard(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	f.do("POST", "/api/projects", map[string]any{"name": "Lite"}).want(201)
+	f.do("POST", "/api/projects/Lite/cards", map[string]any{"title": "Odd", "body": "## a heading"}).want(201)
+	e := f.do("POST", "/api/projects/Lite/convert", map[string]any{"to": "markdown"}).wantCode(422, "invalid")
+	assertContains(t, e.Error, "T-1")
+	assertContains(t, e.Error, "#### or deeper")
+}
+
+func TestConvertProjectAPIChecksTheExtensionAndMakesNoFolders(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	deep := filepath.Join(f.dir, "new", "deep")
+	f.do("POST", "/api/projects/Alpha/convert", map[string]any{"to": "sqlite", "path": filepath.Join(deep, "notes.txt")}).wantCode(422, "invalid")
+	if _, err := os.Stat(filepath.Join(f.dir, "new")); err == nil {
+		t.Fatal("a refused conversion created folders")
+	}
+	assertEq(t, f.config().Projects[0].Storage, "markdown")
+}
+
+func TestExportDownloads(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	f.do("POST", "/api/projects/Alpha/cards", map[string]any{"title": "Measure, then paint", "body": "line one\nline two"}).want(201)
+
+	for format, want := range map[string]struct{ ctype, ext, inBody string }{
+		"csv":  {"text/csv; charset=utf-8", ".csv", "Measure, then paint"},
+		"json": {"application/json; charset=utf-8", ".json", `"title": "Measure, then paint"`},
+		"md":   {"text/markdown; charset=utf-8", ".md", "### T-1 Measure, then paint"},
+	} {
+		r := f.do("GET", "/api/projects/Alpha/export?format="+format, nil).want(200)
+		assertEq(t, r.header.Get("Content-Type"), want.ctype)
+		assertEq(t, r.header.Get("Content-Disposition"), `attachment; filename="Alpha`+want.ext+`"`)
+		assertEq(t, r.header.Get("Cache-Control"), "no-store")
+		assertContains(t, string(r.body), want.inBody)
+	}
+	f.do("GET", "/api/projects/Alpha/export?format=yaml", nil).wantCode(422, "invalid")
+	f.do("GET", "/api/projects/Alpha/export", nil).wantCode(422, "invalid")
+	f.do("GET", "/api/projects/Nobody/export?format=csv", nil).wantCode(404, "not_found")
+}
+
+func TestExportFileNameIsSafe(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	f.do("POST", "/api/projects", map[string]any{"name": "Tricky \"name\"; X-Evil: 1/../é"}).want(201)
+	r := f.do("GET", "/api/projects/"+url.PathEscape("Tricky \"name\"; X-Evil: 1/../é")+"/export?format=csv", nil).want(200)
+	disp := r.header.Get("Content-Disposition")
+	assertEq(t, r.header.Get("X-Evil"), "")
+	assertEq(t, disp, `attachment; filename="Tricky--name---X-Evil--1.csv"`)
+	if strings.ContainsAny(disp, "\r\n/") || strings.Count(disp, `"`) != 2 {
+		t.Fatalf("Content-Disposition %q is not a single safe file name", disp)
+	}
+}
+
+func TestImportCSVDryRunThenReal(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	file := "title,column,group\nOne,Todo,Ops\nTwo,Review,Ops\n"
+	path := "/api/projects/Alpha/import?format=csv&create=1"
+
+	var dry struct {
+		Format     string   `json:"format"`
+		DryRun     bool     `json:"dry_run"`
+		Created    []string `json:"created"`
+		NewColumns []string `json:"new_columns"`
+		NewGroups  []string `json:"new_groups"`
+	}
+	f.do("POST", path+"&dry_run=1", file).want(200).decode(&dry)
+	assertEq(t, dry.Format, "csv")
+	assertEq(t, dry.DryRun, true)
+	assertEq(t, len(dry.Created), 2)
+	assertEq(t, strings.Join(dry.NewColumns, ","), "Review")
+	assertEq(t, strings.Join(dry.NewGroups, ","), "Ops")
+	var board struct{ Board struct{ Cards []struct{} } }
+	f.do("GET", "/api/projects/Alpha/board", nil).want(200).decode(&board)
+	assertEq(t, len(board.Board.Cards), 0)
+
+	var real = dry
+	f.do("POST", path, file).want(200).decode(&real)
+	assertEq(t, real.DryRun, false)
+	assertEq(t, strings.Join(real.Created, ","), strings.Join(dry.Created, ","))
+	f.do("GET", "/api/projects/Alpha/board", nil).want(200).decode(&board)
+	assertEq(t, len(board.Board.Cards), 2)
+}
+
+func TestImportCSVWithoutCreateNamesWhatIsMissing(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	e := f.do("POST", "/api/projects/Alpha/import?format=csv", "title,column\nOne,Review\n").wantCode(422, "invalid")
+	assertContains(t, e.Error, "Review")
+}
+
+func TestImportJSONNeedsAnEmptyProjectOrReplace(t *testing.T) {
+	f := newFixture(t, "Alpha", "Beta")
+	f.do("POST", "/api/projects/Alpha/cards", map[string]any{"title": "From alpha"}).want(201)
+	snapshot := f.do("GET", "/api/projects/Alpha/export?format=json", nil).want(200).body
+
+	f.do("POST", "/api/projects/Beta/cards", map[string]any{"title": "Already in beta"}).want(201)
+	e := f.do("POST", "/api/projects/Beta/import?format=json", snapshot).wantCode(422, "invalid")
+	assertContains(t, e.Error, "replace")
+
+	var out struct {
+		Cards    int `json:"cards"`
+		Archived int `json:"archived"`
+	}
+	f.do("POST", "/api/projects/Beta/import?format=json&replace=1&dry_run=1", snapshot).want(200).decode(&out)
+	assertEq(t, out.Cards, 1)
+	f.do("POST", "/api/projects/Beta/import?format=json&replace=1", snapshot).want(200)
+	var board struct {
+		Board struct{ Cards []struct{ Title string } }
+	}
+	f.do("GET", "/api/projects/Beta/board", nil).want(200).decode(&board)
+	assertEq(t, len(board.Board.Cards), 1)
+	assertEq(t, board.Board.Cards[0].Title, "From alpha")
+}
+
+func TestImportRefusals(t *testing.T) {
+	f := newFixture(t, "Alpha")
+	f.do("POST", "/api/projects/Alpha/import", "title\nOne\n").wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Alpha/import?format=yaml", "x").wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Alpha/import?format=json", "not json").wantCode(422, "invalid")
+	f.do("POST", "/api/projects/Nobody/import?format=csv", "title\nOne\n").wantCode(404, "not_found")
+	big := "title\n" + strings.Repeat("x", 10<<20+1)
+	f.do("POST", "/api/projects/Alpha/import?format=csv", big).wantCode(413, "too_large")
+
+	req := f.request("POST", "/api/projects/Alpha/import?format=csv", "title\nOne\n") // no X-Waypoint header
+	f.send(req).wantCode(403, "forbidden")
+	var board struct{ Board struct{ Cards []struct{} } }
+	f.do("GET", "/api/projects/Alpha/board", nil).want(200).decode(&board)
+	assertEq(t, len(board.Board.Cards), 0)
 }

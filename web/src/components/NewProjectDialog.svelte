@@ -20,13 +20,18 @@
   const id = `np-${Math.random().toString(36).slice(2, 7)}`;
   const PREFIX = /^[A-Za-z][A-Za-z0-9]*$/;
   const PREFIX_MESSAGE = 'Use letters and numbers, starting with a letter';
-  const MARKDOWN = /\.(md|markdown)$/i;
+  const KINDS = {
+    sqlite: { re: /\.(db|sqlite|sqlite3)$/i, message: 'A SQLite database path must end in .db, .sqlite or .sqlite3', example: '/path/to/board.db' },
+    markdown: { re: /\.(md|markdown)$/i, message: 'A Markdown path must end in .md or .markdown', example: '/path/to/board.md' },
+  } as const;
+  const ANY_BOARD = /\.(md|markdown|db|sqlite|sqlite3)$/i;
 
   let tab = $state<Tab>(untrack(() => initialTab));
 
   let name = $state('');
   let location = $state('');
   let prefix = $state('T');
+  let storage = $state<'sqlite' | 'markdown'>('sqlite');
   let path = $state('');
   let openName = $state('');
   let openNameEdited = $state(false);
@@ -37,13 +42,18 @@
 
   const stem = (p: string) => {
     const file = p.trim().split(/[\\/]/).pop() ?? '';
-    return file.replace(/\.(md|markdown)$/i, '');
+    return file.replace(ANY_BOARD, '');
   };
 
   function onPath(value: string) {
     path = value;
     if (!openNameEdited) openName = stem(value);
     clear('path');
+  }
+
+  function switchStorage(next: 'sqlite' | 'markdown') {
+    storage = next;
+    clear('location');
   }
 
   function clear(f: Field) {
@@ -81,11 +91,11 @@
     const out: Partial<Record<Field, string>> = {};
     if (tab === 'create') {
       if (name.trim() === '') out.name = 'Give the project a name';
-      if (location.trim() !== '' && !MARKDOWN.test(location.trim())) out.location = 'The path must end in .md or .markdown';
+      if (location.trim() !== '' && !KINDS[storage].re.test(location.trim())) out.location = KINDS[storage].message;
       if (!PREFIX.test(prefix)) out.prefix = PREFIX_MESSAGE;
     } else {
       if (path.trim() === '') out.path = 'Enter the path to a board file';
-      else if (!MARKDOWN.test(path.trim())) out.path = 'The path must end in .md or .markdown';
+      else if (!ANY_BOARD.test(path.trim())) out.path = 'The path must end in .md, .markdown, .db, .sqlite or .sqlite3';
       if (openName.trim() === '') out.name = 'Give the project a name';
     }
     return out;
@@ -109,7 +119,7 @@
     }
     const body: NewProject =
       tab === 'create'
-        ? { name: name.trim(), ...(location.trim() !== '' ? { path: location.trim() } : {}), prefix }
+        ? { name: name.trim(), ...(location.trim() !== '' ? { path: location.trim() } : {}), prefix, storage }
         : { name: openName.trim(), path: path.trim(), existing: true };
     working = true;
     try {
@@ -181,13 +191,30 @@
         {#if errors.name}<p class="sf-error" id="{id}-name-err">{errors.name}</p>{/if}
       </div>
 
+      <fieldset class="storage">
+        <legend class="sf-label">Storage</legend>
+        <label class="sf-check">
+          <input type="radio" name="{id}-storage" value="sqlite" checked={storage === 'sqlite'} onchange={() => switchStorage('sqlite')} />
+          <span>SQLite database</span>
+        </label>
+        <label class="sf-check">
+          <input type="radio" name="{id}-storage" value="markdown" checked={storage === 'markdown'} onchange={() => switchStorage('markdown')} />
+          <span>Markdown file</span>
+        </label>
+        <p class="sf-hint">
+          {storage === 'sqlite'
+            ? 'One file that stays fast with many cards. Use Waypoint or its CLI to edit it.'
+            : 'A file you can read and edit by hand, and keep in git.'}
+        </p>
+      </fieldset>
+
       <div class="sf-field">
         <label class="sf-label" for="{id}-location">Location</label>
         <input
           id="{id}-location"
           class="sf-input mono"
           type="text"
-          placeholder="/path/to/board.md"
+          placeholder={KINDS[storage].example}
           spellcheck="false"
           autocomplete="off"
           bind:value={location}
@@ -233,7 +260,7 @@
           aria-invalid={errors.path ? 'true' : undefined}
           aria-describedby={described('path', `${id}-path-hint`)}
         />
-        <p class="sf-hint" id="{id}-path-hint">A Markdown board file that Waypoint made. Waypoint may tidy its format when it reads the file.</p>
+        <p class="sf-hint" id="{id}-path-hint">A board that Waypoint made: a SQLite database or a Markdown file. Waypoint may tidy a Markdown file's format when it reads it.</p>
         {#if errors.path}<p class="sf-error" id="{id}-path-err">{errors.path}</p>{/if}
       </div>
 
@@ -332,6 +359,21 @@
 
   .short {
     max-width: 200px;
+  }
+
+  .storage {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .storage legend {
+    padding: 0;
+    margin-bottom: 4px;
   }
 
   .actions {

@@ -1,0 +1,6 @@
+﻿id,title,column,group,priority,depends,created,done,body
+,"Quoted, comma",Todo,,P1,,,,"line one
+line two, with comma"
+,Short row
+,Plain,In progress,,,,,,Fine
+

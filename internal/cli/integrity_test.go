@@ -109,7 +109,7 @@ func archivedBoard(t *testing.T) (dir, board, archive string) {
 	dir = t.TempDir()
 	board = filepath.Join(dir, "BOARD.md")
 	archive = filepath.Join(dir, "BOARD.archive.md")
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	runCLI(t, dir, "add", "Keep me", "--body", "Months of notes.")
 	runCLI(t, dir, "done", "T-1")
 	if _, stderr, code := runCLI(t, dir, "archive"); code != exitOK {
@@ -210,7 +210,7 @@ func TestNoOpsLeaveTheBoardFileAlone(t *testing.T) {
 				dir := t.TempDir()
 				path := filepath.Join(dir, "BOARD.md")
 				writeFile(t, path, content)
-				if _, stderr, code := runCLI(t, dir, "init", "P"); code != exitOK {
+				if _, stderr, code := runCLI(t, dir, "init", "--storage", "markdown", "P"); code != exitOK {
 					t.Fatalf("init: %d %s", code, stderr)
 				}
 				before, err := os.Stat(path)
@@ -264,7 +264,7 @@ func TestReturnedHashMatchesTheFile(t *testing.T) {
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			runCLI(t, dir, "init", "P")
+			runCLI(t, dir, "init", "--storage", "markdown", "P")
 			runCLI(t, dir, "add", "Card")
 
 			args := append([]string{"set", "T-1", "--json"}, c.args...)
@@ -285,7 +285,7 @@ func TestReturnedHashMatchesTheFile(t *testing.T) {
 
 func TestReturnedHashMatchesTheFileWhenAddingACard(t *testing.T) {
 	dir := t.TempDir()
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 
 	stdout, stderr, code := runStdin(t, dir, "# Heading\n", "add", "Card", "--body", "-", "--json")
 	if code != exitOK {
@@ -300,7 +300,7 @@ func TestReturnedHashMatchesTheFileWhenAddingACard(t *testing.T) {
 func TestReturnedHashMatchesTheFileForAnAutoArchivedCard(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "BOARD.md")
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	writeFile(t, path, strings.Replace(readFile(t, path), "columns:", "archive: {mode: auto, after_days: 0}\ncolumns:", 1))
 	runCLI(t, dir, "add", "Card")
 
@@ -319,7 +319,7 @@ func TestReturnedHashMatchesTheFileForAnAutoArchivedCard(t *testing.T) {
 func TestWriteOutputNamesTheArchiveForAnAutoArchivedCard(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "BOARD.md")
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	writeFile(t, path, strings.Replace(readFile(t, path), "columns:", "archive: {mode: auto, after_days: 0}\ncolumns:", 1))
 
 	stdout, _, _ := runCLI(t, dir, "add", "Straight to done", "--column", "Done")
@@ -351,7 +351,7 @@ func readOnly(t *testing.T, path string) {
 func TestReadOnlyBoardIsNotOverwritten(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "BOARD.md")
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	runCLI(t, dir, "add", "One")
 	content := readFile(t, path)
 	readOnly(t, path)
@@ -396,7 +396,7 @@ func TestReadOnlyBoardStopsTheWriteBeforeTheArchiveChanges(t *testing.T) {
 func TestNoOpOnAReadOnlyBoardSucceeds(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "BOARD.md")
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	readOnly(t, path)
 
 	if _, stderr, code := runCLI(t, dir, "archive"); code != exitOK {
@@ -433,7 +433,7 @@ func TestUnregisteredBoardHereIsNamedInTheError(t *testing.T) {
 			_, stderr, code := runCLI(t, dir, "add", "Lost card")
 
 			assertEq(t, code, exitError)
-			assertContains(t, stderr, `BOARD.md here isn't registered; run "waypoint init"`)
+			assertContains(t, stderr, `BOARD.md here isn't registered; run "waypoint init --storage markdown"`)
 			assertEq(t, readFile(t, here), boardFile)
 
 			stdout, _, _ := runCLI(t, dir, "ls", "--json")
@@ -478,7 +478,7 @@ func TestSetRefusesKeysThatLookLikeColumnIDOrRank(t *testing.T) {
 		t.Run(arg, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "BOARD.md")
-			runCLI(t, dir, "init", "P")
+			runCLI(t, dir, "init", "--storage", "markdown", "P")
 			runCLI(t, dir, "add", "Card")
 			before := readFile(t, path)
 
@@ -499,7 +499,7 @@ func TestFilesHoldingColumnIDOrRankKeysStillRoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "BOARD.md")
 	content := strings.Replace(boardFile, "- created: 2026-11-01\n", "- created: 2026-11-01\n- column: Done\n- id: 7\n- rank: 3\n", 1)
 	writeFile(t, path, content)
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 
 	if _, stderr, code := runCLI(t, dir, "set", "X-1", "note=kept"); code != exitOK {
 		t.Fatalf("set: %d %s", code, stderr)
@@ -518,7 +518,7 @@ func TestParallelInitsAllRegister(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, stderr, code := runCLI(t, dir, "init", fmt.Sprintf("P%d", i)); code != exitOK {
+			if _, stderr, code := runCLI(t, dir, "init", "--storage", "markdown", fmt.Sprintf("P%d", i)); code != exitOK {
 				t.Errorf("init: %d %s", code, stderr)
 			}
 		}()
@@ -565,7 +565,7 @@ func TestParallelAddsAndRemovesAllTakeEffect(t *testing.T) {
 func TestNegativeAfterDaysDoesNotArchiveADoneCard(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "BOARD.md")
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	runCLI(t, dir, "add", "Card")
 	edited := strings.Replace(readFile(t, path), "columns:", "archive: {mode: auto, after_days: -5}\ncolumns:", 1)
 	writeFile(t, path, edited)
@@ -580,7 +580,7 @@ func TestNegativeAfterDaysDoesNotArchiveADoneCard(t *testing.T) {
 func TestHeadingWithAnotherPrefixIsATitle(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "BOARD.md")
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	writeFile(t, path, strings.Replace(readFile(t, path), "## Todo\n", "## Todo\n\n### T-1 Real\n\n### COVID-19 booster\n\n### COVID-19\n", 1))
 
 	stdout, stderr, code := runCLI(t, dir, "ls")
@@ -597,7 +597,7 @@ func TestHeadingWithAnotherPrefixIsATitle(t *testing.T) {
 func TestTwoIDShapedTitlesOnAnEmptyBoardAreRefused(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "BOARD.md")
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	edited := strings.Replace(readFile(t, path), "## Todo\n", "## Todo\n\n### COVID-19 booster\n\n### COVID-19 test\n", 1)
 	writeFile(t, path, edited)
 
@@ -612,7 +612,7 @@ func TestTwoIDShapedTitlesOnAnEmptyBoardAreRefused(t *testing.T) {
 func TestRepeatedDependencyIsShownOnce(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "BOARD.md")
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	writeFile(t, path, strings.Replace(readFile(t, path), "## Todo\n", "## Todo\n\n### T-2 x\n\n- depends: T-1, T-1\n", 1))
 
 	stdout, _, _ := runCLI(t, dir, "ls")
@@ -644,7 +644,7 @@ func TestRestoringACardWithAnotherPrefixLosesNothing(t *testing.T) {
 	dir := t.TempDir()
 	board := filepath.Join(dir, "BOARD.md")
 	archive := filepath.Join(dir, "BOARD.archive.md")
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	writeFile(t, archive, "# Archive\n\n## 2026-10\n\n### OLD-7 From another board\n\n- done: 2026-10-01\n")
 	boardBefore, archiveBefore := readFile(t, board), readFile(t, archive)
 
@@ -682,7 +682,7 @@ func TestUnregisteredBoardHereBeatsARegisteredAncestorOrChild(t *testing.T) {
 			_, stderr, code := runCLI(t, cwd, "add", "Lost card")
 
 			assertEq(t, code, exitError)
-			assertContains(t, stderr, `BOARD.md here isn't registered; run "waypoint init"`)
+			assertContains(t, stderr, `BOARD.md here isn't registered; run "waypoint init --storage markdown"`)
 			assertEq(t, readFile(t, here), boardFile)
 			assertEq(t, readFile(t, registered), before)
 		})
@@ -704,7 +704,7 @@ func TestParentFolderOfAProjectIsNotInIt(t *testing.T) {
 
 func TestSubfolderOfAProjectIsInIt(t *testing.T) {
 	root := t.TempDir()
-	runCLI(t, root, "init", "P")
+	runCLI(t, root, "init", "--storage", "markdown", "P")
 	sub := filepath.Join(root, "docs", "notes")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -729,7 +729,7 @@ func residueFiles(t *testing.T, dir, boardBody, archiveBody string) (board, arch
 	t.Helper()
 	board = filepath.Join(dir, "BOARD.md")
 	archive = filepath.Join(dir, "BOARD.archive.md")
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	writeFile(t, board, strings.Replace(readFile(t, board), "## Done\n", "## Done\n\n### T-1 Card\n\n- created: 2026-11-01\n- done: 2026-11-02\n\n"+boardBody+"\n", 1))
 	writeFile(t, archive, "# Archive\n\n## 2026-11\n\n### T-1 Card\n\n- created: 2026-11-01\n- done: 2026-11-02\n\n"+archiveBody+"\n")
 	return board, archive
@@ -780,7 +780,7 @@ func TestWrongPrefixIsAnErrorAndWritesNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "BOARD.md")
-			runCLI(t, dir, "init", "P")
+			runCLI(t, dir, "init", "--storage", "markdown", "P")
 			runCLI(t, dir, "add", "One")
 			runCLI(t, dir, "add", "Two", "--depends", "T-1")
 			runCLI(t, dir, "add", "Three")
@@ -811,7 +811,7 @@ func TestRealCardsOrALoneTitleAreNotAWrongPrefix(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "BOARD.md")
-			runCLI(t, dir, "init", "P")
+			runCLI(t, dir, "init", "--storage", "markdown", "P")
 			writeFile(t, path, strings.Replace(readFile(t, path), "## Todo\n", "## Todo\n\n"+cards, 1))
 
 			if _, stderr, code := runCLI(t, dir, "ls"); code != exitOK {
@@ -849,7 +849,7 @@ func TestDatesAreStoredInUTCAndShownInLocalTime(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			now := moment.In(c.zone)
-			runCLI(t, dir, "init", "P")
+			runCLI(t, dir, "init", "--storage", "markdown", "P")
 			if _, stderr, code := runAt(t, dir, now, "add", "Card", "--column", "Done"); code != exitOK {
 				t.Fatalf("add: %d %s", code, stderr)
 			}
@@ -874,7 +874,7 @@ func TestDateOnlyValuesRoundTripAndAreShownVerbatim(t *testing.T) {
 	path := filepath.Join(dir, "BOARD.md")
 	content := strings.Replace(boardFile, "## Done\n", "## Done\n\n### X-3 Finished\n\n- created: 2026-10-26\n- done: 2026-10-27\n", 1)
 	writeFile(t, path, strings.Replace(content, "next_id: 3", "next_id: 4", 1))
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	now := time.Date(2026, 11, 3, 20, 0, 0, 0, westOfUTC)
 
 	if _, stderr, code := runAt(t, dir, now, "set", "X-1", "note=x"); code != exitOK {
@@ -899,7 +899,7 @@ func TestHandWrittenOffsetIsNormalisedToUTC(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "BOARD.md")
 	writeFile(t, path, strings.Replace(boardFile, "- created: 2026-11-01\n", "- created: 2026-11-04T10:00:00+01:00\n", 1))
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 
 	if _, stderr, code := runCLI(t, dir, "set", "X-1", "note=x"); code != exitOK {
 		t.Fatalf("set: %d %s", code, stderr)
@@ -912,7 +912,7 @@ func TestBadTimestampIsAParseErrorOnItsLine(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "BOARD.md")
 	writeFile(t, path, boardFile)
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	content := strings.Replace(boardFile, "- created: 2026-11-01\n", "- created: 2026-11-04T25:00:00Z\n", 1)
 	writeFile(t, path, content)
 	line := 1 + strings.Count(content[:strings.Index(content, "T25:00")], "\n")
@@ -927,7 +927,7 @@ func TestBadTimestampIsAParseErrorOnItsLine(t *testing.T) {
 
 func TestArchiveMonthIsTheMonthOfTheStoredUTCValue(t *testing.T) {
 	dir := t.TempDir()
-	runCLI(t, dir, "init", "P")
+	runCLI(t, dir, "init", "--storage", "markdown", "P")
 	runCLI(t, dir, "add", "Card")
 	// Still October here, but already November in UTC.
 	now := time.Date(2026, 10, 31, 22, 0, 0, 0, westOfUTC)
@@ -1014,7 +1014,7 @@ func TestBrokenWaypointBoardHereStillBlocks(t *testing.T) {
 	_, stderr, code := runCLI(t, cwd, "add", "Lost card")
 
 	assertEq(t, code, exitError)
-	assertContains(t, stderr, `BOARD.md here isn't registered; run "waypoint init"`)
+	assertContains(t, stderr, `BOARD.md here isn't registered; run "waypoint init --storage markdown"`)
 	assertEq(t, readFile(t, registered), before)
 }
 

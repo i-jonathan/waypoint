@@ -88,13 +88,19 @@ function server(settings: Settings = baseSettings(), cards: CardView[] = cardsOf
 
 let store: BoardStore | null = null;
 let srv: ReturnType<typeof server>;
-const globalClient = { settings: vi.fn(async () => globalOf()), putSettings: vi.fn(), archive: vi.fn(async (): Promise<CardView[]> => []) };
+const globalClient = {
+  settings: vi.fn(async () => globalOf()),
+  putSettings: vi.fn(),
+  archive: vi.fn(async (): Promise<CardView[]> => []),
+  convertProject: vi.fn(),
+  importFile: vi.fn(),
+};
 
-async function mount(settings?: Settings, cards?: CardView[]) {
+async function mount(settings?: Settings, cards?: CardView[], projectInfo: ProjectInfo = info) {
   srv = server(settings, cards);
   store = createBoardStore(srv.api, 'Home');
   await store.refresh();
-  const view = render(ProjectSettings, { props: { store, project: 'Home', info, client: globalClient } });
+  const view = render(ProjectSettings, { props: { store, project: 'Home', info: projectInfo, client: globalClient } });
   await screen.findByRole('heading', { name: 'Columns' });
   return view;
 }
@@ -459,6 +465,112 @@ describe('archive and storage', () => {
   });
 });
 
+// ----- Converting the storage -----
+
+describe('converting the storage', () => {
+  const converted = (to: string): ProjectInfo & { backups: string[] } => ({
+    ...info,
+    storage: to,
+    path: to === 'sqlite' ? '/data/home.db' : '/data/home.md',
+    backups: ['/data/home.md.bak-20261105', '/data/home.archive.md.bak-20261105'],
+  });
+  const sqliteInfo: ProjectInfo = { ...info, storage: 'sqlite', path: '/data/home.db' };
+
+  it('offers the other storage, and names the new file before doing anything', async () => {
+    await mount();
+    await fireEvent.click(screen.getByRole('button', { name: 'Convert to SQLite' }));
+    const dialog = screen.getByRole('alertdialog', { name: 'Convert this project to SQLite?' });
+    expect(within(dialog).getByText('/data/home.db')).toBeInTheDocument();
+    expect(within(dialog).getByText(/old files are kept/i)).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(globalClient.convertProject).not.toHaveBeenCalled();
+  });
+
+  it('converts on confirm and says where the old files went', async () => {
+    globalClient.convertProject.mockResolvedValue(converted('sqlite'));
+    await mount();
+    await fireEvent.click(screen.getByRole('button', { name: 'Convert to SQLite' }));
+    await fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Convert' }));
+    await waitFor(() => expect(globalClient.convertProject).toHaveBeenCalledWith('Home', { to: 'sqlite' }));
+    const note = await screen.findByRole('status', { name: 'Conversion result' });
+    expect(note).toHaveTextContent('/data/home.md.bak-20261105');
+    expect(note).toHaveTextContent('/data/home.archive.md.bak-20261105');
+  });
+
+  it('offers Markdown for a SQLite project', async () => {
+    globalClient.convertProject.mockResolvedValue(converted('markdown'));
+    await mount(undefined, undefined, sqliteInfo);
+    expect(screen.queryByRole('button', { name: 'Convert to SQLite' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Convert to Markdown' }));
+    expect(within(screen.getByRole('alertdialog')).getByText('/data/home.md')).toBeInTheDocument();
+    await fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Convert' }));
+    await waitFor(() => expect(globalClient.convertProject).toHaveBeenCalledWith('Home', { to: 'markdown' }));
+  });
+
+  it('shows the refusal in full and lets the owner try again', async () => {
+    globalClient.convertProject.mockRejectedValue(new ApiError(422, 'invalid', 'invalid: the converted copy did not match the original (the card T-1 differs). A Markdown board keeps only headings of #### or deeper inside a card, so edit that card\'s body and convert again'));
+    await mount();
+    await fireEvent.click(screen.getByRole('button', { name: 'Convert to SQLite' }));
+    await fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Convert' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('the card T-1 differs');
+    expect(screen.getByRole('button', { name: 'Convert to SQLite' })).toBeEnabled();
+  });
+
+  it('waits for unsaved changes to be saved or cancelled', async () => {
+    await mount();
+    await type(within(row('Column', 1)).getByLabelText('Name'), 'Backlog');
+    expect(screen.getByRole('button', { name: 'Convert to SQLite' })).toBeDisabled();
+    expect(screen.getByText('Save or cancel your changes first.')).toBeInTheDocument();
+  });
+});
+
+// ----- Import and export -----
+
+describe('import and export', () => {
+  const csvResult = (dry: boolean) => ({ format: 'csv' as const, dry_run: dry, created: ['T-4', 'T-5'], updated: ['T-1'], new_columns: [], new_groups: [] });
+
+  it('links to a download of each format', async () => {
+    await mount();
+    const section = screen.getByRole('heading', { name: 'Import and export' }).closest('section')!;
+    const link = (name: string) => within(section).getByRole('link', { name }) as HTMLAnchorElement;
+    expect(link('Export CSV')).toHaveAttribute('href', '/api/projects/Home/export?format=csv');
+    expect(link('Export JSON')).toHaveAttribute('href', '/api/projects/Home/export?format=json');
+    expect(link('Export Markdown')).toHaveAttribute('href', '/api/projects/Home/export?format=md');
+    expect(link('Export CSV')).toHaveAttribute('download');
+  });
+
+  it('checks a chosen file, imports it on confirm, and says what happened', async () => {
+    globalClient.importFile.mockImplementation(async (_p: string, _f: Blob, o: { dryRun?: boolean }) => csvResult(!!o.dryRun));
+    await mount();
+    const picker = screen.getByLabelText('Import file') as HTMLInputElement;
+    const file = new File(['title\nOne\n'], 'cards.csv', { type: 'text/csv' });
+    await fireEvent.change(picker, { target: { files: [file] } });
+
+    const dialog = await screen.findByRole('alertdialog', { name: 'Import cards.csv' });
+    expect(await within(dialog).findByText('Adds 2 cards and updates 1 card.')).toBeInTheDocument();
+    expect(globalClient.importFile).toHaveBeenCalledWith('Home', file, { format: 'csv', create: true, dryRun: true });
+
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Import' }));
+    const note = await screen.findByRole('status', { name: 'Import result' });
+    expect(note).toHaveTextContent('Imported cards.csv: added 2 cards and updated 1 card.');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('does nothing when the dialog is cancelled', async () => {
+    globalClient.importFile.mockImplementation(async () => csvResult(true));
+    await mount();
+    await fireEvent.change(screen.getByLabelText('Import file'), { target: { files: [new File(['x'], 'cards.csv')] } });
+    const dialog = await screen.findByRole('alertdialog');
+    await within(dialog).findByText('Adds 2 cards and updates 1 card.');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(globalClient.importFile).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('status', { name: 'Import result' })).toBeNull();
+  });
+});
+
 // ----- Saving, conflicts, leaving -----
 
 describe('saving', () => {
@@ -662,16 +774,17 @@ describe('NewProjectDialog', () => {
     await type(field('Prefix'), 'K');
     await submit('Create project');
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('Kitchen (2)'));
-    expect(createProject).toHaveBeenCalledWith({ name: 'Kitchen', prefix: 'K' });
+    expect(createProject).toHaveBeenCalledWith({ name: 'Kitchen', prefix: 'K', storage: 'sqlite' });
   });
 
   it('sends the location when one is given', async () => {
     const { createProject } = open();
     await type(field('Name'), 'Kitchen');
+    await fireEvent.click(screen.getByRole('radio', { name: /Markdown file/ }));
     await type(field('Location'), '/home/me/kitchen.md');
     await submit('Create project');
     await waitFor(() => expect(createProject).toHaveBeenCalled());
-    expect(createProject).toHaveBeenCalledWith({ name: 'Kitchen', path: '/home/me/kitchen.md', prefix: 'T' });
+    expect(createProject).toHaveBeenCalledWith({ name: 'Kitchen', path: '/home/me/kitchen.md', prefix: 'T', storage: 'markdown' });
   });
 
   it('refuses a prefix that is not letters and numbers starting with a letter', async () => {
@@ -685,15 +798,39 @@ describe('NewProjectDialog', () => {
     expect(field('Prefix')).toHaveAttribute('aria-invalid', 'true');
   });
 
+  it('offers SQLite first and selected, and Markdown as the other choice', () => {
+    open();
+    const sqlite = screen.getByRole('radio', { name: /SQLite database/ });
+    const markdown = screen.getByRole('radio', { name: /Markdown file/ });
+    expect(sqlite).toBeChecked();
+    expect(markdown).not.toBeChecked();
+    expect(field('Location')).toHaveAttribute('placeholder', '/path/to/board.db');
+  });
+
+  it('checks the location against the chosen storage', async () => {
+    const { createProject } = open();
+    await type(field('Name'), 'Kitchen');
+    await type(field('Location'), '/home/me/kitchen.md');
+    await submit('Create project');
+    expect(screen.getByText('A SQLite database path must end in .db, .sqlite or .sqlite3')).toBeInTheDocument();
+    expect(createProject).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('radio', { name: /Markdown file/ }));
+    expect(field('Location')).toHaveAttribute('placeholder', '/path/to/board.md');
+    expect(screen.queryByText('A SQLite database path must end in .db, .sqlite or .sqlite3')).toBeNull();
+    await submit('Create project');
+    await waitFor(() => expect(createProject).toHaveBeenCalled());
+  });
+
   it('wants a name, and a path that ends in .md or .markdown when one is given', async () => {
     const { createProject } = open();
     await submit('Create project');
     expect(field('Name')).toHaveFocus();
     expect(screen.getByText('Give the project a name')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('radio', { name: /Markdown file/ }));
     await type(field('Name'), 'Kitchen');
     await type(field('Location'), '/home/me/kitchen.txt');
     await submit('Create project');
-    expect(screen.getByText('The path must end in .md or .markdown')).toBeInTheDocument();
+    expect(screen.getByText('A Markdown path must end in .md or .markdown')).toBeInTheDocument();
     expect(field('Location')).toHaveFocus();
     expect(createProject).not.toHaveBeenCalled();
     await type(field('Location'), '/home/me/kitchen.MARKDOWN');
@@ -714,6 +851,23 @@ describe('NewProjectDialog', () => {
     expect(field('Path')).toHaveValue('/data/x.md');
     expect(onCreated).not.toHaveBeenCalled();
     await waitFor(() => expect(field('Path')).toHaveFocus());
+  });
+
+  it('opens an existing database under a name taken from the file, and sends no storage', async () => {
+    const { createProject, onCreated } = open('open');
+    await type(field('Path'), '/home/me/Home reno.db');
+    expect(field('Name')).toHaveValue('Home reno');
+    await submit('Open file');
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('Home reno'));
+    expect(createProject).toHaveBeenCalledWith({ name: 'Home reno', path: '/home/me/Home reno.db', existing: true });
+  });
+
+  it('refuses an existing path that is neither a board nor a database name', async () => {
+    const { createProject } = open('open');
+    await type(field('Path'), '/home/me/notes.txt');
+    await submit('Open file');
+    expect(screen.getByText('The path must end in .md, .markdown, .db, .sqlite or .sqlite3')).toBeInTheDocument();
+    expect(createProject).not.toHaveBeenCalled();
   });
 
   it('opens an existing file under a name taken from the file, without a prefix', async () => {

@@ -9,6 +9,7 @@
   import type { BoardStore } from '../lib/board.svelte';
   import { groupColor } from '../lib/colors';
   import { BUILTIN, lookOf } from '../lib/look';
+  import { exportHref } from '../lib/transfer';
   import { preview } from '../lib/preview.svelte';
   import {
     addGroup,
@@ -23,10 +24,11 @@
     validateDraft,
     type Draft,
   } from '../lib/settingsEdit';
-  import type { Appearance, ArchiveMode, CardView, ProjectInfo, Settings } from '../lib/types';
+  import type { Appearance, ArchiveMode, CardView, ConvertedProject, ImportResult, ProjectInfo, Settings } from '../lib/types';
   import AppearanceFields from './AppearanceFields.svelte';
   import ColumnsEditor from './ColumnsEditor.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
+  import ImportDialog from './ImportDialog.svelte';
   import UnsavedGuard from './UnsavedGuard.svelte';
 
   interface Props {
@@ -34,7 +36,7 @@
     project: string;
     info: ProjectInfo;
     /** Reads the app settings, whose appearance is what a project's empty fields inherit. */
-    client?: Pick<typeof api, 'settings' | 'archive'>;
+    client?: Pick<typeof api, 'settings' | 'archive' | 'convertProject' | 'importFile'>;
   }
 
   let { store, project, info, client = api }: Props = $props();
@@ -54,6 +56,56 @@
   /** Group and priority removals waiting for a yes, one line each. */
   let pending = $state.raw<string[] | null>(null);
   let root: HTMLElement | undefined = $state();
+
+  // ----- Converting the storage -----
+  const otherStorage = $derived(info.storage === 'sqlite' ? ('markdown' as const) : ('sqlite' as const));
+  const otherLabel = $derived(otherStorage === 'sqlite' ? 'SQLite' : 'Markdown');
+  /** The file the server will make: the same folder and name with the other extension. */
+  const newPath = $derived(info.path.replace(/\.[^./\\]*$/, '') + (otherStorage === 'sqlite' ? '.db' : '.md'));
+  let confirmingConvert = $state(false);
+  let converting = $state(false);
+  let converted = $state.raw<ConvertedProject | null>(null);
+  let convertFailure = $state('');
+
+  async function convert() {
+    confirmingConvert = false;
+    converting = true;
+    convertFailure = '';
+    converted = null;
+    try {
+      converted = await client.convertProject(project, { to: otherStorage });
+    } catch (err) {
+      convertFailure = err instanceof Error && err.message !== '' ? err.message : 'The conversion failed. Nothing was changed.';
+    } finally {
+      converting = false;
+    }
+  }
+
+  // ----- Import and export -----
+  let picker: HTMLInputElement | undefined = $state();
+  let importing = $state.raw<File | null>(null);
+  let importNote = $state('');
+
+  function chosen(e: Event & { currentTarget: HTMLInputElement }) {
+    const file = e.currentTarget.files?.[0];
+    if (!file) return;
+    importing = file;
+    importNote = '';
+  }
+
+  function imported(file: File, r: ImportResult) {
+    const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+    importNote =
+      r.format === 'csv'
+        ? `Imported ${file.name}: added ${n(r.created.length, 'card', 'cards')} and updated ${n(r.updated.length, 'card', 'cards')}.`
+        : `Imported ${file.name}: ${n(r.cards, 'card', 'cards')} and ${n(r.archived, 'archived card', 'archived cards')}.`;
+    closeImport();
+  }
+
+  function closeImport() {
+    importing = null;
+    if (picker) picker.value = ''; // so the same file can be chosen again
+  }
 
   function adopt() {
     const view = store.view;
@@ -406,11 +458,40 @@
         <dt>Type</dt>
         <dd class="mono">{info.storage}</dd>
       </dl>
+      <div class="convert">
+        <button type="button" class="btn" disabled={converting || dirty} onclick={() => (confirmingConvert = true)}>Convert to {otherLabel}</button>
+        {#if dirty}
+          <p class="sf-hint">Save or cancel your changes first.</p>
+        {:else}
+          <p class="sf-hint">Writes a copy, checks that it matches, then switches the project to it. The old files are kept.</p>
+        {/if}
+        {#if converted}
+          <div class="sf-note" role="status" aria-label="Conversion result">
+            <p>Converted to {converted.storage === 'sqlite' ? 'SQLite' : 'Markdown'}. The old files are kept as:</p>
+            <ul>{#each converted.backups as file (file)}<li class="mono">{file}</li>{/each}</ul>
+          </div>
+        {:else if convertFailure}
+          <div class="sf-error" role="alert"><p>{convertFailure}</p></div>
+        {/if}
+      </div>
       <div class="sf-field prefix">
         <label class="sf-label" for="ps-prefix">Prefix</label>
         <input id="ps-prefix" class="sf-input mono" type="text" value={base.prefix} readonly aria-describedby="ps-prefix-note" />
         <p class="sf-hint" id="ps-prefix-note">Fixed when the project is created.</p>
       </div>
+    </section>
+
+    <section class="sf-section" aria-labelledby="ps-transfer">
+      <h2 id="ps-transfer">Import and export</h2>
+      <p class="sf-hint">Export the whole project, or add cards from a CSV file or a JSON export.</p>
+      <div class="transfer">
+        <a class="btn" href={exportHref(project, 'csv')} download>Export CSV</a>
+        <a class="btn" href={exportHref(project, 'json')} download>Export JSON</a>
+        <a class="btn" href={exportHref(project, 'md')} download>Export Markdown</a>
+        <button type="button" class="btn" onclick={() => picker?.click()}>Import a file</button>
+        <input bind:this={picker} class="picker" type="file" accept=".csv,.json,text/csv,application/json" aria-label="Import file" onchange={chosen} />
+      </div>
+      {#if importNote}<div class="sf-note" role="status" aria-label="Import result"><p>{importNote}</p></div>{/if}
     </section>
 
     {#if changedElsewhere}
@@ -435,6 +516,23 @@
 
 <UnsavedGuard {dirty} />
 
+{#if importing}
+  <ImportDialog {project} file={importing} {client} onClose={closeImport} onDone={(r) => imported(importing!, r)} />
+{/if}
+
+{#if confirmingConvert}
+  <ConfirmDialog
+    title="Convert this project to {otherLabel}?"
+    confirmLabel="Convert"
+    onConfirm={() => void convert()}
+    onCancel={() => (confirmingConvert = false)}
+  >
+    <p class="line-msg">Waypoint will write the board to</p>
+    <p class="line-msg mono">{newPath}</p>
+    <p class="line-msg">and check that every card and setting matches before it switches over. The old files are kept next to it, renamed with .bak and today's date.</p>
+  </ConfirmDialog>
+{/if}
+
 {#if pending}
   <ConfirmDialog
     title="Some cards will lose a group or priority"
@@ -448,6 +546,30 @@
 {/if}
 
 <style>
+  .transfer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0;
+  }
+
+  .picker {
+    display: none;
+  }
+
+  .convert {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 10px 0 14px;
+  }
+
+  .convert ul {
+    margin: 4px 0 0;
+    padding-left: 18px;
+  }
+
   .rows {
     list-style: none;
     margin: 0;
