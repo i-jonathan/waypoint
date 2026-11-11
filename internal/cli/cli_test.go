@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -222,4 +223,25 @@ func TestServiceReadsBoardThroughRepository(t *testing.T) {
 	}
 	assertEq(t, bv.Settings.Name, "Existing")
 	assertEq(t, len(bv.Cards), 2)
+}
+
+func TestVersionCommand(t *testing.T) {
+	old := Version
+	Version = "v9.9.9"
+	t.Cleanup(func() { Version = old })
+	for _, args := range [][]string{{"version"}, {"--version"}, {"-v"}} {
+		stdout, stderr, code := runCLI(t, t.TempDir(), args...)
+		assertEq(t, code, 0)
+		assertEq(t, stderr, "")
+		assertContains(t, stdout, "waypoint v9.9.9")
+		assertContains(t, stdout, runtime.GOOS+"/"+runtime.GOARCH)
+	}
+	stdout, _, code := runCLI(t, t.TempDir(), "version", "--json")
+	assertEq(t, code, 0)
+	assertContains(t, stdout, `"version":"v9.9.9"`)
+	// Asking for the version needs no config and writes none.
+	mustNotExist(t, sandboxFor(t).config)
+	// It is listed in the help.
+	help, _, _ := runCLI(t, t.TempDir(), "--help")
+	assertContains(t, help, "version")
 }

@@ -67,6 +67,7 @@ Commands:
   export               Write the project as JSON, CSV or Markdown (--format json|csv|md, --out FILE; to the screen without it)
   import FILE          Put a JSON export into an empty project (--replace to swap everything),
                        or a CSV file into any project (--create adds unknown columns and groups)
+  version              Print the version of this build
   agents               Print a snippet to paste into AGENTS.md or CLAUDE.md
   mcp                  Serve the board to agents over MCP on stdin and stdout
   help format          Print the board file format guide
@@ -102,6 +103,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return r.cmdServe(args[1:])
 	case "trust":
 		return r.cmdTrust(args[1:])
+	case "version", "--version", "-v":
+		return r.cmdVersion(args[1:])
 	case "agents":
 		return r.cmdAgents(args[1:])
 	case "mcp":
