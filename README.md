@@ -190,6 +190,22 @@ The file is created the first time something is saved and is never needed just t
 
 Run `waypoint agents` and paste the output into your project's `AGENTS.md` or `CLAUDE.md`. It tells an agent to use the CLI, for example `waypoint ls --next --json` to find the next task, and to follow the board format if it edits the file directly.
 
+## Running in Docker
+
+To keep the web UI running in the background instead of in a terminal, build and start the image with Compose:
+
+```sh
+docker compose up -d
+```
+
+Then open http://localhost:4747. `docker compose down` stops it, and it restarts by itself after a reboot.
+
+- Your config and boards are mounted at the same paths as on your computer (`~/.config/waypoint` and `~/.local/share/waypoint`), because the registry stores absolute paths. Boards kept elsewhere need their own `volumes` line at the same path.
+- The port is published on `127.0.0.1` only, so only this computer can reach it. The host port must equal the container port (4747): Waypoint checks the Host header against it, and a different host port gets a 421. To change it, set `port` in the config.
+- The image listens on all addresses inside the container (`WAYPOINT_BIND=0.0.0.0`). Outside Docker `waypoint serve` always listens on 127.0.0.1 unless you set that variable yourself.
+- If the `waypoint` command on your computer and the container write the same SQLite board at once, Docker Desktop's file sharing can be slow to show changes; the web page may lag a few seconds.
+- `waypoint mcp` is not served by the container yet. Agents still start it as a command.
+
 ## MCP server
 
 For agents that speak the Model Context Protocol and have no shell, `waypoint mcp [--project NAME]` serves a board over standard input and output. It picks its project the same way the CLI does (`--project`, `$WAYPOINT_PROJECT`, then the nearest registered board), so start it from the project's folder. Add it to the agent's MCP config:

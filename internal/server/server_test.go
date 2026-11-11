@@ -249,6 +249,17 @@ func TestListensOnLoopbackOnly(t *testing.T) {
 	}
 }
 
+func TestListenOnRejectsANonIP(t *testing.T) {
+	if _, err := ListenOn("localhost; rm", 0); err == nil {
+		t.Fatal("expected an error")
+	}
+	ln, err := ListenOn("0.0.0.0", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.Close()
+}
+
 func TestServerTimeouts(t *testing.T) {
 	srv := newServer(Options{Handler: http.NotFoundHandler()})
 	if srv.ReadHeaderTimeout != 5*time.Second || srv.IdleTimeout != 120*time.Second || srv.WriteTimeout != 0 || srv.ReadTimeout != 0 {

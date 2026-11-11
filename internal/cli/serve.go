@@ -20,7 +20,7 @@ import (
 const usageServe = "waypoint serve [--port N] [--no-open]"
 
 // cmdServe runs the web server until the context ends: the board watcher, the
-// event broker, the JSON API and the UI, on 127.0.0.1.
+// event broker, the JSON API and the UI, on 127.0.0.1 unless WAYPOINT_BIND says otherwise.
 func (r *runner) cmdServe(args []string) int {
 	var portFlag string
 	var noOpen bool
@@ -54,7 +54,13 @@ func (r *runner) cmdServe(args []string) int {
 	}
 
 	// Bind first: the handler's Host check needs the port that was really got.
-	ln, err := server.Listen(port)
+	// WAYPOINT_BIND is for the container image, which has to listen on every
+	// address inside the container; the host decides who can reach the port.
+	bind := "127.0.0.1"
+	if b := r.env.Getenv("WAYPOINT_BIND"); b != "" {
+		bind = b
+	}
+	ln, err := server.ListenOn(bind, port)
 	if err != nil {
 		return r.fail(err)
 	}

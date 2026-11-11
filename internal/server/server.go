@@ -37,11 +37,19 @@ func (e *PortInUseError) Error() string {
 	return fmt.Sprintf(`port %d is in use; set "port" in CONFIG or pass --port`, e.Port)
 }
 
-// Listen binds 127.0.0.1:port. Waypoint never listens on another address. Bind
-// first, then build the handler from the listener's real port: the Host check
+// Listen binds 127.0.0.1:port. Waypoint listens on another address only when
+// asked with ListenOn (the container image does). Bind first, then build the handler from the listener's real port: the Host check
 // compares against it, and port 0 only has a real port after the bind.
-func Listen(port int) (net.Listener, error) {
-	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+func Listen(port int) (net.Listener, error) { return ListenOn("127.0.0.1", port) }
+
+// ListenOn binds addr:port, where addr is an IP address. Inside a container the
+// loopback address cannot be reached through a published port, so the image
+// asks for 0.0.0.0 and the host publishes the port on its own 127.0.0.1.
+func ListenOn(addr string, port int) (net.Listener, error) {
+	if net.ParseIP(addr) == nil {
+		return nil, fmt.Errorf("listen address %q is not an IP address", addr)
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(addr, strconv.Itoa(port)))
 	if errors.Is(err, syscall.EADDRINUSE) {
 		return nil, &PortInUseError{Port: port}
 	}
