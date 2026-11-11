@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,8 +10,10 @@ import (
 
 	"waypoint/internal/app"
 	"waypoint/internal/config"
+	"waypoint/internal/dbconn"
 	"waypoint/internal/domain"
 	"waypoint/internal/storage/markdown"
+	"waypoint/internal/storage/postgres"
 	"waypoint/internal/storage/sqlite"
 )
 
@@ -49,16 +52,36 @@ func Open(ref config.ProjectRef) (app.Repository, error) {
 		return markdown.New(ref.Path), nil
 	case "sqlite":
 		return sqlite.New(ref.Path), nil
+	case "postgres":
+		return postgres.New(ref), nil
 	default:
 		return nil, fmt.Errorf("%w: project %q has unknown storage %q", domain.ErrInvalid, ref.Name, ref.Storage)
 	}
+}
+
+// CreateOptions adjusts Create for a server project.
+type CreateOptions struct {
+	// CreateDatabase makes the database if it does not exist.
+	CreateDatabase bool
 }
 
 // Create makes a new, empty board with settings s and returns its repository.
 // Missing parent directories are created. An existing file is never
 // overwritten: it gives os.ErrExist.
 func Create(ref config.ProjectRef, s domain.Settings) (app.Repository, error) {
+	return CreateWith(context.Background(), ref, s, CreateOptions{})
+}
+
+// CreateWith is Create with a context and options. A server project's schema
+// must be empty; see postgres.Create.
+func CreateWith(ctx context.Context, ref config.ProjectRef, s domain.Settings, opts CreateOptions) (app.Repository, error) {
 	switch ref.Storage {
+	case "postgres":
+		repo, err := postgres.Create(ctx, ref, s, opts.CreateDatabase)
+		if err != nil {
+			return nil, err
+		}
+		return repo, nil
 	case "markdown":
 		if err := os.MkdirAll(filepath.Dir(ref.Path), 0o755); err != nil {
 			return nil, fmt.Errorf("create directory for %s: %w", ref.Path, err)
@@ -80,4 +103,23 @@ func Create(ref config.ProjectRef, s domain.Settings) (app.Repository, error) {
 	default:
 		return nil, fmt.Errorf("%w: project %q has unknown storage %q", domain.ErrInvalid, ref.Name, ref.Storage)
 	}
+}
+
+// Probe looks at a server project's database without changing it.
+func Probe(ctx context.Context, ref config.ProjectRef) (dbconn.ProbeResult, error) {
+	switch ref.Storage {
+	case "postgres":
+		return postgres.Probe(ctx, ref)
+	}
+	return dbconn.ProbeResult{}, fmt.Errorf("%w: project %q is not stored on a database server", domain.ErrInvalid, ref.Name)
+}
+
+// Discard removes the tables a server board owns and nothing else. It is how a
+// board made by an operation that then failed is taken back.
+func Discard(ctx context.Context, ref config.ProjectRef) error {
+	switch ref.Storage {
+	case "postgres":
+		return postgres.New(ref).Discard(ctx)
+	}
+	return fmt.Errorf("%w: project %q is not stored on a database server", domain.ErrInvalid, ref.Name)
 }

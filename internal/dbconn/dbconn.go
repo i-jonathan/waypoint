@@ -127,3 +127,15 @@ var ErrUnreachable = errors.New("cannot reach the database server")
 
 // ErrPassword marks an error from the server rejecting the user or password.
 var ErrPassword = errors.New("the database server rejected the user or password")
+
+// UnencryptedNote is shown when TLS is turned off for a server that is not on
+// this computer.
+const UnencryptedNote = "TLS is off (--ssl disable) for a server that is not on this computer: the password and the board will cross the network unencrypted."
+
+// ProbeResult says what is on a server for a project about to be set up.
+type ProbeResult struct {
+	Reachable      bool // the server answered and accepted the user and password
+	DatabaseExists bool
+	Empty          bool // the schema holds no tables, views or sequences
+	HasBoard       bool // it holds a Waypoint board (not checked for validity or retirement)
+}

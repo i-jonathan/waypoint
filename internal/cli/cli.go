@@ -49,8 +49,8 @@ Usage: waypoint <command> [flags]
 Commands:
   serve                Start the web UI (--port N, --no-open)
   trust                Trust the local certificate so the UI can use HTTPS and HTTP/2
-  init [NAME]          Create ./waypoint.db here and register it as a project (--storage markdown for ./BOARD.md)
-  project add NAME     Add a project (--path FILE, --storage sqlite|markdown, --prefix T)
+  init [NAME]          Create ./waypoint.db here and register it as a project (--storage markdown for ./BOARD.md, --storage postgres --user U for a database server)
+  project add NAME     Add a project (--path FILE, --storage sqlite|markdown|postgres, --prefix T; server: --host --port --user --database --ssl --create-database)
   project ls           List projects
   project rm NAME      Remove a project from the registry (the file is kept)
   project convert NAME Move a project to --to sqlite|markdown; the old files are kept as .bak-DATE

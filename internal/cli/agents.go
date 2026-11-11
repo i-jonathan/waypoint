@@ -26,7 +26,9 @@ This project's board is managed by Waypoint. Prefer the CLI over editing the boa
 
 If the board is a Markdown file such as BOARD.md and you edit it directly, follow the format printed by "waypoint help format"; a card heading without an id gets one automatically. Never edit a SQLite board (a .db file) directly: use the CLI.
 
-Run waypoint from inside this project's folder, or pass --project NAME. "waypoint project ls" shows the board file's path.
+Run waypoint from inside this project's folder, or pass --project NAME. "waypoint project ls" shows where the board is: a file's path, or host:port/database for a database server.
+
+If the board is in a Postgres database, its password is not stored anywhere: it must be in the environment of every program that runs waypoint, as WAYPOINT_DB_PASSWORD_<NAME> (this project; NAME is the project name in capitals, other characters as _) or WAYPOINT_DB_PASSWORD (all projects). For an MCP agent, put it in the server's "env" in the MCP config.
 
 Groups, priorities and columns must already exist on the board. On a Markdown board, read them from the file's front matter before using them.
 

@@ -51,6 +51,9 @@ func (c *Config) Add(p ProjectRef) error {
 		if !p.IsServer() && !q.IsServer() && q.Path == p.Path {
 			return fmt.Errorf("%w: path %s is already registered as %q", domain.ErrInvalid, p.Path, q.Name)
 		}
+		if p.IsServer() && q.IsServer() && p.Storage == q.Storage && sameDatabase(p, q) {
+			return fmt.Errorf("%w: %s is already registered as %q", domain.ErrInvalid, p.Display(), q.Name)
+		}
 		if (p.IsServer() || q.IsServer()) && dbconn.PasswordVar(q.Name) == dbconn.PasswordVar(p.Name) {
 			return fmt.Errorf("%w: project names %q and %q would both use %s for the password; rename one",
 				domain.ErrInvalid, q.Name, p.Name, dbconn.PasswordVar(p.Name))
@@ -58,6 +61,18 @@ func (c *Config) Add(p ProjectRef) error {
 	}
 	c.Projects = append(c.Projects, p)
 	return nil
+}
+
+// sameDatabase reports whether two server entries of one engine name the same
+// database: the same host and port (0 means the engine's default) and name.
+func sameDatabase(a, b ProjectRef) bool {
+	port := func(p ProjectRef) int {
+		if p.Port == 0 {
+			return dbconn.DefaultPort(p.Storage)
+		}
+		return p.Port
+	}
+	return strings.EqualFold(a.Host, b.Host) && port(a) == port(b) && a.Database == b.Database
 }
 
 func validateServer(p ProjectRef) error {
@@ -116,6 +131,9 @@ func (c *Config) FindByDir(cwd string) (ProjectRef, bool) {
 	var best []ProjectRef
 	bestDepth := -1
 	for _, q := range c.Projects {
+		if q.IsServer() { // no folder: found by name, never by where you are
+			continue
+		}
 		dir := resolve(filepath.Dir(q.Path))
 		if !isAncestor(dir, cwd) {
 			continue

@@ -546,3 +546,30 @@ func TestFileEntryUnchanged(t *testing.T) {
 		t.Errorf("file entry display wrong: %q", c.Projects[0].Display())
 	}
 }
+
+func TestServerEntryRefusesSameDatabase(t *testing.T) {
+	c := &Config{}
+	assertNoErr(t, c.Add(serverRef("one")))
+	twin := serverRef("two")
+	twin.Database = "db_one"
+	twin.Host = "LOCALHOST"
+	twin.Port = 0 // the default, 5432
+	err := c.Add(twin)
+	assertIs(t, err, domain.ErrInvalid)
+	if !strings.Contains(err.Error(), `"one"`) {
+		t.Errorf("message should name the project already using it: %v", err)
+	}
+	other := serverRef("three")
+	other.Port = 5433
+	other.Database = "db_one"
+	assertNoErr(t, c.Add(other))
+}
+
+func TestFindByDirIgnoresServerProjects(t *testing.T) {
+	c := &Config{}
+	assertNoErr(t, c.Add(serverRef("pg")))
+	here, _ := os.Getwd() // an empty Path would read as "." and match this folder
+	if _, ok := c.FindByDir(here); ok {
+		t.Fatal("a server project was found by folder")
+	}
+}

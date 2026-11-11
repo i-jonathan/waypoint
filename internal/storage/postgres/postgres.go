@@ -378,13 +378,8 @@ func createDB(ctx context.Context, ref config.ProjectRef) error {
 	return nil
 }
 
-// ProbeResult says what is on the server for a project that is about to be set up.
-type ProbeResult struct {
-	Reachable      bool // the server answered and accepted the user and password
-	DatabaseExists bool
-	Empty          bool // the schema holds no tables, views or sequences
-	HasBoard       bool // it holds a Waypoint board (not checked for validity or retirement)
-}
+// ProbeResult says what is on the server for a project about to be set up.
+type ProbeResult = dbconn.ProbeResult
 
 // Probe looks at the server without changing anything.
 func Probe(ctx context.Context, ref config.ProjectRef) (ProbeResult, error) {
