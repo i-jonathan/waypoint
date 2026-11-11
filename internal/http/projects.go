@@ -9,26 +9,53 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"waypoint/internal/config"
+	"waypoint/internal/dbconn"
 	"waypoint/internal/domain"
 	"waypoint/internal/projects"
+	"waypoint/internal/storage"
 )
 
 // projectJSON is a registered project as the project list shows it. Error is
 // set when the entry cannot be opened, and says why; the other fields are the
 // registry's own.
 type projectJSON struct {
-	Name    string `json:"name"`
-	Storage string `json:"storage"`
-	Path    string `json:"path"`
-	Accent  string `json:"accent"`
-	Error   string `json:"error,omitempty"`
+	Name     string `json:"name"`
+	Storage  string `json:"storage"`
+	Path     string `json:"path,omitempty"`
+	Host     string `json:"host,omitempty"`
+	Port     int    `json:"port,omitempty"`
+	Database string `json:"database,omitempty"`
+	User     string `json:"user,omitempty"`
+	SSL      string `json:"ssl,omitempty"`
+	Accent   string `json:"accent"`
+	Error    string `json:"error,omitempty"`
 }
+
+// serverIn is the part of a request that names a database server. There is no
+// password: it comes from the server's environment, and a request that sends
+// one is refused as an unknown field.
+type serverIn struct {
+	Host           string `json:"host"`
+	Port           int    `json:"port"`
+	User           string `json:"user"`
+	Database       string `json:"database"`
+	SSL            string `json:"ssl"`
+	CreateDatabase bool   `json:"create_database"`
+}
+
+func (s serverIn) options(engine string) *projects.ServerOptions {
+	return &projects.ServerOptions{Engine: engine, Host: s.Host, Port: s.Port, User: s.User, Database: s.Database, SSL: s.SSL, CreateDatabase: s.CreateDatabase}
+}
+
+func (s serverIn) used() bool { return s != serverIn{} }
 
 // projectOut describes ref. It reads the board but never writes it.
 func projectOut(ctx context.Context, cfg *config.Config, ref config.ProjectRef) projectJSON {
-	out := projectJSON{Name: ref.Name, Storage: ref.Storage, Path: ref.Path}
+	out := projectJSON{Name: ref.Name, Storage: ref.Storage, Path: ref.Path,
+		Host: ref.Host, Port: ref.Port, Database: ref.Database, User: ref.User, SSL: ref.SSL}
 	var own domain.Appearance
 	if b, err := projects.Inspect(ctx, ref); err != nil {
 		out.Error = err.Error()
@@ -44,10 +71,18 @@ func (a *api) listProjects(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	out := make([]projectJSON, 0, len(cfg.Projects))
-	for _, ref := range cfg.Projects {
-		out = append(out, projectOut(r.Context(), cfg, ref))
+	// Each entry is inspected on its own, all at once, so a server that does not
+	// answer holds up the list by one connect timeout and not by one per project.
+	out := make([]projectJSON, len(cfg.Projects))
+	var wg sync.WaitGroup
+	for i, ref := range cfg.Projects {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out[i] = projectOut(r.Context(), cfg, ref)
+		}()
 	}
+	wg.Wait()
 	a.writeJSON(w, r, http.StatusOK, out)
 	return nil
 }
@@ -73,9 +108,34 @@ func (a *api) createProject(w http.ResponseWriter, r *http.Request) error {
 		// Existing means open a board that is already there, so a mistyped path is an error
 		// rather than a new file.
 		Existing bool `json:"existing"`
+		serverIn
 	}
 	if err := decodeBody(w, r, &in, false); err != nil {
 		return err
+	}
+	if slices.Contains(projects.ServerEngines(), in.Storage) {
+		if in.Path != "" || in.Existing {
+			return invalidRequest("a " + in.Storage + " project has no file: leave out path and existing")
+		}
+		if in.Prefix == "" {
+			in.Prefix = projects.DefaultPrefix
+		}
+		ref, err := projects.Add(r.Context(), a.d.ConfigPath, a.d.Getenv, projects.AddOptions{
+			Name: in.Name, Prefix: in.Prefix, Server: in.serverIn.options(in.Storage),
+		})
+		if err != nil {
+			return err
+		}
+		cfg, err := a.loadConfig()
+		if err != nil {
+			return err
+		}
+		a.publish(Event{Type: "projects"})
+		a.writeJSON(w, r, http.StatusCreated, projectOut(r.Context(), cfg, ref))
+		return nil
+	}
+	if in.serverIn.used() {
+		return invalidRequest("server settings need storage " + strings.Join(projects.ServerEngines(), " or "))
 	}
 	if in.Path != "" && !filepath.IsAbs(in.Path) {
 		return invalidRequest("path must be an absolute path")
@@ -114,12 +174,22 @@ func (a *api) convertProject(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
 		To   string `json:"to"`
 		Path string `json:"path"`
+		serverIn
 	}
 	if err := decodeBody(w, r, &in, false); err != nil {
 		return err
 	}
 	if in.To == "" {
-		return invalidRequest("to is required: sqlite or markdown")
+		return invalidRequest("to is required: sqlite, markdown or " + strings.Join(projects.ServerEngines(), ", "))
+	}
+	target := projects.Target{Storage: in.To, Path: in.Path}
+	if slices.Contains(projects.ServerEngines(), in.To) {
+		if in.Path != "" {
+			return invalidRequest("a " + in.To + " project has no file: leave out path")
+		}
+		target.Server = in.serverIn.options(in.To)
+	} else if in.serverIn.used() {
+		return invalidRequest("server settings need to " + strings.Join(projects.ServerEngines(), " or "))
 	}
 	if in.Path != "" && !filepath.IsAbs(in.Path) {
 		return invalidRequest("path must be an absolute path")
@@ -127,7 +197,7 @@ func (a *api) convertProject(w http.ResponseWriter, r *http.Request) error {
 	if in.Path != "" && !isBoardFile(in.Path) {
 		return invalidRequest("path must end in .md, .markdown, .db, .sqlite or .sqlite3")
 	}
-	res, err := projects.Convert(r.Context(), a.d.ConfigPath, a.d.Getenv, r.PathValue("p"), projects.Target{Storage: in.To, Path: in.Path})
+	res, err := projects.Convert(r.Context(), a.d.ConfigPath, a.d.Getenv, r.PathValue("p"), target)
 	if err != nil {
 		return err
 	}
@@ -136,10 +206,57 @@ func (a *api) convertProject(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	a.publish(Event{Type: "projects"})
+	backups := res.Backups
+	if backups == nil {
+		backups = []string{}
+	}
 	a.writeJSON(w, r, http.StatusOK, struct {
 		projectJSON
 		Backups []string `json:"backups"`
-	}{projectOut(r.Context(), cfg, res.Ref), res.Backups})
+		Retired string   `json:"retired,omitempty"`
+	}{projectOut(r.Context(), cfg, res.Ref), backups, res.Retired})
+	return nil
+}
+
+// testDatabase looks at a database server for the New project and Convert
+// dialogs, and changes nothing. Whether the server answers is the result, not an
+// error: an unreachable server is a 200 that says so. A password is not part of
+// the request; the response names the variables that hold it.
+func (a *api) testDatabase(w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		Engine  string `json:"engine"`
+		Project string `json:"project"`
+		serverIn
+	}
+	if err := decodeBody(w, r, &in, false); err != nil {
+		return err
+	}
+	if !slices.Contains(projects.ServerEngines(), in.Engine) {
+		return invalidRequest("engine must be one of " + strings.Join(projects.ServerEngines(), ", "))
+	}
+	if strings.TrimSpace(in.Project) == "" {
+		return invalidRequest("project is required: the password variable is named after it")
+	}
+	ref, err := projects.ServerRef(strings.TrimSpace(in.Project), *in.serverIn.options(in.Engine))
+	if err != nil {
+		return err
+	}
+	out := struct {
+		Reachable         bool   `json:"reachable"`
+		NonLocal          bool   `json:"non_local"`
+		DatabaseExists    bool   `json:"database_exists"`
+		Empty             bool   `json:"empty"`
+		HasBoard          bool   `json:"has_board"`
+		PasswordVar       string `json:"password_var"`
+		GlobalPasswordVar string `json:"global_password_var"`
+		Error             string `json:"error,omitempty"`
+	}{NonLocal: !dbconn.IsLocal(ref.Host), PasswordVar: dbconn.PasswordVar(ref.Name), GlobalPasswordVar: dbconn.GlobalPasswordVar}
+	probe, err := storage.Probe(r.Context(), ref)
+	out.Reachable, out.DatabaseExists, out.Empty, out.HasBoard = probe.Reachable, probe.DatabaseExists, probe.Empty, probe.HasBoard
+	if err != nil {
+		out.Error = err.Error()
+	}
+	a.writeJSON(w, r, http.StatusOK, out)
 	return nil
 }
 

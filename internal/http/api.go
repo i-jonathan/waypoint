@@ -66,6 +66,7 @@ func Handler(d Deps) http.Handler {
 	}
 	handle("GET /api/projects", a.listProjects)
 	handle("POST /api/projects", a.createProject)
+	handle("POST /api/db/test", a.testDatabase)
 	handle("DELETE /api/projects/{p}", a.deleteProject)
 	handle("POST /api/projects/{p}/convert", a.convertProject)
 	handle("GET /api/projects/{p}/export", a.exportProject)
@@ -142,8 +143,8 @@ func (a *api) changed(p project) { a.publish(Event{Type: "changed", Project: p.r
 // too long for the board's lock: a read must not hang on a slow writer.
 func (a *api) autoArchiveOnce(r *http.Request, p project) {
 	a.mu.Lock()
-	done := a.opened[p.ref.Path]
-	a.opened[p.ref.Path] = true
+	done := a.opened[p.ref.Display()]
+	a.opened[p.ref.Display()] = true
 	a.mu.Unlock()
 	if done {
 		return

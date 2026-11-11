@@ -94,6 +94,7 @@ const globalClient = {
   archive: vi.fn(async (): Promise<CardView[]> => []),
   convertProject: vi.fn(),
   importFile: vi.fn(),
+  testDatabase: vi.fn(),
 };
 
 async function mount(settings?: Settings, cards?: CardView[], projectInfo: ProjectInfo = info) {
@@ -518,6 +519,60 @@ describe('converting the storage', () => {
     expect(screen.getByRole('button', { name: 'Convert to SQLite' })).toBeEnabled();
   });
 
+  const serverInfo: ProjectInfo = { ...info, storage: 'postgres', path: undefined, host: 'localhost', port: 5432, database: 'home', user: 'waypoint' };
+  const reachable = { reachable: true, non_local: false, database_exists: true, empty: true, has_board: false, password_var: 'WAYPOINT_DB_PASSWORD_HOME', global_password_var: 'WAYPOINT_DB_PASSWORD' };
+
+  it('shows where a server project lives and offers both files, not Postgres', async () => {
+    await mount(undefined, undefined, serverInfo);
+    expect(screen.getByText('localhost:5432/home')).toBeInTheDocument();
+    expect(screen.getByText('waypoint')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Convert to SQLite' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Convert to Markdown' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Convert to Postgres' })).toBeNull();
+  });
+
+  it('converts a server project to a file and says the old database was kept', async () => {
+    globalClient.convertProject.mockResolvedValue({ ...info, storage: 'sqlite', path: '/data/home.db', backups: [], retired: 'localhost:5432/home' });
+    await mount(undefined, undefined, serverInfo);
+    await fireEvent.click(screen.getByRole('button', { name: 'Convert to SQLite' }));
+    const dialog = screen.getByRole('alertdialog');
+    expect(within(dialog).getByText("a file in Waypoint's own folder")).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Convert' }));
+    const note = await screen.findByRole('status', { name: 'Conversion result' });
+    expect(note).toHaveTextContent('localhost:5432/home');
+    expect(note).toHaveTextContent('marked as retired');
+  });
+
+  it('converts a file project to Postgres only after the connection tested well', async () => {
+    globalClient.testDatabase.mockResolvedValue(reachable);
+    globalClient.convertProject.mockResolvedValue({ ...serverInfo, backups: ['/data/home.md.bak-20261105'] });
+    await mount();
+    await fireEvent.click(screen.getByRole('button', { name: 'Convert to Postgres' }));
+    const dialog = screen.getByRole('alertdialog', { name: 'Convert this project to Postgres?' });
+    const go = within(dialog).getByRole('button', { name: 'Convert to Postgres' });
+    expect(go).toBeDisabled();
+    expect(within(dialog).getByText('WAYPOINT_DB_PASSWORD_HOME')).toBeInTheDocument();
+    await fireEvent.input(within(dialog).getByLabelText('User'), { target: { value: 'waypoint' } });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Test connection' }));
+    await waitFor(() => expect(go).toBeEnabled());
+    await fireEvent.click(go);
+    await waitFor(() =>
+      expect(globalClient.convertProject).toHaveBeenCalledWith('Home', { to: 'postgres', host: 'localhost', port: 5432, user: 'waypoint' }),
+    );
+    expect(JSON.stringify(globalClient.convertProject.mock.calls[0])).not.toMatch(/password/i);
+  });
+
+  it('will not convert into a database that already holds a board', async () => {
+    globalClient.testDatabase.mockResolvedValue({ ...reachable, empty: false, has_board: true });
+    await mount();
+    await fireEvent.click(screen.getByRole('button', { name: 'Convert to Postgres' }));
+    const dialog = screen.getByRole('alertdialog');
+    await fireEvent.input(within(dialog).getByLabelText('User'), { target: { value: 'waypoint' } });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Test connection' }));
+    expect(await within(dialog).findByText(/Convert needs an empty database/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Convert to Postgres' })).toBeDisabled();
+  });
+
   it('waits for unsaved changes to be saved or cancelled', async () => {
     await mount();
     await type(within(row('Column', 1)).getByLabelText('Name'), 'Backlog');
@@ -749,7 +804,7 @@ describe('NewProjectDialog', () => {
   function open(tab: 'create' | 'open' = 'create', createProject = vi.fn(async (p: { name: string }) => created(p.name))) {
     const onClose = vi.fn();
     const onCreated = vi.fn();
-    render(NewProjectDialog, { props: { client: { createProject }, initialTab: tab, onClose, onCreated } });
+    render(NewProjectDialog, { props: { client: { createProject, testDatabase: vi.fn() }, initialTab: tab, onClose, onCreated } });
     return { createProject, onClose, onCreated };
   }
 

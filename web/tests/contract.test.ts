@@ -61,7 +61,10 @@ const archiveKeys: Keys<ArchiveSettings> = { mode: true, after_days: true };
 const checklistKeys: Keys<Checklist> = { done: true, total: true };
 const blockerKeys: Keys<Blocker> = { id: true, missing: true };
 const extraKeys: Keys<ExtraField> = { key: true, value: true };
-const projectKeys: Keys<Omit<ProjectInfo, 'error'>> = { name: true, storage: true, path: true, accent: true };
+const projectKeys: Keys<Pick<ProjectInfo, 'name' | 'storage' | 'path' | 'accent'>> = { name: true, storage: true, path: true, accent: true };
+const serverProjectKeys: Keys<Omit<ProjectInfo, 'error' | 'path'>> = {
+  name: true, storage: true, host: true, port: true, database: true, user: true, ssl: true, accent: true,
+};
 const globalKeys: Keys<GlobalSettings> = {
   port: true, open_browser: true, tls: true, appearance: true, restart_required: true,
 };
@@ -90,6 +93,16 @@ describe('contract with the Go server', () => {
     serve(200, text);
     expect(await api.projects()).toEqual(value);
     expect(String(fetchMock.mock.calls[0]![0])).toBe('/api/projects');
+  });
+
+  it('lists a project on a database server, which has no path and no password', async () => {
+    const { text, value } = fixture<ProjectInfo[]>('projects-server');
+    expect(value.length).toBeGreaterThan(0);
+    for (const p of value) expectKeys(p, serverProjectKeys);
+    expect(text).not.toMatch(/password/i);
+
+    serve(200, text);
+    expect(await api.projects()).toEqual(value);
   });
 
   it('reads a board', async () => {

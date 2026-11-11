@@ -124,8 +124,24 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 // serverEngines are the engines a project can be stored on.
 var serverEngines = []string{"postgres"}
 
+// ServerEngines lists the engines a project can be stored on.
+func ServerEngines() []string { return slices.Clone(serverEngines) }
+
 // defaultDatabase is the database name used when none is given.
 func defaultDatabase(name string) string { return slug(name) }
+
+// ServerRef is the registry entry for a project on a server, with the defaults
+// of ServerOptions filled in and checked as Add would check them.
+func ServerRef(name string, so ServerOptions) (config.ProjectRef, error) {
+	ref, err := serverRef(name, so)
+	if err != nil {
+		return ref, err
+	}
+	if err := (&config.Config{}).Add(ref); err != nil {
+		return ref, err
+	}
+	return ref, nil
+}
 
 // serverRef fills in the defaults of ServerOptions and checks them.
 func serverRef(name string, so ServerOptions) (config.ProjectRef, error) {

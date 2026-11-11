@@ -303,7 +303,7 @@
       {:else if current?.error}
         <Notice icon={FileX} title="{current.name} can't be opened">
           <p class="why">{current.error}</p>
-          {#if !current.error.includes(current.path)}<p class="where mono">{current.path}</p>{/if}
+          {#if current.path && !current.error.includes(current.path)}<p class="where mono">{current.path}</p>{:else if current.host}<p class="where mono">{current.host}:{current.port}/{current.database}</p>{/if}
         </Notice>
       {:else if route.name === 'projectSettings'}
         {#if current && store}

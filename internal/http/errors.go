@@ -53,7 +53,9 @@ var statuses = map[string]int{
 	"unknown_priority": http.StatusUnprocessableEntity,
 	"move_not_allowed": http.StatusUnprocessableEntity,
 	"wip_limit":        http.StatusUnprocessableEntity,
-	"busy":             http.StatusServiceUnavailable, // nothing was changed; the caller may try again
+	"busy":             http.StatusServiceUnavailable,  // nothing was changed; the caller may try again
+	"unreachable":      http.StatusServiceUnavailable,  // the database server did not answer
+	"needs_password":   http.StatusUnprocessableEntity, // the environment has no (right) password for it
 }
 
 // writeJSON writes v as the response. It encodes first, so an encoding failure
