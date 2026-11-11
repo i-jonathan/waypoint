@@ -61,7 +61,7 @@ func TestOverlappingSavesDoNotBlindTheWatcher(t *testing.T) {
 	dir := t.TempDir()
 	board := filepath.Join(dir, "board.md")
 	write(t, board, "0")
-	rec, _ := start(t, Target{"Demo", board})
+	rec, _ := start(t, Target{Project: "Demo", Path: board})
 
 	external := filepath.Join(dir, "board.md.ext")
 	stop := time.Now().Add(2 * time.Second)
@@ -79,7 +79,7 @@ func TestSavesThirtyMillisecondsApart(t *testing.T) {
 	dir := t.TempDir()
 	board := filepath.Join(dir, "board.md")
 	write(t, board, "0")
-	rec, _ := start(t, Target{"Demo", board})
+	rec, _ := start(t, Target{Project: "Demo", Path: board})
 
 	external := filepath.Join(dir, "board.md.ext")
 	for i := range 3 {
@@ -98,7 +98,7 @@ func TestKernelEventsAreNotNeeded(t *testing.T) {
 	board := filepath.Join(dir, "board.md")
 	write(t, board, "one")
 	rewatched := make(chan string, 8)
-	rec := startWith(t, Options{}, hooks{dropEvents: true, rewatched: rewatched}, Target{"Demo", board})
+	rec := startWith(t, Options{}, hooks{dropEvents: true, rewatched: rewatched}, Target{Project: "Demo", Path: board})
 
 	seesNext(t, rec, "a save", func() { replace(t, board, "two") })
 	seesNext(t, rec, "an archive write", func() { write(t, filepath.Join(dir, "board.archive.md"), "x") })
@@ -118,7 +118,7 @@ func TestAPollDoesNotRepeatWhatAnEventPublished(t *testing.T) {
 	board := filepath.Join(dir, "board.md")
 	write(t, board, "one")
 	rewatched := make(chan string, 8)
-	rec := startWith(t, Options{}, hooks{rewatched: rewatched}, Target{"Demo", board})
+	rec := startWith(t, Options{}, hooks{rewatched: rewatched}, Target{Project: "Demo", Path: board})
 
 	replace(t, board, "two")
 	waitCount(t, rec, 1, guarantee)
@@ -139,7 +139,7 @@ func TestDirectorySwappedAtTheSamePath(t *testing.T) {
 	}
 	board := filepath.Join(dir, "board.md")
 	write(t, board, "one")
-	rec, _ := start(t, Target{"Demo", board})
+	rec, _ := start(t, Target{Project: "Demo", Path: board})
 
 	seesNext(t, rec, "the swap", func() {
 		if err := os.Rename(dir, dir+".old"); err != nil {
@@ -168,7 +168,7 @@ func TestAncestorSwappedAtTheSamePath(t *testing.T) {
 	}
 	board := filepath.Join(dir, "board.md")
 	write(t, board, "one")
-	rec, _ := start(t, Target{"Demo", board})
+	rec, _ := start(t, Target{Project: "Demo", Path: board})
 
 	seesNext(t, rec, "the swap", func() {
 		if err := os.Rename(parent, parent+".old"); err != nil {
@@ -191,7 +191,7 @@ func TestRetargetedSymlink(t *testing.T) {
 	if err := os.Symlink(a, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	rec, _ := start(t, Target{"Demo", link})
+	rec, _ := start(t, Target{Project: "Demo", Path: link})
 
 	seesNext(t, rec, "the retarget", func() {
 		if err := os.Remove(link); err != nil {
@@ -215,7 +215,7 @@ func TestSymlinkRetargetedWithinADirectory(t *testing.T) {
 	if err := os.Symlink(a, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	rec, _ := start(t, Target{"Demo", link})
+	rec, _ := start(t, Target{Project: "Demo", Path: link})
 
 	seesNext(t, rec, "the retarget", func() {
 		if err := os.Remove(link); err != nil {
@@ -235,7 +235,7 @@ func TestBoardRegisteredWithTheWrongCase(t *testing.T) {
 	if _, err := os.Stat(wrong); err != nil {
 		t.Skip("this disk is case-sensitive")
 	}
-	rec, _ := start(t, Target{"Demo", wrong})
+	rec, _ := start(t, Target{Project: "Demo", Path: wrong})
 
 	seesNext(t, rec, "a save", func() { replace(t, board, "two") })
 	seesNext(t, rec, "another save", func() { replace(t, board, "three") })
@@ -270,7 +270,7 @@ func TestSustainedSavesPublishBeforeTheyStop(t *testing.T) {
 	dir := t.TempDir()
 	board := filepath.Join(dir, "board.md")
 	write(t, board, "0")
-	rec, _ := start(t, Target{"Demo", board})
+	rec, _ := start(t, Target{Project: "Demo", Path: board})
 
 	stop := time.Now().Add(2 * time.Second)
 	for i := 0; time.Now().Before(stop); i++ {
@@ -305,7 +305,7 @@ func TestFailedWatchIsLoggedOncePerDirectory(t *testing.T) {
 	dir := filepath.Join(root, "missing")
 	board := filepath.Join(dir, "board.md")
 	var logs syncBuffer
-	rec := startWith(t, Options{Logger: slog.New(slog.NewTextHandler(&logs, nil))}, hooks{}, Target{"Demo", board})
+	rec := startWith(t, Options{Logger: slog.New(slog.NewTextHandler(&logs, nil))}, hooks{}, Target{Project: "Demo", Path: board})
 
 	time.Sleep(2*pollEvery + 300*time.Millisecond)
 	if got := strings.Count(logs.String(), "cannot watch"); got != 1 {

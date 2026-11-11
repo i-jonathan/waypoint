@@ -8,9 +8,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"waypoint/internal/config"
+	"waypoint/internal/dbconn"
 	"waypoint/internal/domain"
 	"waypoint/internal/storage"
 	"waypoint/internal/storage/markdown"
@@ -36,6 +39,24 @@ type AddOptions struct {
 	FromInit bool
 	// InitFile names the board file in that error; used only with FromInit.
 	InitFile string
+	// Server, when set, adds a project stored on a database server instead of
+	// in a file; Path and Storage are then ignored.
+	Server *ServerOptions
+	// Warn receives a notice for the person setting up a server project (it
+	// is not on this computer; TLS is off). It is called before connecting.
+	Warn func(string)
+}
+
+// ServerOptions says where a server project lives. The password is never
+// part of it: it comes from the environment (see dbconn.Password).
+type ServerOptions struct {
+	Engine         string // "postgres"
+	Host           string // default localhost
+	Port           int    // default: the engine's
+	User           string // required
+	Database       string // default: the project name as a slug
+	SSL            string // default: dbconn.DefaultSSL(Host)
+	CreateDatabase bool   // make the database if it is missing
 }
 
 // Add registers a project and opens or creates its board.
@@ -57,6 +78,10 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 	settings := domain.NewBoard(name, o.Prefix).Settings
 	if err := settings.Validate(); err != nil {
 		return config.ProjectRef{}, err
+	}
+
+	if o.Server != nil {
+		return addServer(ctx, cfgPath, env, name, settings, o)
 	}
 
 	var ref config.ProjectRef
@@ -91,6 +116,133 @@ func Add(ctx context.Context, cfgPath string, env func(string) string, o AddOpti
 	if err != nil {
 		if created { // the board was made, so it was the save that failed
 			err = fmt.Errorf("%w (the new board file %s was left behind)", err, ref.Path)
+		}
+		return config.ProjectRef{}, err
+	}
+	return ref, nil
+}
+
+// serverEngines are the engines a project can be stored on, in the order they are listed.
+var serverEngines = []string{"postgres"}
+
+// ServerEngines lists the engines a project can be stored on.
+func ServerEngines() []string { return slices.Clone(serverEngines) }
+
+// defaultDatabase is the database name used when none is given.
+func defaultDatabase(name string) string { return slug(name) }
+
+// ServerRef is the registry entry for a project on a server, with the defaults
+// of ServerOptions filled in and checked as Add would check them.
+//
+// It is checked beside the projects already in cfg, so a name, a password
+// variable or a database that Add would refuse is refused here too. With
+// converting, the project of that name is left out of the check: it is the one
+// being moved.
+func ServerRef(cfg *config.Config, name string, so ServerOptions, converting bool) (config.ProjectRef, error) {
+	ref, err := serverRef(name, so)
+	if err != nil {
+		return ref, err
+	}
+	others := &config.Config{}
+	for _, q := range cfg.Projects {
+		if converting && strings.EqualFold(q.Name, name) {
+			continue
+		}
+		others.Projects = append(others.Projects, q)
+	}
+	if err := others.Add(ref); err != nil {
+		return ref, err
+	}
+	return ref, nil
+}
+
+// serverRef fills in the defaults of ServerOptions and checks them.
+func serverRef(name string, so ServerOptions) (config.ProjectRef, error) {
+	if !slices.Contains(serverEngines, so.Engine) {
+		return config.ProjectRef{}, fmt.Errorf("%w: storage %q must be %s", domain.ErrInvalid, so.Engine, strings.Join(append([]string{"sqlite", "markdown"}, serverEngines...), ", "))
+	}
+	if so.Host == "" {
+		so.Host = "localhost"
+	}
+	if so.Port == 0 {
+		so.Port = dbconn.DefaultPort()
+	}
+	if strings.TrimSpace(so.User) == "" {
+		return config.ProjectRef{}, fmt.Errorf("%w: a database user is required (--user)", domain.ErrInvalid)
+	}
+	if so.Database == "" {
+		if so.Database = defaultDatabase(name); so.Database == "" {
+			return config.ProjectRef{}, fmt.Errorf("%w: cannot make a database name from %q; use --database", domain.ErrInvalid, name)
+		}
+	}
+	if so.SSL == "" {
+		so.SSL = dbconn.DefaultSSL(so.Host)
+	}
+	return config.ProjectRef{Name: name, Storage: so.Engine, Host: so.Host, Port: so.Port, Database: so.Database, User: so.User, SSL: so.SSL}, nil
+}
+
+// addServer registers a project on a database server. It connects before it
+// registers anything: an unreachable server, a wrong password, a database that
+// holds something else or a retired board refuse the add and change nothing.
+// An empty database gets a new board; a database that holds a Waypoint board
+// is adopted as it is.
+func addServer(ctx context.Context, cfgPath string, env func(string) string, name string, settings domain.Settings, o AddOptions) (config.ProjectRef, error) {
+	want, err := serverRef(name, *o.Server)
+	if err != nil {
+		return config.ProjectRef{}, err
+	}
+	if o.Warn != nil && !dbconn.IsLocal(want.Host) {
+		o.Warn(dbconn.NonLocalWarning)
+		if want.SSL == "disable" {
+			o.Warn(dbconn.UnencryptedNote)
+		}
+	}
+	// The server can be slow, so nothing here waits on it while holding the
+	// config lock. First look at the registry, then at the server, then register.
+	cfg, err := config.Load(cfgPath, env)
+	if err != nil {
+		return config.ProjectRef{}, err
+	}
+	if err := (&config.Config{Projects: slices.Clone(cfg.Projects)}).Add(want); err != nil {
+		return config.ProjectRef{}, err
+	}
+	ref := want
+
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	probe, err := storage.Probe(ctx, ref)
+	if err != nil {
+		return config.ProjectRef{}, err
+	}
+	created := false
+	switch {
+	case probe.DatabaseExists && probe.HasBoard:
+		repo, err := storage.Open(ref)
+		if err != nil {
+			return config.ProjectRef{}, err
+		}
+		if _, _, err = repo.Load(ctx); err != nil { // proves it is a board this build can use, and not retired
+			return config.ProjectRef{}, err
+		}
+	case !probe.DatabaseExists && !o.Server.CreateDatabase:
+		return config.ProjectRef{}, fmt.Errorf("%w: database %q does not exist on %s; create it, or add --create-database", domain.ErrNotFound, ref.Database, ref.Display())
+	default:
+		if _, err = storage.CreateWith(ctx, ref, settings, storage.CreateOptions{CreateDatabase: !probe.DatabaseExists}); err != nil {
+			return config.ProjectRef{}, err
+		}
+		created = true
+	}
+
+	// Register, under the lock and quickly. The registry may have changed while
+	// the server was answering, so it is checked again.
+	err = config.Update(cfgPath, env, func(cfg *config.Config) error { return cfg.Add(want) })
+	if err != nil {
+		if created { // the board was made but the project cannot be registered: take it back
+			dctx, dcancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer dcancel()
+			if derr := storage.Discard(dctx, ref); derr != nil {
+				err = fmt.Errorf("%w (the new board in %s could not be removed: %v)", err, ref.Display(), derr)
+			}
 		}
 		return config.ProjectRef{}, err
 	}
@@ -224,6 +376,9 @@ func checkArchive(cfg *config.Config, path string) error {
 func RegisteredAt(cfg *config.Config, path string) (config.ProjectRef, bool) {
 	want, statErr := os.Stat(path)
 	for _, q := range cfg.Projects {
+		if q.IsServer() {
+			continue
+		}
 		if filepath.Clean(q.Path) == filepath.Clean(path) {
 			return q, true
 		}
@@ -253,6 +408,12 @@ func (e *EntryError) Unwrap() error { return e.Kind }
 // not absolute, an unknown storage, a missing file or a
 // directory. It returns nil when the entry looks openable.
 func Validate(ref config.ProjectRef) error {
+	if ref.IsServer() {
+		if ref.Host == "" || ref.User == "" || ref.Database == "" || ref.Path != "" {
+			return &EntryError{"The server settings are incomplete: a host, user and database are needed", domain.ErrInvalid}
+		}
+		return nil
+	}
 	if !filepath.IsAbs(ref.Path) {
 		return &EntryError{fmt.Sprintf("Path %q is not absolute", ref.Path), domain.ErrInvalid}
 	}

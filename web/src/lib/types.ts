@@ -146,7 +146,14 @@ export interface BoardResponse {
 export interface ProjectInfo {
   name: string;
   storage: string;
-  path: string;
+  /** The board file. A project on a database server has none. */
+  path?: string;
+  /** A project on a database server: where it is. The password is never part of it. */
+  host?: string;
+  port?: number;
+  database?: string;
+  user?: string;
+  ssl?: string;
   /** The accent the project resolves to. */
   accent: string;
   /** Set when the project cannot be opened, and says why. */
@@ -174,6 +181,42 @@ export type ImportResult =
 /** What converting a project's storage returns: the project as now registered, and the old files' new names. */
 export interface ConvertedProject extends ProjectInfo {
   backups: string[];
+  /** The old database on a server, left in place and marked retired. */
+  retired?: string;
+  /** The project moved, but something was left to do by hand; this says what. */
+  warning?: string;
+}
+
+/** The part of a request that names a database server. There is no password field. */
+export interface ServerFieldsBody {
+  host?: string;
+  port?: number;
+  user?: string;
+  database?: string;
+  ssl?: string;
+  create_database?: boolean;
+}
+
+export interface DbTestRequest extends ServerFieldsBody {
+  engine: 'postgres';
+  /** The project the settings are for: the password variable is named after it. */
+  project: string;
+  /** The settings are for moving this project, which exists, not for a new one. */
+  convert?: boolean;
+}
+
+/** What a look at a database server found. A server that does not answer is a result, not an error. */
+export interface DbTestResult {
+  reachable: boolean;
+  non_local: boolean;
+  database_exists: boolean;
+  /** The schema holds nothing. */
+  empty: boolean;
+  /** It holds a Waypoint board. */
+  has_board: boolean;
+  password_var: string;
+  global_password_var: string;
+  error?: string;
 }
 
 export type TlsMode = 'auto' | 'on' | 'off';
@@ -197,13 +240,13 @@ export interface GlobalSettingsChange {
   appearance?: Partial<Appearance>;
 }
 
-export interface NewProject {
+export interface NewProject extends ServerFieldsBody {
   name: string;
   /** Absolute, ending in .db, .sqlite, .sqlite3, .md or .markdown. Omit to let the server choose. */
   path?: string;
   prefix?: string;
   /** What to create. The server defaults to sqlite. An existing file is what it is. */
-  storage?: 'sqlite' | 'markdown';
+  storage?: 'sqlite' | 'markdown' | 'postgres';
   /** Open a board that is already there: a missing file is refused, not created. */
   existing?: boolean;
 }

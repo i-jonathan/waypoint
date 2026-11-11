@@ -343,3 +343,23 @@ func TestSnapshotRefusesAnArchivedCardWithNoDoneDate(t *testing.T) {
 	_, err := dst.ImportSnapshot(context.Background(), s, app.ImportOptions{})
 	mustInvalid(t, err, "T-1", "done date")
 }
+
+// The counts an export reports come from the same read as the export itself, so
+// they cannot disagree with the file.
+func TestExportsReportTheirCounts(t *testing.T) {
+	src := richService(t)
+	snap, err := src.svc.Snapshot(context.Background())
+	noErr(t, err)
+	var buf bytes.Buffer
+	cards, archived, err := src.svc.ExportCSVCounted(context.Background(), &buf)
+	noErr(t, err)
+	if cards != len(snap.Cards) || archived != len(snap.Archived) || archived == 0 {
+		t.Fatalf("CSV counts = %d, %d; the project has %d, %d", cards, archived, len(snap.Cards), len(snap.Archived))
+	}
+	buf.Reset()
+	cards, archived, err = src.svc.ExportMarkdownCounted(context.Background(), &buf, app.MarkdownFormat{Board: markdown.Format, Archive: markdown.FormatArchive})
+	noErr(t, err)
+	if cards != len(snap.Cards) || archived != len(snap.Archived) {
+		t.Fatalf("Markdown counts = %d, %d; the project has %d, %d", cards, archived, len(snap.Cards), len(snap.Archived))
+	}
+}

@@ -103,14 +103,58 @@ A field left empty, or with a value Waypoint does not know, falls through to the
 
 ## Choosing a storage
 
-Each project is stored in one of two ways, and new projects use SQLite unless you say otherwise.
+Each project is stored in one of three ways, and new projects use SQLite unless you say otherwise.
 
 - **SQLite** (`waypoint.db`, or a `.db` file you choose): one file that stays fast with many cards. Edit it through Waypoint, the web UI or the CLI, not by hand.
 - **Markdown** (`BOARD.md`, or a `.md` file you choose): a file you can read and edit in any editor, and that diffs well in git.
+- **Postgres**: a database on a server, usually a Docker container on your own computer. See [Using a database server](#using-a-database-server).
 
-Pick one with `--storage sqlite|markdown` on `waypoint init` and `waypoint project add`, or with the Storage choice in the New project dialog. Opening an existing file works out its kind from its content. Existing Markdown boards keep working as they are.
+Pick one with `--storage sqlite|markdown|postgres` on `waypoint init` and `waypoint project add`, or with the Storage choice in the New project dialog. Opening an existing file works out its kind from its content. Existing Markdown boards keep working as they are.
 
-To change your mind later, run `waypoint project convert NAME --to sqlite` (or `--to markdown`, optionally with `--path FILE`), or use Convert in the project's settings under Storage. Waypoint writes the board and its archive to the new file, reads it back and checks that every card, id, order, body and setting matches, and only then points the project at it. The old files are renamed to `<name>.bak-YYYYMMDD` and never deleted, so a conversion can always be undone. If a card could not be stored exactly as written, the conversion stops and tells you which card, with nothing changed. A SQLite database that was converted away is marked as retired, so a program still pointed at it fails with a clear message instead of saving into a file the project has left. To go back to a SQLite backup, rename it into place, register it, and clear the mark with `sqlite3 FILE "PRAGMA user_version = 1"`.
+To change your mind later, run `waypoint project convert NAME --to sqlite` (or `--to markdown`, optionally with `--path FILE`, or `--to postgres` with the server options below), or use Convert in the project's settings under Storage. Any storage can be converted to any other. Waypoint writes the board and its archive to the new file, reads it back and checks that every card, id, order, body and setting matches, and only then points the project at it. The old files are renamed to `<name>.bak-YYYYMMDD` and never deleted, so a conversion can always be undone. If a card could not be stored exactly as written, the conversion stops and tells you which card, with nothing changed. A SQLite database that was converted away is marked as retired, so a program still pointed at it fails with a clear message instead of saving into a file the project has left. To go back to a SQLite backup, rename it into place, register it, and clear the mark with `sqlite3 FILE "PRAGMA user_version = 1"`.
+
+## Using a database server
+
+A project can live in a Postgres database instead of a file. Waypoint connects to a server that already exists; it does not install or run one. The usual case is a throwaway container on your own computer:
+
+```sh
+docker run -d --name waypoint-pg -e POSTGRES_PASSWORD=choose-a-password -p 127.0.0.1:5432:5432 postgres:17
+```
+
+Then set the password in the environment and add the project. `--create-database` makes the database if it is missing:
+
+```sh
+export WAYPOINT_DB_PASSWORD=choose-a-password          # bash and zsh
+waypoint project add pharmacy --storage postgres --user postgres --create-database
+# or, in the project's folder: waypoint init --storage postgres --user postgres --create-database
+```
+
+The other options are `--host` (default `localhost`), `--port` (5432), `--database` (default: the project name as a slug) and `--ssl disable|prefer|require|verify-full`. There is no `--password`: **the password is never stored by Waypoint** and never goes on a command line. It comes only from an environment variable, one of two:
+
+- `WAYPOINT_DB_PASSWORD_<NAME>`, for one project. `<NAME>` is the project name in capitals with every character other than A-Z and 0-9 turned into `_`, so `pharmacy` uses `WAYPOINT_DB_PASSWORD_PHARMACY` and `my-app` uses `WAYPOINT_DB_PASSWORD_MY_APP`.
+- `WAYPOINT_DB_PASSWORD`, for every server project that has no variable of its own. The per-project variable wins when both are set.
+
+If neither is set, Waypoint connects without a password, which a local Docker server may allow. If the server asks for one, the message names both variables. In the shell that runs the command it looks like `export WAYPOINT_DB_PASSWORD=...` (bash, zsh), `set -x WAYPOINT_DB_PASSWORD ...` (fish) or `$env:WAYPOINT_DB_PASSWORD = '...'` (PowerShell). The variable has to be set wherever Waypoint runs: in the shell, for `waypoint serve`, and in an agent's MCP config:
+
+```json
+{"mcpServers":{"waypoint":{"command":"waypoint","args":["mcp","--project","pharmacy"],"env":{"WAYPOINT_DB_PASSWORD":"choose-a-password"}}}}
+```
+
+The registry keeps only the host, port, database, user and TLS mode. A project on a server has no folder, so commands find it by name: `--project pharmacy` or `WAYPOINT_PROJECT=pharmacy`. `waypoint project ls` shows `host:port/database`, and `waypoint project rm` leaves the database as it is.
+
+**One board per database.** Waypoint uses the `public` schema of a Postgres database and it only makes a new board in a database that holds nothing at all. Several projects need several databases. Adding a project to a database that already holds a Waypoint board opens that board as it is.
+
+**One person's data.** Waypoint is designed for one person, not for sharing a board between people. When the server is not on this computer (anything but `localhost`, `127.0.0.0/8`, `::1` or a Unix socket) Waypoint says so once, when you set the project up. TLS is on by default for such a server (`require`: encrypted, certificate not checked). `require` stops eavesdroppers but not an active attacker who poses as the server (Waypoint only ever answers a server with a password exchange that does not reveal the password); for a server across a network you do not fully trust use `--ssl verify-full`, which checks the certificate. Use `--ssl disable` only if you accept that the password and the board cross the network unencrypted.
+
+**Converting.** `waypoint project convert NAME --to postgres --user U --database D` (and the Convert button in project settings) copies the board into an empty database, reads it back, checks it matches, and only then switches the project. Converting away from a server leaves the old database exactly as it is, with every row, and marks it retired so nothing writes to it by mistake; Waypoint never drops or empties a database, and a database it created for a conversion that then failed stays behind, empty. A retired database is never a target. To use one again, clear the mark: `UPDATE waypoint_meta SET value = 'false' WHERE key = 'retired'` . If the mark could not be set after the switch, the conversion still counts as done: the message names the old database and the statement to run (`UPDATE waypoint_meta SET value = 'true' ...`).
+
+**One password per conversion.** A conversion reads the old board and writes the new one with the same password variable, so a source and a target that need different passwords cannot be converted directly. Export the project (`waypoint export`), add the target project with its own variable, and import.
+
+**The web UI** follows a server project by checking its revision every couple of seconds. If the server is down it says so once and keeps trying.
+
+**Postgres does not store a NUL character** in text; a card that contains one is refused, naming the card.
+
+To run the whole test suite against real servers, `make test-servers` starts Postgres in Docker, runs the tests and removes the containers. Without a server those tests are skipped.
 
 ## The Markdown board file
 

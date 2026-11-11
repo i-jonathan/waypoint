@@ -191,10 +191,24 @@ func TestLockGivesUpWhenSomeoneHoldsTheDatabaseForGood(t *testing.T) {
 
 	start := time.Now()
 	_, err = r.Lock(context.Background()) // no deadline of its own
-	if err == nil || !strings.Contains(err.Error(), "database is busy") {
-		t.Fatalf("Lock = %v, want the busy message", err)
+	if err == nil || !strings.Contains(err.Error(), "database is busy") || !errors.Is(err, app.ErrBusy) {
+		t.Fatalf("Lock = %v, want the busy message wrapping app.ErrBusy", err)
 	}
 	if took := time.Since(start); took > 3*time.Second {
 		t.Fatalf("Lock took %v to give up", took)
+	}
+}
+
+// A caller that walked away is not a database that is busy.
+func TestLockOfACancelledCallIsNotReportedAsBusy(t *testing.T) {
+	r, _ := newDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := r.Lock(ctx)
+	if err == nil || errors.Is(err, app.ErrBusy) || strings.Contains(err.Error(), "another program") {
+		t.Fatalf("Lock = %v, want a plain cancellation", err)
+	}
+	if !strings.Contains(err.Error(), "canceled") {
+		t.Fatalf("Lock = %v, want it to say the call was cancelled", err)
 	}
 }

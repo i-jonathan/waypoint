@@ -144,3 +144,25 @@ func TestLongAndUnicodeText(t *testing.T) {
 		t.Fatalf("board changed in the round trip; body %d bytes, got %d", len(body), len(got.Cards[0].Body))
 	}
 }
+
+// A database edited by hand can hold a card number that, plus one, overflows.
+// The counter must stay a valid number.
+func TestLoadKeepsTheCounterValidForAHugeCardNumber(t *testing.T) {
+	r, path := newDB(t)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO cards (id, position, column_name, title, group_name, priority, depends, created, done, body, archived_at)
+		VALUES ('T-9223372036854775807', 0, 'Todo', 'huge', '', '', '[]', '', '', '', NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := r.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Settings.NextID < 1 || b.Settings.NextID > domain.MaxCardNumber {
+		t.Fatalf("NextID = %d after a huge card number, want a valid number", b.Settings.NextID)
+	}
+}

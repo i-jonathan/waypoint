@@ -30,7 +30,7 @@ func addCard(t *testing.T, svc *app.Service, title string) {
 
 func TestWatchNoticesSQLiteWrite(t *testing.T) {
 	path, svc := newDatabase(t)
-	rec := startWith(t, Options{}, hooks{}, Target{"Lite", path})
+	rec := startWith(t, Options{}, hooks{}, Target{Project: "Lite", Path: path})
 	seesNext(t, rec, "a card added through the service", func() { addCard(t, svc, "one") })
 }
 
@@ -46,6 +46,6 @@ func TestPollNoticesWriteThatStaysInTheWAL(t *testing.T) {
 	if err := other.Ping(); err != nil {
 		t.Fatal(err)
 	}
-	rec := startWith(t, Options{}, hooks{dropEvents: true}, Target{"Lite", path})
+	rec := startWith(t, Options{}, hooks{dropEvents: true}, Target{Project: "Lite", Path: path})
 	seesNext(t, rec, "a save that stays in the WAL", func() { addCard(t, svc, "one") })
 }

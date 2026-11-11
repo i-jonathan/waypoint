@@ -231,3 +231,57 @@ test('a bad CSV file is refused with its line and changes nothing', async ({ pag
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   expect(await wp.cli('ls')).not.toContain('Good');
 });
+
+for (const engine of [{ key: 'postgres', label: 'Postgres', env: 'WAYPOINT_TEST_POSTGRES' }]) {
+  test(`a ${engine.label} project can be made in the dialog, used, and moved to SQLite and back`, async ({ page, wp }) => {
+  const pg = process.env[engine.env];
+  test.skip(!pg, `${engine.env} is not set`);
+  const [host, port, user] = (pg ?? '').split(':');
+  const database = `waypoint_e2e_${Math.random().toString(16).slice(2, 10)}`;
+
+  await page.goto(wp.boardURL);
+  await page.getByRole('button', { name: /Switch project/ }).click();
+  await page.getByRole('menuitem', { name: 'New project' }).click();
+  const dialog = page.getByRole('dialog', { name: 'New project' });
+  await dialog.getByLabel('Name').fill('Server');
+  await dialog.getByRole('radio', { name: new RegExp(`Database server \\(${engine.label}\\)`) }).check();
+  await expect(dialog).toContainText('WAYPOINT_DB_PASSWORD_SERVER');
+  await expect(dialog.getByRole('button', { name: 'Create project' })).toBeDisabled();
+  await dialog.getByLabel('Host').fill(host);
+  await dialog.getByLabel('Port').fill(port);
+  await dialog.getByLabel('User').fill(user);
+  await dialog.getByLabel('Database', { exact: true }).fill(database);
+  await dialog.getByLabel('Create the database if it does not exist').check();
+  await dialog.getByRole('button', { name: 'Test connection' }).click();
+  await expect(dialog.getByRole('status')).toContainText('Connected');
+  await dialog.getByRole('button', { name: 'Create project' }).click();
+
+  await expect(page).toHaveURL(/\/p\/Server/);
+  await page.keyboard.press('n');
+  await page.keyboard.type(`Lives in ${engine.label}`);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('[data-card-id="T-1"]')).toBeVisible();
+  expect(await wp.cli('ls', '--project', 'Server')).toContain(`Lives in ${engine.label}`);
+  expect(await wp.cli('project', 'ls')).toContain(`${host}:${port}/${database}`);
+
+  // Out to SQLite, then back into a second, empty database.
+  await page.goto(`${wp.url}/p/Server/settings`);
+  await page.getByRole('button', { name: 'Convert to SQLite' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Convert' }).click();
+  await expect(page.getByRole('status', { name: 'Conversion result' })).toContainText('marked as retired');
+  expect(await wp.cli('ls', '--project', 'Server')).toContain(`Lives in ${engine.label}`);
+
+  await page.getByRole('button', { name: `Convert to ${engine.label}` }).click();
+  const again = page.getByRole('alertdialog', { name: `Convert this project to ${engine.label}?` });
+  await again.getByLabel('Host').fill(host);
+  await again.getByLabel('Port').fill(port);
+  await again.getByLabel('User').fill(user);
+  await again.getByLabel('Database', { exact: true }).fill(`${database}_again`);
+  await again.getByLabel('Create the database if it does not exist').check();
+  await again.getByRole('button', { name: 'Test connection' }).click();
+  await expect(again.getByRole('status')).toContainText('Connected');
+  await again.getByRole('button', { name: `Convert to ${engine.label}` }).click();
+  await expect(page.getByRole('status', { name: 'Conversion result' })).toContainText(`Converted to ${engine.label}`);
+  expect(await wp.cli('ls', '--project', 'Server')).toContain(`Lives in ${engine.label}`);
+});
+}

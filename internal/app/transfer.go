@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
-	"strings"
 
 	"waypoint/internal/domain"
 )
@@ -187,8 +185,7 @@ func (snap Snapshot) board() (*domain.Board, error) {
 	// Never hand out an id a card already has.
 	for _, list := range [][]domain.Card{b.Cards, b.Archived} {
 		for _, c := range list {
-			prefix, num, _ := strings.Cut(string(c.ID), "-")
-			if n, err := strconv.Atoi(num); err == nil && prefix == b.Settings.Prefix {
+			if n, ok := domain.CardNumberIn(b.Settings.Prefix, c.ID); ok {
 				b.Settings.NextID = max(b.Settings.NextID, n+1)
 			}
 		}

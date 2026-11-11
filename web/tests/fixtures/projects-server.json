@@ -1,0 +1,1 @@
+[{"name":"Pharmacy","storage":"postgres","host":"localhost","port":5432,"database":"pharmacy","user":"waypoint","ssl":"prefer","accent":"#c2410c"}]

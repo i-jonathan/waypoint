@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -23,14 +24,27 @@ const (
 	pollEvery = time.Second
 )
 
-// Target is one board to watch: the project's name and the path of its board file.
-type Target struct{ Project, Path string }
+// Target is one board to watch: the project's name and the path of its board
+// file. A project on a database server has no file: it sets Revision instead,
+// and Path is ignored.
+type Target struct {
+	Project, Path string
+	// Revision reads the board's save counter from the server. The watcher
+	// calls it about every ServerPoll and publishes the project when the value
+	// changes, or when the server comes back after an outage.
+	Revision func(ctx context.Context) (int64, error)
+	// Key identifies the connection behind Revision. Revision may be a new
+	// function on every call to the targets func; the poller is restarted only
+	// when Key changes.
+	Key string
+}
 
 // Options are what Run needs beyond the boards.
 type Options struct {
-	ConfigPath string       // the config file; "" watches none
-	Projects   func()       // called when the config file changes
-	Logger     *slog.Logger // nil logs nothing
+	ConfigPath string        // the config file; "" watches none
+	Projects   func()        // called when the config file changes
+	Logger     *slog.Logger  // nil logs nothing
+	ServerPoll time.Duration // how often a server project is polled; 0 means ServerPoll (2s)
 }
 
 // Run watches every target's board until ctx ends and calls publish(project)
@@ -90,6 +104,11 @@ type watcher struct {
 	config    fileState
 	dirs      map[string]os.FileInfo // each watched directory, as it was when watched
 	addFailed map[string]bool        // directories whose failure has been logged
+
+	ctx      context.Context
+	servers  map[string]*serverPoller // by project
+	serverCh chan string              // projects whose server board changed
+	wg       sync.WaitGroup
 }
 
 func run(ctx context.Context, targets func() []Target, publish func(project string), o Options, h hooks) error {
@@ -106,7 +125,12 @@ func run(ctx context.Context, targets func() []Target, publish func(project stri
 		timer:  time.NewTimer(time.Hour),
 		boards: map[string]boardFiles{}, prints: map[string]fingerprint{},
 		dirs: map[string]os.FileInfo{}, addFailed: map[string]bool{},
+		servers: map[string]*serverPoller{}, serverCh: make(chan string),
 	}
+	var stop context.CancelFunc
+	x.ctx, stop = context.WithCancel(ctx)
+	defer x.wg.Wait() // runs last: the pollers are cancelled first
+	defer stop()
 	defer x.timer.Stop()
 	if x.log == nil {
 		x.log = slog.New(slog.DiscardHandler)
@@ -142,6 +166,8 @@ func run(ctx context.Context, targets func() []Target, publish func(project stri
 			x.resync()
 		case <-h.errs:
 			x.resync()
+		case p := <-x.serverCh:
+			x.schedule(p)
 		case <-x.timer.C:
 			x.publishDue()
 		}
@@ -243,7 +269,16 @@ func (x *watcher) pollConfig() {
 // next poll tries again. A directory added after the first scan may have changed
 // while unwatched, so its projects are published.
 func (x *watcher) refresh() {
-	ts := x.targets()
+	all := x.targets()
+	var ts, servers []Target
+	for _, t := range all {
+		if t.Revision != nil {
+			servers = append(servers, t)
+		} else {
+			ts = append(ts, t)
+		}
+	}
+	x.syncServers(servers)
 	x.table = buildRoutes(ts)
 
 	boards := make(map[string]boardFiles, len(ts))

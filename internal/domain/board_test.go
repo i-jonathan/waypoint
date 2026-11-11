@@ -132,3 +132,26 @@ func TestValidateAcceptsAfterDaysZeroAndNoPriorities(t *testing.T) {
 	s.Priorities = nil
 	assertNoErr(t, s.Validate())
 }
+
+func TestCardNumberIn(t *testing.T) {
+	cases := []struct {
+		prefix string
+		id     CardID
+		n      int
+		ok     bool
+	}{
+		{"T", "T-7", 7, true},
+		{"T", "X-7", 0, false},                     // another prefix
+		{"T", "T-x", 0, false},                     // not a number
+		{"T", "T-2147483647", MaxCardNumber, true}, // the largest
+		{"T", "T-2147483648", 0, false},            // past the cap
+		{"T", "T-9223372036854775807", 0, false},   // would overflow n+1
+		{"T", "T-99999999999999999999", 0, false},  // does not even fit an int
+	}
+	for _, c := range cases {
+		n, ok := CardNumberIn(c.prefix, c.id)
+		if n != c.n || ok != c.ok {
+			t.Errorf("CardNumberIn(%q, %q) = %d, %v; want %d, %v", c.prefix, c.id, n, ok, c.n, c.ok)
+		}
+	}
+}

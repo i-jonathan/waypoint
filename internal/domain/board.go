@@ -108,6 +108,22 @@ func ValidCardID(id string) bool { return cardIDRE.MatchString(id) }
 // real board, and small enough that counting past it can never overflow.
 const MaxCardNumber = 1<<31 - 1
 
+// CardNumberIn returns the number in a card id of the board whose prefix is
+// given (the 7 in T-7 on board T). ok is false for an id of another prefix, one
+// without a number, or one over MaxCardNumber, so that adding one to it cannot
+// overflow.
+func CardNumberIn(prefix string, id CardID) (n int, ok bool) {
+	p, _, found := strings.Cut(string(id), "-")
+	if !found || p != prefix {
+		return 0, false
+	}
+	n, ok = CardNumber(id)
+	if !ok {
+		return 0, false
+	}
+	return n, true
+}
+
 // CardNumber returns the number in a card id (the 7 in T-7). ok is false when the
 // id has none or the number is larger than MaxCardNumber.
 func CardNumber(id CardID) (n int, ok bool) {

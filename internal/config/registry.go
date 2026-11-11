@@ -5,40 +5,90 @@ import (
 	"path/filepath"
 	"strings"
 
+	"waypoint/internal/dbconn"
 	"waypoint/internal/domain"
 )
 
-// Add registers a project. Its Path is made absolute and cleaned. A blank
-// name or path, a storage other than "markdown" or "sqlite", a name already
+// Add registers a project. A file project's Path is made absolute and cleaned;
+// a blank name or path, a storage other than the four known, a name already
 // taken (compared case-insensitively) or a path already registered is
-// domain.ErrInvalid. An empty Storage is chosen by StorageFor(path).
+// domain.ErrInvalid, and so is a file project with server fields. An empty
+// Storage on a file project is chosen by StorageFor(path). A server project
+// needs host, user and database, a port of 0-65535 (0 means the engine's
+// default), a valid ssl value and no path; its name must give a password
+// variable no other server project's name gives (a file project reads no password).
 func (c *Config) Add(p ProjectRef) error {
 	if strings.TrimSpace(p.Name) == "" {
 		return fmt.Errorf("%w: project name is empty", domain.ErrInvalid)
 	}
-	if p.Path == "" {
-		return fmt.Errorf("%w: project path is empty", domain.ErrInvalid)
-	}
-	abs, err := filepath.Abs(p.Path)
-	if err != nil {
-		return fmt.Errorf("%w: project path %q: %v", domain.ErrInvalid, p.Path, err)
-	}
-	p.Path = filepath.Clean(abs)
-	if p.Storage == "" {
-		p.Storage = StorageFor(p.Path)
-	}
-	if p.Storage != "markdown" && p.Storage != "sqlite" {
-		return fmt.Errorf("%w: storage %q must be markdown or sqlite", domain.ErrInvalid, p.Storage)
+	if p.IsServer() {
+		if err := validateServer(p); err != nil {
+			return err
+		}
+	} else {
+		if p.Host != "" || p.Port != 0 || p.Database != "" || p.User != "" || p.SSL != "" {
+			return fmt.Errorf("%w: server settings need storage postgres", domain.ErrInvalid)
+		}
+		if p.Path == "" {
+			return fmt.Errorf("%w: project path is empty", domain.ErrInvalid)
+		}
+		abs, err := filepath.Abs(p.Path)
+		if err != nil {
+			return fmt.Errorf("%w: project path %q: %v", domain.ErrInvalid, p.Path, err)
+		}
+		p.Path = filepath.Clean(abs)
+		if p.Storage == "" {
+			p.Storage = StorageFor(p.Path)
+		}
+		if p.Storage != "markdown" && p.Storage != "sqlite" {
+			return fmt.Errorf("%w: storage %q must be markdown, sqlite or postgres", domain.ErrInvalid, p.Storage)
+		}
 	}
 	for _, q := range c.Projects {
 		if strings.EqualFold(q.Name, p.Name) {
 			return fmt.Errorf("%w: project %q already exists", domain.ErrInvalid, q.Name)
 		}
-		if q.Path == p.Path {
+		if !p.IsServer() && !q.IsServer() && q.Path == p.Path {
 			return fmt.Errorf("%w: path %s is already registered as %q", domain.ErrInvalid, p.Path, q.Name)
+		}
+		if p.IsServer() && q.IsServer() && p.Storage == q.Storage && sameDatabase(p, q) {
+			return fmt.Errorf("%w: %s is already registered as %q", domain.ErrInvalid, p.Display(), q.Name)
+		}
+		if p.IsServer() && q.IsServer() && dbconn.PasswordVar(q.Name) == dbconn.PasswordVar(p.Name) {
+			return fmt.Errorf("%w: project names %q and %q would both use %s for the password; rename one",
+				domain.ErrInvalid, q.Name, p.Name, dbconn.PasswordVar(p.Name))
 		}
 	}
 	c.Projects = append(c.Projects, p)
+	return nil
+}
+
+// sameDatabase reports whether two server entries of one engine name the same
+// database: the same host and port (0 means the engine's default) and name.
+func sameDatabase(a, b ProjectRef) bool {
+	return dbconn.SameHost(a.Host, b.Host) && a.EffectivePort() == b.EffectivePort() && a.Database == b.Database
+}
+
+func validateServer(p ProjectRef) error {
+	switch {
+	case p.Path != "":
+		return fmt.Errorf("%w: a %s project has no path", domain.ErrInvalid, p.Storage)
+	case strings.TrimSpace(p.Host) == "":
+		return fmt.Errorf("%w: host is empty", domain.ErrInvalid)
+	case strings.TrimSpace(p.User) == "":
+		return fmt.Errorf("%w: user is empty", domain.ErrInvalid)
+	case strings.TrimSpace(p.Database) == "":
+		return fmt.Errorf("%w: database is empty", domain.ErrInvalid)
+	case p.Port < 0 || p.Port > 65535:
+		return fmt.Errorf("%w: port %d must be from 1 to 65535, or left out for the default", domain.ErrInvalid, p.Port)
+	case p.SSL != "" && !dbconn.ValidSSL(p.SSL):
+		return fmt.Errorf("%w: ssl %q must be disable, prefer, require or verify-full", domain.ErrInvalid, p.SSL)
+	}
+	if !strings.ContainsFunc(p.Name, func(r rune) bool {
+		return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+	}) {
+		return fmt.Errorf("%w: project name %q has no letters or digits, so it cannot name a password variable; choose another name", domain.ErrInvalid, p.Name)
+	}
 	return nil
 }
 
@@ -75,6 +125,9 @@ func (c *Config) FindByDir(cwd string) (ProjectRef, bool) {
 	var best []ProjectRef
 	bestDepth := -1
 	for _, q := range c.Projects {
+		if q.IsServer() { // no folder: found by name, never by where you are
+			continue
+		}
 		dir := resolve(filepath.Dir(q.Path))
 		if !isAncestor(dir, cwd) {
 			continue

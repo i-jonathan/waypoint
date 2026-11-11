@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"waypoint/internal/dbconn"
 
 	"waypoint/internal/app"
 	"waypoint/internal/domain"
@@ -46,6 +47,21 @@ func TestLine(t *testing.T) {
 
 func TestChangedDuringWriteIsBusy(t *testing.T) {
 	if got := Code(fmt.Errorf("x: %w", app.ErrChangedDuringWrite)); got != "busy" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestErrBusyIsBusy(t *testing.T) {
+	if got := Code(fmt.Errorf("x: %w", app.ErrBusy)); got != "busy" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestServerErrorCodes(t *testing.T) {
+	if got := Code(fmt.Errorf("x: %w", dbconn.ErrUnreachable)); got != "unreachable" {
+		t.Fatalf("got %q", got)
+	}
+	if got := Code(fmt.Errorf("x: %w", dbconn.ErrPassword)); got != "needs_password" {
 		t.Fatalf("got %q", got)
 	}
 }

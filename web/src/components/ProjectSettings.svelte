@@ -28,6 +28,8 @@
   import AppearanceFields from './AppearanceFields.svelte';
   import ColumnsEditor from './ColumnsEditor.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
+  import { DEFAULT_PORTS, SERVER_ENGINES, engineLabel, isServerEngine, type ServerEngine } from '../lib/server';
+  import ServerFields, { type ServerSettings } from './ServerFields.svelte';
   import ImportDialog from './ImportDialog.svelte';
   import UnsavedGuard from './UnsavedGuard.svelte';
 
@@ -36,7 +38,7 @@
     project: string;
     info: ProjectInfo;
     /** Reads the app settings, whose appearance is what a project's empty fields inherit. */
-    client?: Pick<typeof api, 'settings' | 'archive' | 'convertProject' | 'importFile'>;
+    client?: Pick<typeof api, 'settings' | 'archive' | 'convertProject' | 'importFile' | 'testDatabase'>;
   }
 
   let { store, project, info, client = api }: Props = $props();
@@ -58,22 +60,46 @@
   let root: HTMLElement | undefined = $state();
 
   // ----- Converting the storage -----
-  const otherStorage = $derived(info.storage === 'sqlite' ? ('markdown' as const) : ('sqlite' as const));
-  const otherLabel = $derived(otherStorage === 'sqlite' ? 'SQLite' : 'Markdown');
-  /** The file the server will make: the same folder and name with the other extension. */
-  const newPath = $derived(info.path.replace(/\.[^./\\]*$/, '') + (otherStorage === 'sqlite' ? '.db' : '.md'));
-  let confirmingConvert = $state(false);
+  type Kind = 'sqlite' | 'markdown' | ServerEngine;
+  const label = (k: string) => (k === 'sqlite' ? 'SQLite' : k === 'markdown' ? 'Markdown' : engineLabel(k));
+  /** The database servers a project can move to: any but the one it is on. */
+  const serverTargets = $derived(SERVER_ENGINES.filter((e) => e.value !== info.storage));
+  /** The files a project can move to. A project on a server can go to either; a file project to the other kind. */
+  const fileTargets = $derived((['sqlite', 'markdown'] as const).filter((k) => k !== info.storage));
+  /** Where the server will put the file: the same folder and name with the other extension. */
+  const newPath = (to: 'sqlite' | 'markdown') =>
+    info.path ? info.path.replace(/\.[^./\\]*$/, '') + (to === 'sqlite' ? '.db' : '.md') : "a file in Waypoint's own folder";
+  const where = $derived(info.path ?? `${info.host}:${info.port}/${info.database}`);
+  /** The file target waiting for a yes. */
+  let confirmingConvert = $state<'sqlite' | 'markdown' | null>(null);
+  let choosingServer = $state<ServerEngine | null>(null);
+  let target = $state<ServerSettings>({ engine: 'postgres', host: '', port: '', user: '', database: '', ssl: '', createDatabase: false });
+  let targetReady = $state(false);
   let converting = $state(false);
   let converted = $state.raw<ConvertedProject | null>(null);
   let convertFailure = $state('');
 
-  async function convert() {
-    confirmingConvert = false;
+  async function convert(to: Kind) {
+    confirmingConvert = null;
     converting = true;
     convertFailure = '';
     converted = null;
     try {
-      converted = await client.convertProject(project, { to: otherStorage });
+      if (isServerEngine(to)) {
+        const body: Parameters<typeof client.convertProject>[1] = {
+          to,
+          host: target.host.trim() === '' ? 'localhost' : target.host.trim(),
+          port: target.port.trim() === '' ? DEFAULT_PORTS[to] : Number(target.port),
+          user: target.user.trim(),
+        };
+        if (target.database.trim() !== '') body.database = target.database.trim();
+        if (target.ssl !== '') body.ssl = target.ssl;
+        if (target.createDatabase) body.create_database = true;
+        converted = await client.convertProject(project, body);
+        choosingServer = null;
+      } else {
+        converted = await client.convertProject(project, { to });
+      }
     } catch (err) {
       convertFailure = err instanceof Error && err.message !== '' ? err.message : 'The conversion failed. Nothing was changed.';
     } finally {
@@ -453,22 +479,52 @@
     <section class="sf-section" aria-labelledby="ps-storage">
       <h2 id="ps-storage">Storage</h2>
       <dl class="facts">
-        <dt>Path</dt>
-        <dd class="mono">{info.path}</dd>
+        {#if info.path}
+          <dt>Path</dt>
+          <dd class="mono">{info.path}</dd>
+        {:else}
+          <dt>Server</dt>
+          <dd class="mono">{where}</dd>
+          <dt>User</dt>
+          <dd class="mono">{info.user}</dd>
+        {/if}
         <dt>Type</dt>
         <dd class="mono">{info.storage}</dd>
       </dl>
       <div class="convert">
-        <button type="button" class="btn" disabled={converting || dirty} onclick={() => (confirmingConvert = true)}>Convert to {otherLabel}</button>
+        <div class="targets">
+          {#each fileTargets as to (to)}
+            <button type="button" class="btn" disabled={converting || dirty} onclick={() => (confirmingConvert = to)}>Convert to {label(to)}</button>
+          {/each}
+          {#each serverTargets as eng (eng.value)}
+            <button
+              type="button"
+              class="btn"
+              disabled={converting || dirty}
+              onclick={() => {
+                target.engine = eng.value;
+                choosingServer = eng.value;
+              }}>Convert to {eng.label}</button
+            >
+          {/each}
+        </div>
         {#if dirty}
           <p class="sf-hint">Save or cancel your changes first.</p>
         {:else}
-          <p class="sf-hint">Writes a copy, checks that it matches, then switches the project to it. The old files are kept.</p>
+          <p class="sf-hint">Writes a copy, checks that it matches, then switches the project to it. The old {info.host ? 'database is' : 'files are'} kept.</p>
         {/if}
         {#if converted}
           <div class="sf-note" role="status" aria-label="Conversion result">
-            <p>Converted to {converted.storage === 'sqlite' ? 'SQLite' : 'Markdown'}. The old files are kept as:</p>
-            <ul>{#each converted.backups as file (file)}<li class="mono">{file}</li>{/each}</ul>
+            <div>
+              <p>Converted to {label(converted.storage)}.</p>
+              {#if converted.retired}
+                <p>The old database at <span class="mono">{converted.retired}</span> is kept, marked as retired.</p>
+              {:else if converted.backups.length > 0}
+                <p>The old files are kept as:</p>
+                <ul>{#each converted.backups as file (file)}<li class="mono">{file}</li>{/each}</ul>
+              {/if}
+              {#if converted.warning}<p class="sf-error" role="alert">{converted.warning}</p>{/if}
+            </div>
           </div>
         {:else if convertFailure}
           <div class="sf-error" role="alert"><p>{convertFailure}</p></div>
@@ -521,15 +577,42 @@
 {/if}
 
 {#if confirmingConvert}
+  {@const to = confirmingConvert}
   <ConfirmDialog
-    title="Convert this project to {otherLabel}?"
+    title="Convert this project to {label(to)}?"
     confirmLabel="Convert"
-    onConfirm={() => void convert()}
-    onCancel={() => (confirmingConvert = false)}
+    onConfirm={() => void convert(to)}
+    onCancel={() => (confirmingConvert = null)}
   >
     <p class="line-msg">Waypoint will write the board to</p>
-    <p class="line-msg mono">{newPath}</p>
-    <p class="line-msg">and check that every card and setting matches before it switches over. The old files are kept next to it, renamed with .bak and today's date.</p>
+    <p class="line-msg mono">{newPath(to)}</p>
+    {#if info.host}
+      <p class="line-msg">and check that every card and setting matches before it switches over. The old database is kept as it is, marked as retired so nothing writes to it by mistake.</p>
+    {:else}
+      <p class="line-msg">and check that every card and setting matches before it switches over. The old files are kept next to it, renamed with .bak and today's date.</p>
+    {/if}
+  </ConfirmDialog>
+{/if}
+
+{#if choosingServer}
+  {@const engine = choosingServer}
+  <ConfirmDialog
+    title="Convert this project to {label(engine)}?"
+    confirmLabel="Convert to {label(engine)}"
+    confirmDisabled={!targetReady || converting}
+    wide
+    focus="dialog"
+    onConfirm={() => void convert(engine)}
+    onCancel={() => (choosingServer = null)}
+  >
+    <p class="line-msg">
+      Waypoint will copy the board into an empty database, check that every card and setting matches, then switch the project to it.
+      {info.host
+        ? 'The old database is kept as it is, marked as retired so nothing writes to it by mistake.'
+        : "The old files are kept next to the old board, renamed with .bak and today's date."}
+    </p>
+    <ServerFields project={info.name} bind:value={target} bind:ready={targetReady} mode="convert" {client} />
+    {#if convertFailure}<div class="sf-error" role="alert"><p>{convertFailure}</p></div>{/if}
   </ConfirmDialog>
 {/if}
 
@@ -555,6 +638,12 @@
 
   .picker {
     display: none;
+  }
+
+  .targets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   .convert {

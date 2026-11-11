@@ -9,6 +9,9 @@ import type {
   NewCard,
   NewProject,
   ConvertedProject,
+  DbTestRequest,
+  DbTestResult,
+  ServerFieldsBody,
   ImportFormat,
   ImportOptions,
   ImportResult,
@@ -131,9 +134,11 @@ export const api = {
       type: o.format === 'csv' ? 'text/csv' : 'application/json',
     });
   },
-  /** Moves a project to the other storage. The old files are kept. */
-  convertProject: (p: string, body: { to: 'sqlite' | 'markdown'; path?: string }) =>
+  /** Moves a project to another storage. The old files, or the old database, are kept. */
+  convertProject: (p: string, body: { to: 'sqlite' | 'markdown' | 'postgres'; path?: string } & ServerFieldsBody) =>
     request<ConvertedProject>('POST', `${projectPath(p)}/convert`, body),
+  /** Looks at a database server and changes nothing. */
+  testDatabase: (body: DbTestRequest) => request<DbTestResult>('POST', '/api/db/test', body),
 
   settings: () => request<GlobalSettings>('GET', '/api/settings'),
   putSettings: (change: GlobalSettingsChange) => request<GlobalSettings>('PUT', '/api/settings', change),

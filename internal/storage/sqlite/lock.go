@@ -8,6 +8,8 @@ import (
 	"time"
 
 	msqlite "modernc.org/sqlite"
+
+	"waypoint/internal/app"
 )
 
 // lockPoll is how often a waiting Lock tries again.
@@ -51,12 +53,15 @@ func (r *Repo) Lock(ctx context.Context) (func() error, error) {
 		release()
 		return nil, r.plain(err)
 	}
+	wasBusy := false
 	for {
 		_, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`)
 		if err == nil {
 			break
 		}
-		if ctx.Err() == nil && !isBusy(err) {
+		busy := isBusy(err)
+		wasBusy = wasBusy || busy
+		if ctx.Err() == nil && !busy {
 			release()
 			return nil, r.plain(err)
 		}
@@ -64,7 +69,10 @@ func (r *Repo) Lock(ctx context.Context) (func() error, error) {
 			continue
 		}
 		release()
-		return nil, fmt.Errorf("the project database is busy: another program has it locked: %w", ctx.Err())
+		if wasBusy { // the wait ended while another program still held the database
+			return nil, fmt.Errorf("%w: the project database is busy: another program has it locked: %w", app.ErrBusy, ctx.Err())
+		}
+		return nil, fmt.Errorf("could not lock the project database: %w", ctx.Err())
 	}
 	// The file may have been retired while this call waited for the lock.
 	var version int

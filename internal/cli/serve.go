@@ -13,6 +13,7 @@ import (
 	"waypoint/internal/config"
 	httpapi "waypoint/internal/http"
 	"waypoint/internal/server"
+	"waypoint/internal/storage"
 	"waypoint/internal/watch"
 )
 
@@ -148,8 +149,33 @@ func watchTargets(path string, getenv func(string) string, log *slog.Logger) fun
 		lastErr = ""
 		last = last[:0:0]
 		for _, p := range cfg.Projects {
+			if p.IsServer() {
+				last = append(last, serverTarget(p))
+				continue
+			}
 			last = append(last, watch.Target{Project: p.Name, Path: p.Path})
 		}
 		return last
 	}
+}
+
+// revisioner is what a repository on a database server offers the watcher.
+type revisioner interface {
+	Revision(ctx context.Context) (int64, error)
+}
+
+// serverTarget is the watcher's view of a project on a database server. The key
+// changes when anything about the connection does, so the watcher reconnects.
+func serverTarget(p config.ProjectRef) watch.Target {
+	t := watch.Target{Project: p.Name, Key: fmt.Sprintf("%s|%s|%s|%s", p.Storage, p.Display(), p.User, p.SSL)}
+	repo, err := storage.Open(p)
+	if err == nil {
+		if rv, ok := repo.(revisioner); ok {
+			t.Revision = rv.Revision
+			return t
+		}
+		err = fmt.Errorf("storage %q cannot be watched", p.Storage)
+	}
+	t.Revision = func(context.Context) (int64, error) { return 0, err }
+	return t
 }

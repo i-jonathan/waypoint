@@ -3,12 +3,14 @@
   import { api } from '../lib/api';
   import { trapFocus } from '../lib/trap';
   import type { NewProject } from '../lib/types';
+  import { DEFAULT_PORTS, SERVER_ENGINES, engineLabel, isServerEngine, type ServerEngine } from '../lib/server';
+  import ServerFields, { type ServerSettings } from './ServerFields.svelte';
 
   type Tab = 'create' | 'open';
-  type Field = 'name' | 'location' | 'prefix' | 'path';
+  type Field = 'name' | 'location' | 'prefix' | 'path' | 'server';
 
   interface Props {
-    client?: Pick<typeof api, 'createProject'>;
+    client?: Pick<typeof api, 'createProject' | 'testDatabase'>;
     initialTab?: Tab;
     onClose: () => void;
     /** Called with the name the registry gave the project, once it exists. */
@@ -31,7 +33,9 @@
   let name = $state('');
   let location = $state('');
   let prefix = $state('T');
-  let storage = $state<'sqlite' | 'markdown'>('sqlite');
+  let storage = $state<'sqlite' | 'markdown' | ServerEngine>('sqlite');
+  let server = $state<ServerSettings>({ engine: 'postgres', host: '', port: '', user: '', database: '', ssl: '', createDatabase: false });
+  let serverReady = $state(false);
   let path = $state('');
   let openName = $state('');
   let openNameEdited = $state(false);
@@ -51,9 +55,11 @@
     clear('path');
   }
 
-  function switchStorage(next: 'sqlite' | 'markdown') {
+  function switchStorage(next: 'sqlite' | 'markdown' | ServerEngine) {
     storage = next;
+    if (isServerEngine(next)) server.engine = next;
     clear('location');
+    clear('server');
   }
 
   function clear(f: Field) {
@@ -91,7 +97,7 @@
     const out: Partial<Record<Field, string>> = {};
     if (tab === 'create') {
       if (name.trim() === '') out.name = 'Give the project a name';
-      if (location.trim() !== '' && !KINDS[storage].re.test(location.trim())) out.location = KINDS[storage].message;
+      if (!isServerEngine(storage) && location.trim() !== '' && !KINDS[storage].re.test(location.trim())) out.location = KINDS[storage].message;
       if (!PREFIX.test(prefix)) out.prefix = PREFIX_MESSAGE;
     } else {
       if (path.trim() === '') out.path = 'Enter the path to a board file';
@@ -105,7 +111,20 @@
   function fieldFor(message: string): Field {
     if (/\bprefix\b/i.test(message)) return 'prefix';
     if (/project name|project "[^"]*" already exists/i.test(message)) return 'name';
+    if (tab === 'create' && isServerEngine(storage)) return 'server';
     return tab === 'create' ? 'location' : 'path';
+  }
+
+  /** The request for a project on a database server. There is no password in it. */
+  function serverBody(): NewProject {
+    const body: NewProject = { name: name.trim(), prefix, storage: server.engine };
+    body.host = server.host.trim() === '' ? 'localhost' : server.host.trim();
+    body.port = server.port.trim() === '' ? DEFAULT_PORTS[server.engine] : Number(server.port);
+    body.user = server.user.trim();
+    if (server.database.trim() !== '') body.database = server.database.trim();
+    if (server.ssl !== '') body.ssl = server.ssl;
+    if (server.createDatabase) body.create_database = true;
+    return body;
   }
 
   async function submit(e?: Event) {
@@ -118,9 +137,11 @@
       return;
     }
     const body: NewProject =
-      tab === 'create'
-        ? { name: name.trim(), ...(location.trim() !== '' ? { path: location.trim() } : {}), prefix, storage }
-        : { name: openName.trim(), path: path.trim(), existing: true };
+      tab === 'create' && isServerEngine(storage)
+        ? serverBody()
+        : tab === 'create'
+          ? { name: name.trim(), ...(location.trim() !== '' ? { path: location.trim() } : {}), prefix, storage }
+          : { name: openName.trim(), path: path.trim(), existing: true };
     working = true;
     try {
       const made = await client.createProject(body);
@@ -201,13 +222,25 @@
           <input type="radio" name="{id}-storage" value="markdown" checked={storage === 'markdown'} onchange={() => switchStorage('markdown')} />
           <span>Markdown file</span>
         </label>
+        {#each SERVER_ENGINES as eng (eng.value)}
+          <label class="sf-check">
+            <input type="radio" name="{id}-storage" value={eng.value} checked={storage === eng.value} onchange={() => switchStorage(eng.value)} />
+            <span>Database server ({eng.label})</span>
+          </label>
+        {/each}
         <p class="sf-hint">
           {storage === 'sqlite'
             ? 'One file that stays fast with many cards. Use Waypoint or its CLI to edit it.'
-            : 'A file you can read and edit by hand, and keep in git.'}
+            : storage === 'markdown'
+              ? 'A file you can read and edit by hand, and keep in git.'
+              : `A ${engineLabel(storage)} database, on this computer (a Docker container, say) or elsewhere. For one person's data.`}
         </p>
       </fieldset>
 
+      {#if isServerEngine(storage)}
+        <ServerFields project={name.trim()} bind:value={server} bind:ready={serverReady} {client} />
+        {#if errors.server}<p class="sf-error" id="{id}-server-err" role="alert">{errors.server}</p>{/if}
+      {:else}
       <div class="sf-field">
         <label class="sf-label" for="{id}-location">Location</label>
         <input
@@ -225,6 +258,7 @@
         <p class="sf-hint" id="{id}-location-hint">Leave empty to keep it in Waypoint's folder</p>
         {#if errors.location}<p class="sf-error" id="{id}-location-err">{errors.location}</p>{/if}
       </div>
+      {/if}
 
       <div class="sf-field short">
         <label class="sf-label" for="{id}-prefix">Prefix</label>
@@ -286,7 +320,7 @@
 
     <div class="actions">
       <button type="button" class="btn" onclick={onClose}>Cancel</button>
-      <button type="submit" class="btn primary" disabled={working}>{tab === 'create' ? 'Create project' : 'Open file'}</button>
+      <button type="submit" class="btn primary" disabled={working || (tab === 'create' && isServerEngine(storage) && !serverReady)}>{tab === 'create' ? 'Create project' : 'Open file'}</button>
     </div>
   </form>
   </div>
