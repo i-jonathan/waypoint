@@ -1,17 +1,16 @@
 # docker compose up -d     then open http://localhost:4747
 #
-# Your boards and config are mounted at the SAME paths as on your computer,
-# because the registry stores absolute paths. HOME is passed through so the
-# container finds them where `waypoint` on the host does.
+# Server only: boards live in the named volume and are managed in the web UI.
+# To share boards with the waypoint command line, use docker-compose.cli.yml.
 services:
   waypoint:
+    image: farinloyejonathan/waypoint
     build: .
-    image: waypoint
     restart: unless-stopped
-    environment:
-      HOME: ${HOME}
     ports:
       - "127.0.0.1:4747:4747" # only this computer can reach it
     volumes:
-      - ${HOME}/.config/waypoint:${HOME}/.config/waypoint
-      - ${HOME}/.local/share/waypoint:${HOME}/.local/share/waypoint
+      - waypoint-data:/home/waypoint
+
+volumes:
+  waypoint-data:

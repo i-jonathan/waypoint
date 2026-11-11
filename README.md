@@ -192,19 +192,22 @@ Run `waypoint agents` and paste the output into your project's `AGENTS.md` or `C
 
 ## Running in Docker
 
-To keep the web UI running in the background instead of in a terminal, build and start the image with Compose:
+To keep the web UI running in the background instead of in a terminal, run the image from Docker Hub. You do not need the `waypoint` command line for this.
 
 ```sh
-docker compose up -d
+docker run -d --name waypoint --restart unless-stopped \
+  -p 127.0.0.1:4747:4747 -v waypoint-data:/home/waypoint \
+  farinloyejonathan/waypoint
 ```
 
-Then open http://localhost:4747. `docker compose down` stops it, and it restarts by itself after a reboot.
+Then open http://localhost:4747. Your boards live in the `waypoint-data` volume and are managed in the web UI. (`docker-compose.yml` in the repo is the same thing for `docker compose up -d`.) The command line inside the container works too: `docker exec waypoint waypoint ls --project NAME`.
 
-- Your config and boards are mounted at the same paths as on your computer (`~/.config/waypoint` and `~/.local/share/waypoint`), because the registry stores absolute paths. Boards kept elsewhere need their own `volumes` line at the same path.
+**With the command line installed too.** To have the container and your `waypoint` command share the same boards, use `docker compose -f docker-compose.cli.yml up -d` from a clone of the repo. It mounts `~/.config/waypoint` and `~/.local/share/waypoint` at the same paths as on your computer, because the registry stores absolute paths. Boards kept elsewhere need their own `volumes` line at the same path. On Linux the image runs as uid 1000; add `user: "${UID}"` if yours differs. If both write the same SQLite board at once, Docker Desktop's file sharing can be slow to show changes, so the page may lag a few seconds.
+
 - The port is published on `127.0.0.1` only, so only this computer can reach it. The host port must equal the container port (4747): Waypoint checks the Host header against it, and a different host port gets a 421. To change it, set `port` in the config.
 - The image listens on all addresses inside the container (`WAYPOINT_BIND=0.0.0.0`). Outside Docker `waypoint serve` always listens on 127.0.0.1 unless you set that variable yourself.
-- If the `waypoint` command on your computer and the container write the same SQLite board at once, Docker Desktop's file sharing can be slow to show changes; the web page may lag a few seconds.
 - `waypoint mcp` is not served by the container yet. Agents still start it as a command.
+- Maintainers: pushing a tag like `v0.1.0` publishes `0.1.0`, `0.1` and `latest` for amd64 and arm64 (`.github/workflows/docker.yml`; it needs the secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`).
 
 ## MCP server
 

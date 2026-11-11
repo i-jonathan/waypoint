@@ -1,0 +1,19 @@
+# For people who also use the waypoint command line: the container reads the
+# same config and boards as the CLI. Run with
+#   docker compose -f docker-compose.cli.yml up -d
+#
+# They are mounted at the SAME paths as on your computer, because the registry
+# stores absolute paths. HOME is passed through so the container finds them.
+# On Linux the image runs as uid 1000; add `user: "${UID}"` if yours differs.
+services:
+  waypoint:
+    image: farinloyejonathan/waypoint
+    build: .
+    restart: unless-stopped
+    environment:
+      HOME: ${HOME}
+    ports:
+      - "127.0.0.1:4747:4747" # only this computer can reach it
+    volumes:
+      - ${HOME}/.config/waypoint:${HOME}/.config/waypoint
+      - ${HOME}/.local/share/waypoint:${HOME}/.local/share/waypoint
