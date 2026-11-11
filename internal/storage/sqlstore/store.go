@@ -25,6 +25,10 @@ type Dialect interface {
 	// why not, without naming where s came from. Save calls it on every
 	// string it binds.
 	ValidText(s string) error
+	// ValidName says whether the engine can store s in a column that holds a
+	// name or key (a card id, a column, group or field name), which some
+	// engines bound in length. It is checked in addition to ValidText.
+	ValidName(s string) error
 }
 
 // Store reads and writes boards through a Dialect.
