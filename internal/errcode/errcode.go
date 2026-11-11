@@ -26,7 +26,7 @@ func Code(err error) string {
 		return "parse"
 	case errors.As(err, &le):
 		return "config"
-	case errors.Is(err, app.ErrChangedDuringWrite):
+	case errors.Is(err, app.ErrChangedDuringWrite), errors.Is(err, app.ErrBusy):
 		return "busy"
 	case errors.Is(err, domain.ErrNotFound):
 		return "not_found"

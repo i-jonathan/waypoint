@@ -33,3 +33,7 @@ type Repository interface {
 
 // Clock returns the current time. Use cases take one so tests can fix it.
 type Clock func() time.Time
+
+// ErrBusy is what Lock returns when it gave up waiting: another program holds
+// the board and did not let go in time.
+var ErrBusy = errors.New("the project database is busy")

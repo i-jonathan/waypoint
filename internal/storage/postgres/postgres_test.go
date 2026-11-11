@@ -27,6 +27,12 @@ import (
 
 var ctx = context.Background()
 
+func contextWithTimeout(d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, d)
+}
+
+func contextWithCancel() (context.Context, context.CancelFunc) { return context.WithCancel(ctx) }
+
 func settings() domain.Settings { return domain.NewBoard("Contract", "T").Settings }
 
 func newRepo(t *testing.T) (*postgres.Repo, config.ProjectRef) {
@@ -86,7 +92,7 @@ func TestContract(t *testing.T) {
 	storagetest.RunContract(t, func(t *testing.T) app.Repository {
 		r, _ := newRepo(t)
 		return r
-	}, storagetest.SkipLock())
+	})
 }
 
 func TestPathHasNoUserOrPassword(t *testing.T) {
