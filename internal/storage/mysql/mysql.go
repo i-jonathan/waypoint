@@ -13,7 +13,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -121,10 +123,7 @@ func connConfig(ref config.ProjectRef, database string) *gomysql.Config {
 	if strings.HasPrefix(ref.Host, "/") {
 		cfg.Net, cfg.Addr = "unix", ref.Host
 	} else {
-		cfg.Net, cfg.Addr = "tcp", fmt.Sprintf("%s:%d", strings.TrimSuffix(strings.TrimPrefix(ref.Host, "["), "]"), portOf(ref))
-		if strings.Contains(ref.Host, ":") && !strings.HasPrefix(ref.Host, "[") {
-			cfg.Addr = fmt.Sprintf("[%s]:%d", ref.Host, portOf(ref))
-		}
+		cfg.Net, cfg.Addr = "tcp", net.JoinHostPort(dbconn.BareHost(ref.Host), strconv.Itoa(portOf(ref)))
 	}
 	cfg.DBName = database
 	cfg.Collation = "utf8mb4_bin"

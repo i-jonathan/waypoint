@@ -59,3 +59,8 @@ Read this first when resuming. Spec: `docs/superpowers/specs/2026-11-03-waypoint
 - A CSV export writes cells that start with `=`, `+`, `-` or `@` as they are, so a spreadsheet may read one as a formula. Nothing is escaped, to keep the export lossless.
 - The web import dialog checks a file and then imports it; a change made to the project between the two can make the result differ from the preview.
 - Conversion to a different disk is covered by a test across folders only.
+- Plan 4: one board per database; a server is for one person's data. A conversion uses one password variable for source and target, so two servers with different passwords need export and import. Postgres refuses a NUL character; MySQL keeps names of at most 255 characters.
+- Plan 4: on MySQL `--ssl require` does not protect the password from an active attacker posing as the server; only `verify-full` does (Postgres never reveals it to such a server).
+- Plan 4: a database created for a conversion that then failed stays behind, empty. `/api/db/test` connects to any host a local client names (guarded by the Host, Origin and header checks only).
+- Plan 4: the SQLite file lock polls, so very many writers can starve a conversion that starts from a SQLite file (seen with 8 hot writers; 4 are fine).
+- Plan 4 deferred minors: a retired database shows as a board in the web connection test; `--create-database` by a MySQL user without the privilege gives a "may not use database" hint; raw driver text for an over-large value (`max_allowed_packet`); a 1-character password over-redacts error text; the watcher and connection test open a connection per call.

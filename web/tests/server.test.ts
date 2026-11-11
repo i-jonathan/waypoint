@@ -170,3 +170,39 @@ describe('creating a project on a database server', () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('Kitchen'));
   });
 });
+
+describe('a passing test only counts for what was tested', () => {
+  async function tested(extra: Partial<DbTestResult> = {}) {
+    open(vi.fn(async () => found(extra)));
+    await chooseServer();
+    await typeInto('User', 'waypoint');
+    await fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+    await waitFor(() => expect(createButton()).toBeEnabled());
+  }
+
+  it('is forgotten when the engine is switched', async () => {
+    await tested();
+    await fireEvent.click(screen.getByLabelText('Database server (MySQL)'));
+    expect(createButton()).toBeDisabled();
+    expect(screen.queryByText(/Connected/)).toBeNull();
+  });
+
+  it('is forgotten when the project is renamed, and the variable name follows', async () => {
+    await tested();
+    expect(screen.getByText('WAYPOINT_DB_PASSWORD_KITCHEN')).toBeInTheDocument();
+    await typeInto('Name', 'Pantry');
+    expect(createButton()).toBeDisabled();
+    expect(screen.getByText('WAYPOINT_DB_PASSWORD_PANTRY')).toBeInTheDocument();
+    expect(screen.queryByText('WAYPOINT_DB_PASSWORD_KITCHEN')).toBeNull();
+  });
+
+  it('un-ticks "I understand" when the host changes', async () => {
+    open(vi.fn(async () => found({ non_local: true })));
+    await chooseServer();
+    await typeInto('Host', 'db.one.example');
+    await typeInto('User', 'waypoint');
+    await fireEvent.click(screen.getByLabelText('I understand'));
+    await typeInto('Host', 'db.two.example');
+    expect(screen.getByLabelText('I understand')).not.toBeChecked();
+  });
+});

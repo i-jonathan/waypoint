@@ -95,6 +95,19 @@
     return { ok: true, text: 'Connected. The database is empty.' };
   });
 
+  // A test, and a tick on the warning, say nothing about a different engine,
+  // project or host: forget them when any of those changes.
+  let watched = '';
+  $effect(() => {
+    const key = `${value.engine}|${project}|${host}`;
+    if (watched !== '' && key !== watched) {
+      result = null;
+      failure = '';
+      understood = false;
+    }
+    watched = key;
+  });
+
   $effect(() => {
     ready = verdict?.ok === true && (!nonLocal || understood);
   });

@@ -523,6 +523,7 @@
                 <p>The old files are kept as:</p>
                 <ul>{#each converted.backups as file (file)}<li class="mono">{file}</li>{/each}</ul>
               {/if}
+              {#if converted.warning}<p class="sf-error" role="alert">{converted.warning}</p>{/if}
             </div>
           </div>
         {:else if convertFailure}

@@ -139,3 +139,8 @@ type ProbeResult struct {
 	Empty          bool // the schema holds no tables, views or sequences
 	HasBoard       bool // it holds a Waypoint board (not checked for validity or retirement)
 }
+
+// BareHost is host without the [ ] that surround an IPv6 address.
+func BareHost(host string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+}

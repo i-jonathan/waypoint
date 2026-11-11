@@ -174,3 +174,13 @@ func TestProjectConvertToPostgresAndBack(t *testing.T) {
 		assertContains(t, list, "Card one")
 	})
 }
+
+func TestServerStorageRefusesPath(t *testing.T) {
+	eachEngine(t, func(t *testing.T, e engine) {
+		dir := t.TempDir()
+		_, stderr, code := runCLI(t, dir, "project", "add", "x", "--storage", e.name, "--user", "u", "--path", dir+"/x.db")
+		assertEq(t, code, 1)
+		assertContains(t, stderr, "--path")
+		mustNotExist(t, sandboxFor(t).config)
+	})
+}

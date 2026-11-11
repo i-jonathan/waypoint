@@ -539,3 +539,11 @@ func backUp(ref config.ProjectRef) (moved []string, err error) {
 	}
 	return moved, nil
 }
+
+// SetRetireSourceForTest replaces the step that marks the old board retired, so
+// a test in another package can make that step fail. It returns the restore func.
+func SetRetireSourceForTest(f func(ctx context.Context) error) func() {
+	old := retireSource
+	retireSource = func(ctx context.Context, _ retirer) error { return f(ctx) }
+	return func() { retireSource = old }
+}

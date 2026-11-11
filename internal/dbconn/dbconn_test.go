@@ -106,3 +106,11 @@ func TestWarningText(t *testing.T) {
 		t.Errorf("warning should say it is for one person: %q", NonLocalWarning)
 	}
 }
+
+func TestBareHost(t *testing.T) {
+	for in, want := range map[string]string{"[::1]": "::1", "::1": "::1", "localhost": "localhost", "[fe80::1]": "fe80::1"} {
+		if got := BareHost(in); got != want {
+			t.Errorf("BareHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

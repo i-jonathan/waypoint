@@ -172,6 +172,9 @@ func (r *runner) addProject(name, pathFlag, prefix, storageFlag, initFile string
 	if err != nil {
 		return r.fail(err)
 	}
+	if server != nil && pathFlag != "" {
+		return r.fail(fmt.Errorf("%w: a %s project has no file, so --path does not apply", domain.ErrInvalid, storageFlag))
+	}
 	ref, err := projects.Add(r.ctx, cfgPath, r.env.Getenv, projects.AddOptions{
 		Name: name, Path: pathFlag, Prefix: prefix, Cwd: r.env.Cwd,
 		Storage: storageFlag, FromInit: initFile != "", InitFile: initFile,

@@ -198,8 +198,14 @@ func (a *api) convertProject(w http.ResponseWriter, r *http.Request) error {
 		return invalidRequest("path must end in .md, .markdown, .db, .sqlite or .sqlite3")
 	}
 	res, err := projects.Convert(r.Context(), a.d.ConfigPath, a.d.Getenv, r.PathValue("p"), target)
+	warning := ""
 	if err != nil {
-		return err
+		if res.Ref.Name == "" {
+			return err
+		}
+		// The project did move; only the tidying of the old board failed. Say so
+		// with the message, which tells what to do, and tell open tabs.
+		warning = err.Error()
 	}
 	cfg, err := a.loadConfig()
 	if err != nil {
@@ -214,7 +220,8 @@ func (a *api) convertProject(w http.ResponseWriter, r *http.Request) error {
 		projectJSON
 		Backups []string `json:"backups"`
 		Retired string   `json:"retired,omitempty"`
-	}{projectOut(r.Context(), cfg, res.Ref), backups, res.Retired})
+		Warning string   `json:"warning,omitempty"`
+	}{projectOut(r.Context(), cfg, res.Ref), backups, res.Retired, warning})
 	return nil
 }
 

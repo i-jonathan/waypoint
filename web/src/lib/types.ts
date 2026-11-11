@@ -183,6 +183,8 @@ export interface ConvertedProject extends ProjectInfo {
   backups: string[];
   /** The old database on a server, left in place and marked retired. */
   retired?: string;
+  /** The project moved, but something was left to do by hand; this says what. */
+  warning?: string;
 }
 
 /** The part of a request that names a database server. There is no password field. */

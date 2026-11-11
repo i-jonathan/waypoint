@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 
 	"waypoint/internal/config"
 	"waypoint/internal/dbconn"
+	"waypoint/internal/projects"
 )
 
 func serverBody(ref config.ProjectRef, extra map[string]any) map[string]any {
@@ -189,4 +192,29 @@ func TestUnreachableServerProjectListsWithError(t *testing.T) {
 	assertEq(t, byName["Down"].Path, "")
 	f.do("GET", "/api/projects/Down/board", nil).wantCode(503, "unreachable")
 	f.do("GET", "/api/projects/Good/board", nil).want(http.StatusOK)
+}
+
+// The project is converted even when the old database could not be marked
+// retired: the answer must say so, carry the statement to run, and tell open tabs.
+func TestConvertThatCouldNotRetireTheOldDatabaseIsStillAnAnswer(t *testing.T) {
+	eachEngine(t, func(t *testing.T, e engine) {
+		ref := e.fresh(t)
+		f := newFixture(t)
+		f.addBoard(ref.Name, nil)
+		f.do("POST", "/api/projects/"+ref.Name+"/convert", serverBody(ref, map[string]any{"to": e.name})).want(200)
+
+		restore := projects.SetRetireSourceForTest(func(context.Context) error { return errors.New("connection reset") })
+		defer restore()
+		events, cancel := f.broker.Subscribe()
+		defer cancel()
+		out := f.do("POST", "/api/projects/"+ref.Name+"/convert", map[string]any{"to": "sqlite", "path": filepath.Join(f.dir, "y.db")}).want(200).obj()
+		assertEq[any](t, out["storage"], "sqlite")
+		assertContains(t, out["warning"].(string), "UPDATE waypoint_meta")
+		select {
+		case ev := <-events:
+			assertEq(t, ev.Type, "projects")
+		case <-time.After(2 * time.Second):
+			t.Fatal("open tabs were not told the project changed")
+		}
+	})
 }

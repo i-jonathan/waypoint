@@ -102,7 +102,7 @@ func connConfig(ref config.ProjectRef, database string) (*pgx.ConnConfig, error)
 		port = dbconn.DefaultPort("postgres")
 	}
 	dsn := strings.Join([]string{
-		"host=" + quoteDSN(ref.Host),
+		"host=" + quoteDSN(dbconn.BareHost(ref.Host)),
 		"port=" + strconv.Itoa(port),
 		"user=" + quoteDSN(ref.User),
 		"dbname=" + quoteDSN(database),
