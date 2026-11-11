@@ -110,7 +110,7 @@ func TestWatchAtomicRename(t *testing.T) {
 	dir := t.TempDir()
 	board := filepath.Join(dir, "board.md")
 	write(t, board, "one")
-	rec, _ := start(t, Target{"Demo", board})
+	rec, _ := start(t, Target{Project: "Demo", Path: board})
 
 	replace(t, board, "two")
 
@@ -125,7 +125,7 @@ func TestWatchDebounce(t *testing.T) {
 	dir := t.TempDir()
 	board := filepath.Join(dir, "board.md")
 	write(t, board, "0")
-	rec, _ := start(t, Target{"Demo", board})
+	rec, _ := start(t, Target{Project: "Demo", Path: board})
 
 	for i := 1; i <= 5; i++ {
 		write(t, board, string(rune('0'+i)))
@@ -140,7 +140,7 @@ func TestWatchIgnoresOtherFiles(t *testing.T) {
 	dir := t.TempDir()
 	board := filepath.Join(dir, "board.md")
 	write(t, board, "one")
-	rec, _ := start(t, Target{"Demo", board})
+	rec, _ := start(t, Target{Project: "Demo", Path: board})
 
 	write(t, filepath.Join(dir, "notes.md"), "x")
 	write(t, filepath.Join(dir, ".waypoint-999"), "x")
@@ -159,7 +159,7 @@ func TestWatchArchiveAndWalMapToTheirProject(t *testing.T) {
 	b := filepath.Join(dir, "b.md")
 	write(t, a, "a")
 	write(t, b, "b")
-	rec, _ := start(t, Target{"A", a}, Target{"B", b})
+	rec, _ := start(t, Target{Project: "A", Path: a}, Target{Project: "B", Path: b})
 
 	write(t, filepath.Join(dir, "a.archive.md"), "x")
 	waitCount(t, rec, 1, 2*time.Second)
@@ -185,7 +185,7 @@ func TestWatchFollowsSymlinkedBoard(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	rec, _ := start(t, Target{"Demo", link})
+	rec, _ := start(t, Target{Project: "Demo", Path: link})
 
 	replace(t, real, "two") // Waypoint writes next to the real file
 
@@ -196,7 +196,7 @@ func TestWatchFollowsSymlinkedBoard(t *testing.T) {
 func TestWatchNoticesBoardCreatedAfterStart(t *testing.T) {
 	dir := t.TempDir()
 	board := filepath.Join(dir, "board.md") // does not exist yet
-	rec, _ := start(t, Target{"Demo", board})
+	rec, _ := start(t, Target{Project: "Demo", Path: board})
 
 	write(t, board, "hello")
 
@@ -211,7 +211,7 @@ func TestWatchSurvivesDirectoryRemoval(t *testing.T) {
 	}
 	board := filepath.Join(dir, "board.md")
 	write(t, board, "one")
-	rec, stop := start(t, Target{"Demo", board})
+	rec, stop := start(t, Target{Project: "Demo", Path: board})
 
 	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)
@@ -245,7 +245,7 @@ func TestWatchReloadsTargets(t *testing.T) {
 	write(t, second, "2")
 
 	var mu sync.Mutex
-	targets := []Target{{"First", first}}
+	targets := []Target{{Project: "First", Path: first}}
 	rec := &recorder{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -261,7 +261,7 @@ func TestWatchReloadsTargets(t *testing.T) {
 	<-synced
 
 	mu.Lock()
-	targets = append(targets, Target{"Second", second})
+	targets = append(targets, Target{Project: "Second", Path: second})
 	mu.Unlock()
 
 	// The new directory is noticed on the next refresh, and published once
@@ -284,7 +284,7 @@ func TestRunReturnsWhenContextEnds(t *testing.T) {
 	dir := t.TempDir()
 	board := filepath.Join(dir, "board.md")
 	write(t, board, "one")
-	_, stop := start(t, Target{"Demo", board})
+	_, stop := start(t, Target{Project: "Demo", Path: board})
 	if err := stop(); err != nil {
 		t.Fatalf("Run returned %v after cancel, want nil", err)
 	}
@@ -303,7 +303,7 @@ func TestWatchErrorRepublishesEveryProject(t *testing.T) {
 	errs := make(chan error, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, func() []Target { return []Target{{"A", a}, {"B", b}} }, rec.publish, Options{}, hooks{synced: synced, errs: errs})
+		done <- run(ctx, func() []Target { return []Target{{Project: "A", Path: a}, {Project: "B", Path: b}} }, rec.publish, Options{}, hooks{synced: synced, errs: errs})
 	}()
 	<-synced
 

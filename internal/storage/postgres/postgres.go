@@ -287,14 +287,17 @@ func (r *Repo) Save(ctx context.Context, b *domain.Board) error {
 }
 
 // Revision returns the project's save counter: a number that changes with every
-// save, for watching a board without loading it.
+// save, for watching a board without loading it. It is one short query and does
+// not check the schema.
 func (r *Repo) Revision(ctx context.Context) (int64, error) {
+	db, err := open(ctx, r.ref, r.ref.Database)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
 	var rev int64
-	err := r.run(ctx, false, func(q execer) (err error) {
-		rev, err = store.Revision(ctx, q)
-		return err
-	})
-	return rev, err
+	err = db.QueryRowContext(ctx, `SELECT revision FROM project WHERE id = 1`).Scan(&rev)
+	return rev, r.plain(err)
 }
 
 // Discard drops the tables a Waypoint board owns, and nothing else.
