@@ -62,6 +62,7 @@
       result = await client.testDatabase({
         engine: value.engine,
         project,
+        ...(mode === 'convert' ? { convert: true } : {}),
         host,
         port,
         user: value.user.trim(),

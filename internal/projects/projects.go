@@ -133,12 +133,24 @@ func defaultDatabase(name string) string { return slug(name) }
 
 // ServerRef is the registry entry for a project on a server, with the defaults
 // of ServerOptions filled in and checked as Add would check them.
-func ServerRef(name string, so ServerOptions) (config.ProjectRef, error) {
+//
+// It is checked beside the projects already in cfg, so a name, a password
+// variable or a database that Add would refuse is refused here too. With
+// converting, the project of that name is left out of the check: it is the one
+// being moved.
+func ServerRef(cfg *config.Config, name string, so ServerOptions, converting bool) (config.ProjectRef, error) {
 	ref, err := serverRef(name, so)
 	if err != nil {
 		return ref, err
 	}
-	if err := (&config.Config{}).Add(ref); err != nil {
+	others := &config.Config{}
+	for _, q := range cfg.Projects {
+		if converting && strings.EqualFold(q.Name, name) {
+			continue
+		}
+		others.Projects = append(others.Projects, q)
+	}
+	if err := others.Add(ref); err != nil {
 		return ref, err
 	}
 	return ref, nil

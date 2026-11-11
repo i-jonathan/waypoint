@@ -233,6 +233,9 @@ func (a *api) testDatabase(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
 		Engine  string `json:"engine"`
 		Project string `json:"project"`
+		// Convert says the settings are for moving the named project, which
+		// exists already, and not for a new one.
+		Convert bool `json:"convert"`
 		serverIn
 	}
 	if err := decodeBody(w, r, &in, false); err != nil {
@@ -244,7 +247,11 @@ func (a *api) testDatabase(w http.ResponseWriter, r *http.Request) error {
 	if strings.TrimSpace(in.Project) == "" {
 		return invalidRequest("project is required: the password variable is named after it")
 	}
-	ref, err := projects.ServerRef(strings.TrimSpace(in.Project), *in.serverIn.options(in.Engine))
+	cfg, err := a.loadConfig()
+	if err != nil {
+		return err
+	}
+	ref, err := projects.ServerRef(cfg, strings.TrimSpace(in.Project), *in.serverIn.options(in.Engine), in.Convert)
 	if err != nil {
 		return err
 	}

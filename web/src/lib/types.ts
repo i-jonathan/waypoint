@@ -201,6 +201,8 @@ export interface DbTestRequest extends ServerFieldsBody {
   engine: 'postgres';
   /** The project the settings are for: the password variable is named after it. */
   project: string;
+  /** The settings are for moving this project, which exists, not for a new one. */
+  convert?: boolean;
 }
 
 /** What a look at a database server found. A server that does not answer is a result, not an error. */

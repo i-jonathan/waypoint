@@ -171,3 +171,15 @@ describe('a passing test only counts for what was tested', () => {
     expect(screen.getByLabelText('I understand')).not.toBeChecked();
   });
 });
+
+describe('testing a new project', () => {
+  it('does not claim to be a conversion, so a name already in use is refused', async () => {
+    const { testDatabase } = open();
+    await typeInto('Name', 'Kitchen');
+    await fireEvent.click(screen.getByLabelText('Database server (Postgres)'));
+    await typeInto('User', 'waypoint');
+    await fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+    await waitFor(() => expect(testDatabase).toHaveBeenCalled());
+    expect((testDatabase.mock.calls as unknown[][])[0]![0]).not.toHaveProperty('convert');
+  });
+});

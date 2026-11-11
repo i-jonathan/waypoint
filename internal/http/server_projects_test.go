@@ -13,7 +13,9 @@ import (
 
 	"waypoint/internal/config"
 	"waypoint/internal/dbconn"
+	"waypoint/internal/domain"
 	"waypoint/internal/projects"
+	"waypoint/internal/storage"
 )
 
 func serverBody(ref config.ProjectRef, extra map[string]any) map[string]any {
@@ -51,7 +53,9 @@ func TestDBTestReportsTheServer(t *testing.T) {
 		assertEq[any](t, out["password_var"], dbconn.PasswordVar(ref.Name))
 		assertEq[any](t, out["global_password_var"], dbconn.GlobalPasswordVar)
 
-		f.do("POST", "/api/projects", serverBody(ref, map[string]any{"name": ref.Name, "storage": e.name})).want(201)
+		if _, err := storage.CreateWith(context.Background(), ref, domain.NewBoard("X", "T").Settings, storage.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
 		out = f.do("POST", "/api/db/test", body).want(200).obj()
 		assertEq[any](t, out["has_board"], true)
 		assertEq[any](t, out["empty"], false)
@@ -216,5 +220,39 @@ func TestConvertThatCouldNotRetireTheOldDatabaseIsStillAnAnswer(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("open tabs were not told the project changed")
 		}
+	})
+}
+
+// The connection test must say what Create would say, so the dialog does not
+// pass a test and then fail on a name or database that is already used.
+func TestDBTestChecksTheRegistry(t *testing.T) {
+	eachEngine(t, func(t *testing.T, e engine) {
+		ref := e.fresh(t)
+		f := newFixture(t)
+		f.register(config.ProjectRef{Name: "a-b", Storage: e.name, Host: ref.Host, Port: ref.Port, Database: ref.Database, User: ref.User, SSL: "prefer"})
+		f.addBoard("Local", nil)
+		test := func(project, database string, convert bool) reply {
+			body := serverBody(ref, map[string]any{"engine": e.name, "project": project, "database": database})
+			if convert {
+				body["convert"] = true
+			}
+			return f.do("POST", "/api/db/test", body)
+		}
+		// The name is taken.
+		r := test("a-b", ref.Database+"_x", false)
+		r.wantCode(422, "invalid")
+		assertContains(t, string(r.body), "already exists")
+		// The password variable would be shared.
+		r = test("a_b", ref.Database+"_x", false)
+		r.wantCode(422, "invalid")
+		assertContains(t, string(r.body), dbconn.PasswordVar("a_b"))
+		// The database is already a project's.
+		r = test("fresh", ref.Database, false)
+		r.wantCode(422, "invalid")
+		assertContains(t, string(r.body), "a-b")
+		// A conversion target is for a project that exists: its own name is fine.
+		test("Local", ref.Database+"_y", true).want(200)
+		// Anything else is still fine.
+		test("fresh", ref.Database+"_z", false).want(200)
 	})
 }

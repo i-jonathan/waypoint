@@ -555,6 +555,7 @@ describe('converting the storage', () => {
     await fireEvent.input(within(dialog).getByLabelText('User'), { target: { value: 'waypoint' } });
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Test connection' }));
     await waitFor(() => expect(go).toBeEnabled());
+    expect(globalClient.testDatabase).toHaveBeenCalledWith(expect.objectContaining({ project: 'Home', convert: true }));
     await fireEvent.click(go);
     await waitFor(() =>
       expect(globalClient.convertProject).toHaveBeenCalledWith('Home', { to: 'postgres', host: 'localhost', port: 5432, user: 'waypoint' }),
