@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"waypoint/internal/config"
+	"waypoint/internal/dbconn"
 	"waypoint/internal/domain"
 	"waypoint/internal/storage"
 	"waypoint/internal/storage/markdown"
@@ -26,6 +27,8 @@ var (
 	afterCopy = func() error { return nil }
 	// afterRegistry runs once the registry points at the copy, before the old files move.
 	afterRegistry = func() error { return nil }
+	// retireSource marks the old storage as left behind.
+	retireSource = func(ctx context.Context, r retirer) error { return r.Retire(ctx) }
 )
 
 // boardReader is what the check of the converted copy needs.
@@ -34,7 +37,7 @@ type boardReader interface {
 }
 
 // retirer is implemented by a repository that can mark its storage as left
-// behind (SQLite).
+// behind (SQLite and the database servers).
 type retirer interface {
 	Retire(ctx context.Context) error
 }
@@ -43,30 +46,58 @@ type retirer interface {
 type ConvertResult struct {
 	Ref     config.ProjectRef // the project as now registered
 	Backups []string          // where the old files are now
+	Retired string            // the old database on a server, marked retired and left in place
 }
 
-// Convert moves project name to the other storage. to is "sqlite" or "markdown"
-// and newPath an absolute path that must not exist yet; empty keeps the old
-// board's folder and name with the new extension.
+// Target says where a project goes: a storage, and for a file storage a path
+// ("" keeps the old name and folder with the new extension), for a server the
+// connection details.
+type Target struct {
+	Storage string // "sqlite", "markdown" or "postgres"
+	Path    string
+	Server  *ServerOptions
+	// Warn receives the notices for a server that is not on this computer, before
+	// anything connects.
+	Warn func(string)
+}
+
+// Convert moves project name to another storage. For a file target Path must
+// not exist yet; empty keeps the old board's folder and name with the new
+// extension (or the data folder, when the old board is on a server). A server
+// target must be an empty database.
 //
-// It takes the project's lock and keeps it until the old files are out of the
-// way, so no write can land in a file that is about to become a backup. Then:
+// It takes the project's lock and keeps it until the old board is out of the
+// way, so no write can land in a board that is about to be left. Then:
 //  1. load the whole project (settings, cards, archive);
-//  2. write it under a temporary name beside the target, load it again and
-//     require it to equal the original, and only then give it its real name;
+//  2. write it under a temporary name beside the target (a file) or into the
+//     empty database (a server), load it again and require it to equal the
+//     original, and only then give a file its real name;
 //  3. point the registry at it;
-//  4. mark a SQLite original as retired (so a writer that was waiting for it
-//     fails instead of saving into it) and rename the old files to
-//     <name>.bak-YYYYMMDD (-2, -3, ... if taken).
+//  4. mark a SQLite or server original as retired (so a writer that was waiting
+//     for it fails instead of saving into it); rename an old file to
+//     <name>.bak-YYYYMMDD (-2, -3, ... if taken). A server database is never
+//     renamed, emptied or dropped.
 //
-// The registry changes before the old files move, so a crash at any point
-// leaves it pointing at a board that exists. The old files are never deleted.
-// If a step before 3 fails, the copy is removed and nothing else has changed.
-// If step 4 fails, the project is already converted: Convert returns the
-// result with an error saying the old files stayed where they were.
-func Convert(ctx context.Context, cfgPath string, env func(string) string, name, to, newPath string) (ConvertResult, error) {
-	if to != "sqlite" && to != "markdown" {
-		return ConvertResult{}, fmt.Errorf("%w: storage %q must be sqlite or markdown", domain.ErrInvalid, to)
+// The registry changes before the old board is touched, so a crash at any
+// point leaves it pointing at a board that exists. If a step before 3 fails,
+// the copy is removed and nothing else has changed. If step 4 fails, the
+// project is already converted: Convert returns the result with an error
+// saying what is left behind.
+func Convert(ctx context.Context, cfgPath string, env func(string) string, name string, to Target) (ConvertResult, error) {
+	switch to.Storage {
+	case "sqlite", "markdown":
+		if to.Server != nil {
+			return ConvertResult{}, fmt.Errorf("%w: server settings need storage postgres", domain.ErrInvalid)
+		}
+	case "postgres":
+		if to.Server == nil {
+			return ConvertResult{}, fmt.Errorf("%w: storage postgres needs the server settings", domain.ErrInvalid)
+		}
+		if to.Path != "" {
+			return ConvertResult{}, fmt.Errorf("%w: a postgres project has no path", domain.ErrInvalid)
+		}
+	default:
+		return ConvertResult{}, fmt.Errorf("%w: storage %q must be sqlite, markdown or postgres", domain.ErrInvalid, to.Storage)
 	}
 	cfg0, err := config.Load(cfgPath, env)
 	if err != nil {
@@ -76,8 +107,22 @@ func Convert(ctx context.Context, cfgPath string, env func(string) string, name,
 	if !ok {
 		return ConvertResult{}, fmt.Errorf("%w: no project named %q", domain.ErrNotFound, name)
 	}
-	if ref.Storage == to {
-		return ConvertResult{}, fmt.Errorf("%w: project %q is already stored as %s", domain.ErrInvalid, ref.Name, to)
+	if ref.Storage == to.Storage && !ref.IsServer() {
+		return ConvertResult{}, fmt.Errorf("%w: project %q is already stored as %s", domain.ErrInvalid, ref.Name, to.Storage)
+	}
+	var dstServer config.ProjectRef
+	if to.Server != nil {
+		so := *to.Server
+		so.Engine = to.Storage
+		if dstServer, err = serverRef(ref.Name, so); err != nil {
+			return ConvertResult{}, err
+		}
+		if to.Warn != nil && !dbconn.IsLocal(dstServer.Host) {
+			to.Warn(dbconn.NonLocalWarning)
+			if dstServer.SSL == "disable" {
+				to.Warn(dbconn.UnencryptedNote)
+			}
+		}
 	}
 	src, err := storage.Open(ref)
 	if err != nil {
@@ -100,7 +145,7 @@ func Convert(ctx context.Context, cfgPath string, env func(string) string, name,
 	if err != nil {
 		return ConvertResult{}, err
 	}
-	if to == "markdown" {
+	if to.Storage == "markdown" {
 		// Markdown drops blank lines at both ends of a body, so a board made by an
 		// older Waypoint, or by a program, could never match its copy. Leave them
 		// out of the copy and the comparison: nothing but those blank lines changes.
@@ -116,25 +161,41 @@ func Convert(ctx context.Context, cfgPath string, env func(string) string, name,
 	var removeCopy func()
 	err = config.Update(cfgPath, env, func(cfg *config.Config) error {
 		cur, ok := cfg.Find(name)
-		if !ok || cur.Path != ref.Path || cur.Storage != ref.Storage {
+		if !ok || cur != ref {
 			return fmt.Errorf("%w: project %q changed while it was being converted; try again", domain.ErrInvalid, name)
 		}
-		target, err := convertTarget(cfg, cur, to, newPath)
+		var dstRef config.ProjectRef
+		if to.Server != nil {
+			// The new entry must be valid beside the other projects, as if it were added.
+			others := &config.Config{}
+			for _, q := range cfg.Projects {
+				if q.Name != cur.Name {
+					others.Projects = append(others.Projects, q)
+				}
+			}
+			if err := others.Add(dstServer); err != nil {
+				return err
+			}
+			dstRef = dstServer
+		} else {
+			target, err := convertTarget(cfg, cur, to.Storage, to.Path)
+			if err != nil {
+				return err
+			}
+			dstRef = config.ProjectRef{Name: cur.Name, Storage: to.Storage, Path: target}
+		}
+		discard, err := writeCopy(ctx, dstRef, board, storage.CreateOptions{CreateDatabase: to.Server != nil && to.Server.CreateDatabase})
 		if err != nil {
 			return err
 		}
-		dstRef := config.ProjectRef{Name: cur.Name, Storage: to, Path: target}
-		if err := writeCopy(ctx, dstRef, board); err != nil {
-			return err
-		}
-		removeCopy = func() { removeBoardFiles(dstRef) }
+		removeCopy = discard
 		if err := afterCopy(); err != nil {
 			return err
 		}
 		for i := range cfg.Projects {
 			if cfg.Projects[i].Name == cur.Name {
-				cfg.Projects[i].Path, cfg.Projects[i].Storage = target, to
-				res.Ref = cfg.Projects[i]
+				cfg.Projects[i] = dstRef
+				res.Ref = dstRef
 			}
 		}
 		return nil
@@ -151,20 +212,31 @@ func Convert(ctx context.Context, cfgPath string, env func(string) string, name,
 		return res, err
 	}
 	var problems []string
-	if r, ok := src.(retirer); ok { // SQLite: retire, let go, then move the files
-		if err := r.Retire(ctx); err != nil {
+	retireFailed := false
+	if r, ok := src.(retirer); ok { // SQLite or a server: retire, let go, then move the files
+		if err := retireSource(ctx, r); err != nil {
+			retireFailed = true
 			problems = append(problems, "could not mark the old database as retired: "+err.Error())
+		} else if ref.IsServer() {
+			res.Retired = ref.Display()
 		}
 		release()
 	}
-	moved, err := backUp(ref)
-	release() // markdown: the files moved while the lock was held
-	res.Backups = moved
-	if err != nil {
-		problems = append(problems, err.Error())
+	if !ref.IsServer() {
+		moved, err := backUp(ref)
+		release() // markdown: the files moved while the lock was held
+		res.Backups = moved
+		if err != nil {
+			problems = append(problems, err.Error())
+		}
 	}
+	release()
 	if len(problems) > 0 {
-		return res, fmt.Errorf("project %q now uses %s, but %s; the old files stayed where they were", ref.Name, res.Ref.Path, strings.Join(problems, " and "))
+		if ref.IsServer() && retireFailed {
+			return res, fmt.Errorf("project %q now uses %s, but the old database %s could not be marked retired (%s), so it is still a live board that nothing uses. To retire it, run: UPDATE waypoint_meta SET value = 'true' WHERE key = 'retired'",
+				ref.Name, res.Ref.Display(), ref.Display(), strings.TrimPrefix(problems[0], "could not mark the old database as retired: "))
+		}
+		return res, fmt.Errorf("project %q now uses %s, but %s; the old files stayed where they were", ref.Name, res.Ref.Display(), strings.Join(problems, " and "))
 	}
 	return res, nil
 }
@@ -177,8 +249,16 @@ func convertTarget(cfg *config.Config, ref config.ProjectRef, to, newPath string
 		if to == "markdown" {
 			ext = ".md"
 		}
-		base := filepath.Base(ref.Path)
-		newPath = filepath.Join(filepath.Dir(ref.Path), strings.TrimSuffix(base, filepath.Ext(base))+ext)
+		if ref.IsServer() { // no folder of its own: the data folder, like a new project
+			s := slug(ref.Name)
+			if s == "" {
+				return "", fmt.Errorf("%w: cannot make a file name from %q; give a path", domain.ErrInvalid, ref.Name)
+			}
+			newPath = filepath.Join(cfg.DataDir, s+ext)
+		} else {
+			base := filepath.Base(ref.Path)
+			newPath = filepath.Join(filepath.Dir(ref.Path), strings.TrimSuffix(base, filepath.Ext(base))+ext)
+		}
 	}
 	if !filepath.IsAbs(newPath) {
 		return "", fmt.Errorf("%w: the new path %q must be absolute", domain.ErrInvalid, newPath)
@@ -211,23 +291,40 @@ func exists(path string) bool {
 	return err == nil
 }
 
-// writeCopy writes board to dst by way of a temporary name beside it, checks that
-// reading the copy back gives the same board, and only then gives it its real
-// name. A crash leaves at worst a .waypoint-convert-* file to delete by hand;
-// any failure removes the copy. Nothing at dst is ever overwritten.
-func writeCopy(ctx context.Context, dst config.ProjectRef, board *domain.Board) error {
+// writeCopy writes board to dst, checks that reading the copy back gives the
+// same board, and returns a func that takes the copy away again. A file goes by
+// way of a temporary name beside it and gets its real name only when it
+// checks out; a server board is written into the empty database, and the
+// tables this run made are dropped if anything fails. A crash leaves at worst a
+// .waypoint-convert-* file to delete by hand, or tables Waypoint made in the
+// target. Nothing that was there before is ever overwritten.
+func writeCopy(ctx context.Context, dst config.ProjectRef, board *domain.Board, opts storage.CreateOptions) (discard func(), err error) {
+	if dst.IsServer() {
+		return writeServerCopy(ctx, dst, board, opts)
+	}
 	tmp := dst
 	tmp.Path = filepath.Join(filepath.Dir(dst.Path), fmt.Sprintf(".waypoint-convert-%d-%d%s", os.Getpid(), time.Now().UnixNano(), filepath.Ext(dst.Path)))
 	defer removeBoardFiles(tmp) // whatever is left under the temporary name
 
 	repo, err := storage.Create(tmp, board.Settings)
 	if err != nil {
-		return fmt.Errorf("%w: cannot create the converted copy in %s: %v", domain.ErrInvalid, filepath.Dir(dst.Path), err)
+		return nil, fmt.Errorf("%w: cannot create the converted copy in %s: %v", domain.ErrInvalid, filepath.Dir(dst.Path), err)
 	}
 	if err := repo.Save(ctx, board); err != nil {
-		return err
+		return nil, err
 	}
-	r, err := openTarget(tmp)
+	if err := verifyCopy(ctx, tmp, dst, board); err != nil {
+		return nil, err
+	}
+	if err := install(tmp, dst); err != nil {
+		return nil, err
+	}
+	return func() { removeBoardFiles(dst) }, nil
+}
+
+// verifyCopy loads the copy at at and requires it to equal board.
+func verifyCopy(ctx context.Context, at, dst config.ProjectRef, board *domain.Board) error {
+	r, err := openTarget(at)
 	if err != nil {
 		return err
 	}
@@ -242,7 +339,28 @@ func writeCopy(ctx context.Context, dst config.ProjectRef, board *domain.Board) 
 		}
 		return fmt.Errorf("%w: the converted copy did not match the original (%s); nothing was changed%s", domain.ErrInvalid, d, hint)
 	}
-	return install(tmp, dst)
+	return nil
+}
+
+func writeServerCopy(ctx context.Context, dst config.ProjectRef, board *domain.Board, opts storage.CreateOptions) (func(), error) {
+	repo, err := storage.CreateWith(ctx, dst, board.Settings, opts) // refuses a database that is not empty
+	if err != nil {
+		return nil, err
+	}
+	discard := func() {
+		dctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = storage.Discard(dctx, dst) // only the tables Create just made
+	}
+	if err := repo.Save(ctx, board); err != nil {
+		discard()
+		return nil, err
+	}
+	if err := verifyCopy(ctx, dst, dst, board); err != nil {
+		discard()
+		return nil, err
+	}
+	return discard, nil
 }
 
 var shallowHeading = regexp.MustCompile(`(?m)^#{1,3}[ \t]`)

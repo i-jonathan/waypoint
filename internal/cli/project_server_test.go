@@ -128,3 +128,34 @@ func TestServerStorageNeedsUser(t *testing.T) {
 	assertEq(t, code, 1)
 	assertContains(t, stderr, "--user")
 }
+
+func TestProjectConvertToPostgresAndBack(t *testing.T) {
+	ref := servertest.Postgres(t)
+	dir := t.TempDir()
+	_, _, code := runCLI(t, dir, "project", "add", ref.Name, "--path", dir+"/c.db")
+	assertEq(t, code, 0)
+	runCLIEnv(t, dir, map[string]string{"WAYPOINT_PROJECT": ref.Name}, "add", "Card one")
+
+	stdout, stderr, code := runCLI(t, dir, "project", "convert", ref.Name, "--to", "postgres",
+		"--host", ref.Host, "--port", strconv.Itoa(ref.Port), "--user", ref.User, "--database", ref.Database)
+	assertEq(t, code, 0)
+	assertEq(t, stderr, "")
+	assertContains(t, stdout, "Converted servertest to postgres at "+ref.Display())
+	assertContains(t, stdout, "kept as")
+	assertContains(t, stdout, dbconn.PasswordHelp(ref.Name))
+
+	stdout, _, code = runCLI(t, dir, "project", "convert", ref.Name, "--to", "markdown", "--path", dir+"/c.md", "--json")
+	assertEq(t, code, 0)
+	var out map[string]any
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["retired"] != ref.Display() || out["storage"] != "markdown" {
+		t.Errorf("json = %v", out)
+	}
+	if b, _ := out["backups"].([]any); len(b) != 0 {
+		t.Errorf("backups = %v", out["backups"])
+	}
+	list, _, _ := runCLIEnv(t, dir, map[string]string{"WAYPOINT_PROJECT": ref.Name}, "ls")
+	assertContains(t, list, "Card one")
+}

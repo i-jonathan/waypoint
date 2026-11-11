@@ -18,7 +18,7 @@ import (
 const (
 	usageProject = "waypoint project add|ls|rm|convert ..."
 	usageAdd     = "waypoint project add NAME [--path FILE | --storage postgres " + serverUsage + "] [--storage sqlite|markdown] [--prefix T] [--json]"
-	usageConvert = "waypoint project convert NAME --to sqlite|markdown [--path FILE] [--json]"
+	usageConvert = "waypoint project convert NAME --to sqlite|markdown|postgres [--path FILE | " + serverUsage + "] [--json]"
 	usageLs      = "waypoint project ls [--json]"
 	usageRm      = "waypoint project rm NAME [--json]"
 	usageInit    = "waypoint init [NAME] [--storage sqlite|markdown|postgres " + serverUsage + "] [--prefix T] [--json]"
@@ -276,17 +276,18 @@ func (r *runner) cmdProjectRm(args []string) int {
 
 // convertJSON is the JSON shape of a converted project.
 type convertJSON struct {
-	Name    string   `json:"name"`
-	Storage string   `json:"storage"`
-	Path    string   `json:"path"`
+	projectJSON
 	Backups []string `json:"backups"`
+	Retired string   `json:"retired,omitempty"`
 }
 
 func (r *runner) cmdProjectConvert(args []string) int {
 	var to, path string
+	var sf serverFlags
 	pos, code, done := r.parse(usageConvert, args, func(fs *flag.FlagSet) {
 		fs.StringVar(&to, "to", "", "")
 		fs.StringVar(&path, "path", "", "")
+		sf.register(fs)
 	})
 	if done {
 		return code
@@ -295,7 +296,7 @@ func (r *runner) cmdProjectConvert(args []string) int {
 		return r.usageError("expected one project NAME", usageConvert)
 	}
 	if to == "" {
-		return r.usageError("--to sqlite|markdown is required", usageConvert)
+		return r.usageError("--to sqlite|markdown|postgres is required", usageConvert)
 	}
 	if path != "" && !filepath.IsAbs(path) {
 		if r.env.Cwd == "" {
@@ -303,19 +304,44 @@ func (r *runner) cmdProjectConvert(args []string) int {
 		}
 		path = filepath.Join(r.env.Cwd, path)
 	}
+	server, err := sf.options(to)
+	if err != nil {
+		return r.fail(err)
+	}
 	cfgPath, err := config.DefaultPath(r.env.Getenv)
 	if err != nil {
 		return r.fail(err)
 	}
-	res, err := projects.Convert(r.ctx, cfgPath, r.env.Getenv, pos[0], to, path)
+	res, err := projects.Convert(r.ctx, cfgPath, r.env.Getenv, pos[0], projects.Target{
+		Storage: to, Path: path, Server: server,
+		Warn: func(msg string) { fmt.Fprintln(r.env.Stderr, msg) },
+	})
 	if err != nil {
+		if res.Ref.Name != "" && !r.json { // converted, but something was left behind
+			fmt.Fprintf(r.env.Stdout, "Converted %s to %s at %s\n", res.Ref.Name, res.Ref.Storage, res.Ref.Display())
+		}
 		return r.fail(err)
 	}
 	if r.json {
-		r.printJSON(convertJSON{res.Ref.Name, res.Ref.Storage, res.Ref.Path, res.Backups})
-	} else {
-		fmt.Fprintf(r.env.Stdout, "Converted %s to %s at %s\nThe old files are kept as %s\n",
-			res.Ref.Name, res.Ref.Storage, res.Ref.Path, strings.Join(res.Backups, ", "))
+		r.printJSON(convertJSON{projectJSONOf(res.Ref), nonNilStrings(res.Backups), res.Retired})
+		return exitOK
+	}
+	fmt.Fprintf(r.env.Stdout, "Converted %s to %s at %s\n", res.Ref.Name, res.Ref.Storage, res.Ref.Display())
+	switch {
+	case res.Retired != "":
+		fmt.Fprintf(r.env.Stdout, "The old database at %s is kept, marked as retired\n", res.Retired)
+	case len(res.Backups) > 0:
+		fmt.Fprintf(r.env.Stdout, "The old files are kept as %s\n", strings.Join(res.Backups, ", "))
+	}
+	if res.Ref.IsServer() {
+		fmt.Fprintf(r.env.Stdout, "The password is read from the environment: %s.\n", dbconn.PasswordHelp(res.Ref.Name))
 	}
 	return exitOK
+}
+
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }

@@ -112,7 +112,7 @@ func TestConvertMarkdownToSQLiteAndBack(t *testing.T) {
 	ref, original := richProject(t, cfgPath, env, dir)
 	ctx := context.Background()
 
-	res, err := Convert(ctx, cfgPath, env, "Rich", "sqlite", "")
+	res, err := Convert(ctx, cfgPath, env, "Rich", Target{Storage: "sqlite", Path: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestConvertMarkdownToSQLiteAndBack(t *testing.T) {
 		t.Fatalf("sqlite board differs from the markdown one:\n got %#v\nwant %#v", got, original)
 	}
 
-	back, err := Convert(ctx, cfgPath, env, "Rich", "markdown", filepath.Join(dir, "again.md"))
+	back, err := Convert(ctx, cfgPath, env, "Rich", Target{Storage: "markdown", Path: filepath.Join(dir, "again.md")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestConvertKeepsBackups(t *testing.T) {
 	dir := t.TempDir()
 	richProject(t, cfgPath, env, dir)
 
-	res, err := Convert(context.Background(), cfgPath, env, "Rich", "sqlite", "")
+	res, err := Convert(context.Background(), cfgPath, env, "Rich", Target{Storage: "sqlite", Path: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,10 +180,10 @@ func TestConvertSQLiteBackupMovesTheDatabase(t *testing.T) {
 	dir := t.TempDir()
 	richProject(t, cfgPath, env, dir)
 	ctx := context.Background()
-	if _, err := Convert(ctx, cfgPath, env, "Rich", "sqlite", ""); err != nil {
+	if _, err := Convert(ctx, cfgPath, env, "Rich", Target{Storage: "sqlite", Path: ""}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Convert(ctx, cfgPath, env, "Rich", "markdown", filepath.Join(dir, "second.md")); err != nil {
+	if _, err := Convert(ctx, cfgPath, env, "Rich", Target{Storage: "markdown", Path: filepath.Join(dir, "second.md")}); err != nil {
 		t.Fatal(err)
 	}
 	if !exists(filepath.Join(dir, "rich.db.bak-20261105")) || exists(filepath.Join(dir, "rich.db")) {
@@ -219,7 +219,7 @@ func TestConvertRefusals(t *testing.T) {
 			}
 			cfgBefore, _ := os.ReadFile(cfgPath)
 			filesBefore := listing(t, d)
-			_, err := Convert(context.Background(), cfgPath, env, "Rich", c.to, path)
+			_, err := Convert(context.Background(), cfgPath, env, "Rich", Target{Storage: c.to, Path: path})
 			if !errors.Is(err, domain.ErrInvalid) {
 				t.Fatalf("Convert = %v, want domain.ErrInvalid", err)
 			}
@@ -245,13 +245,13 @@ func TestConvertToMarkdownRefusesAStrayArchive(t *testing.T) {
 	dir := t.TempDir()
 	richProject(t, cfgPath, env, dir)
 	ctx := context.Background()
-	if _, err := Convert(ctx, cfgPath, env, "Rich", "sqlite", ""); err != nil {
+	if _, err := Convert(ctx, cfgPath, env, "Rich", Target{Storage: "sqlite", Path: ""}); err != nil {
 		t.Fatal(err)
 	}
 	// Some other board's archive sits where the new markdown archive would go.
 	stray := filepath.Join(dir, "elsewhere.archive.md")
 	os.WriteFile(stray, []byte("someone else's cards"), 0o644)
-	_, err := Convert(ctx, cfgPath, env, "Rich", "markdown", filepath.Join(dir, "elsewhere.md"))
+	_, err := Convert(ctx, cfgPath, env, "Rich", Target{Storage: "markdown", Path: filepath.Join(dir, "elsewhere.md")})
 	if !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("Convert = %v, want domain.ErrInvalid", err)
 	}
@@ -270,7 +270,7 @@ func TestConvertBackupNameTaken(t *testing.T) {
 	richProject(t, cfgPath, env, dir)
 	os.WriteFile(filepath.Join(dir, "rich.md.bak-20261105"), []byte("an older backup"), 0o644)
 
-	res, err := Convert(context.Background(), cfgPath, env, "Rich", "sqlite", "")
+	res, err := Convert(context.Background(), cfgPath, env, "Rich", Target{Storage: "sqlite", Path: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestConvertVerifyFailureRollsBack(t *testing.T) {
 	}
 	t.Cleanup(func() { openTarget = realOpen })
 
-	_, err := Convert(context.Background(), cfgPath, env, "Rich", "sqlite", "")
+	_, err := Convert(context.Background(), cfgPath, env, "Rich", Target{Storage: "sqlite", Path: ""})
 	if err == nil || !strings.Contains(err.Error(), "did not match") {
 		t.Fatalf("Convert = %v, want a verification failure", err)
 	}
@@ -327,7 +327,7 @@ func TestConvertAcrossDirectories(t *testing.T) {
 	cfgPath, env := sandbox(t)
 	src, dst := t.TempDir(), t.TempDir()
 	_, original := richProject(t, cfgPath, env, src)
-	if _, err := Convert(context.Background(), cfgPath, env, "Rich", "sqlite", filepath.Join(dst, "moved.db")); err != nil {
+	if _, err := Convert(context.Background(), cfgPath, env, "Rich", Target{Storage: "sqlite", Path: filepath.Join(dst, "moved.db")}); err != nil {
 		t.Fatal(err)
 	}
 	if got := loadRef(t, registered(t, cfgPath, env, "Rich")); !got.Equal(original) {
@@ -340,7 +340,7 @@ func TestConvertAcrossDirectories(t *testing.T) {
 
 func TestConvertUnknownProject(t *testing.T) {
 	cfgPath, env := sandbox(t)
-	if _, err := Convert(context.Background(), cfgPath, env, "Nope", "sqlite", ""); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := Convert(context.Background(), cfgPath, env, "Nope", Target{Storage: "sqlite", Path: ""}); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("Convert of an unknown project = %v, want domain.ErrNotFound", err)
 	}
 }
@@ -361,7 +361,7 @@ func TestConvertSQLiteToMarkdownLosslessnessRefusal(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgBefore, _ := os.ReadFile(cfgPath)
-	_, err = Convert(context.Background(), cfgPath, env, "Lite", "markdown", "")
+	_, err = Convert(context.Background(), cfgPath, env, "Lite", Target{Storage: "markdown", Path: ""})
 	if err == nil {
 		// Markdown saved it faithfully (it demotes the heading itself, and the
 		// board matches once saved): that is fine too, as long as nothing was lost.
@@ -447,7 +447,7 @@ func TestConvertWhileWritersAreWritingLosesNothing(t *testing.T) {
 		if round%2 == 1 {
 			to, path = "sqlite", filepath.Join(dir, fmt.Sprintf("r%d.db", round))
 		}
-		if _, err := Convert(context.Background(), cfgPath, env, "Busy", to, path); err != nil {
+		if _, err := Convert(context.Background(), cfgPath, env, "Busy", Target{Storage: to, Path: path}); err != nil {
 			t.Fatalf("round %d: %v", round, err)
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -496,7 +496,7 @@ func TestConvertSQLiteBackupIsCompleteOnItsOwn(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := Convert(context.Background(), cfgPath, env, "Lite", "markdown", ""); err != nil {
+	if _, err := Convert(context.Background(), cfgPath, env, "Lite", Target{Storage: "markdown", Path: ""}); err != nil {
 		t.Fatal(err)
 	}
 	backup, err := sql.Open("sqlite", filepath.Join(dir, "lite.db.bak-20261105"))
@@ -518,7 +518,7 @@ func TestConvertRetiresTheOldDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Convert(context.Background(), cfgPath, env, "Lite", "markdown", ""); err != nil {
+	if _, err := Convert(context.Background(), cfgPath, env, "Lite", Target{Storage: "markdown", Path: ""}); err != nil {
 		t.Fatal(err)
 	}
 	// Anything still pointed at the old file is told so, and cannot write to it.
@@ -544,7 +544,7 @@ func TestConvertRegistryAlwaysPointsAtABoardThatExists(t *testing.T) {
 			*seam = func() error { return errors.New("power cut") }
 			t.Cleanup(func() { *seam = old })
 
-			if _, err := Convert(context.Background(), cfgPath, env, "Rich", "sqlite", ""); err == nil {
+			if _, err := Convert(context.Background(), cfgPath, env, "Rich", Target{Storage: "sqlite", Path: ""}); err == nil {
 				t.Fatal("Convert hid the failure")
 			}
 			ref := registered(t, cfgPath, env, "Rich")
@@ -601,7 +601,7 @@ func TestConvertToMarkdownNormalizesBodyEdgesInOlderSQLiteBoards(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Convert(context.Background(), cfgPath, env, "Lite", "markdown", ""); err != nil {
+	if _, err := Convert(context.Background(), cfgPath, env, "Lite", Target{Storage: "markdown", Path: ""}); err != nil {
 		t.Fatalf("Convert: %v", err)
 	}
 	got := loadRef(t, registered(t, cfgPath, env, "Lite"))
@@ -622,7 +622,7 @@ func TestConvertToAnUnwritablePlaceIsARefusalNotAServerError(t *testing.T) {
 	os.WriteFile(file, []byte("x"), 0o644)
 
 	cfgBefore, _ := os.ReadFile(cfgPath)
-	_, err := Convert(context.Background(), cfgPath, env, "Rich", "sqlite", filepath.Join(file, "sub", "x.db"))
+	_, err := Convert(context.Background(), cfgPath, env, "Rich", Target{Storage: "sqlite", Path: filepath.Join(file, "sub", "x.db")})
 	if !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("Convert = %v, want domain.ErrInvalid", err)
 	}
